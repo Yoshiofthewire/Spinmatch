@@ -14,10 +14,15 @@ export default function SendToMeTubeButton({ url }) {
   async function handleClick() {
     setState('sending');
     try {
+      // No explicit Content-Type: the browser defaults a string body to
+      // text/plain, keeping this a CORS "simple request" with no preflight —
+      // matching the official MeTube bookmarklet's own XHR call. Setting
+      // application/json here would require MeTube to answer an OPTIONS
+      // preflight it was never built to handle, breaking the request outright
+      // in setups where the plain bookmarklet works fine.
       const res = await fetch(`${metubeUrl}/add`, {
         method: 'POST',
         credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url, quality: 'best' }),
       });
       setState(res.ok ? 'sent' : 'error');
