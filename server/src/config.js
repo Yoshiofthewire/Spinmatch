@@ -13,7 +13,7 @@ export const config = {
   youtubeApiKey: requireEnv('YOUTUBE_API_KEY'),
   musicbrainz: {
     contactEmail: requireEnv('MB_CONTACT_EMAIL'),
-    appName: process.env.MB_APP_NAME || 'Tubarr',
+    appName: process.env.MB_APP_NAME || 'Spinmatch',
     appVersion: process.env.MB_APP_VERSION || '0.1.0',
   },
   // Optional: enables the "Send to MeTube" button. Unset means the feature is hidden.

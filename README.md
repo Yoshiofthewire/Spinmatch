@@ -1,4 +1,4 @@
-# Tubarr
+# Spinmatch
 
 Search MusicBrainz for an artist, album, or song, browse album art and tracklists, and get a
 YouTube link for a track — verified by cross-checking the video's duration against the
@@ -14,7 +14,7 @@ This app **only finds and verifies YouTube links**. It does not download or rip 
 ## Setting up a YouTube Data API v3 key
 
 1. Go to [console.cloud.google.com](https://console.cloud.google.com) and create a new project
-   (e.g. "tubarr").
+   (e.g. "spinmatch").
 2. Navigate to **APIs & Services → Library**, search for "YouTube Data API v3", and click **Enable**.
 3. Navigate to **APIs & Services → Credentials → Create Credentials → API key**.
 4. Click **Restrict key**, and under "API restrictions" choose **Restrict key** and select only
@@ -33,7 +33,7 @@ Copy `.env.example` to `.env` and fill in the values:
 PORT=3000
 YOUTUBE_API_KEY=your-key-here
 MB_CONTACT_EMAIL=you@example.com
-MB_APP_NAME=Tubarr
+MB_APP_NAME=Spinmatch
 MB_APP_VERSION=0.1.0
 METUBE_URL=
 ```

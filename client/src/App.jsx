@@ -10,7 +10,7 @@ export default function App() {
       <header className="app-header">
         <a href="/" className="app-brand">
           <Logo />
-          <span className="app-title">Tubarr</span>
+          <span className="app-title">Spinmatch</span>
         </a>
         <p className="app-subtitle">Track down the right take — matched against MusicBrainz, verified by length</p>
       </header>
