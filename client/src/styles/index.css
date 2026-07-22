@@ -435,7 +435,7 @@ tbody tr:hover {
   color: #ff8a78;
 }
 
-.banner-quota {
+.banner-rate-limited {
   background: rgba(240, 180, 41, 0.12);
   border-color: rgba(240, 180, 41, 0.3);
   color: var(--amber);
