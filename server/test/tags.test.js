@@ -114,13 +114,15 @@ test('readTags/writeMissingTags work across MP3, FLAC, M4A, and OGG', async () =
     await withCopiedFixture(name, async (file) => {
       const before = await readTags(file);
       assert.equal(before.title, null, `${name} should start untagged`);
+      assert.equal(before.hasCoverArt, false, `${name} should start without cover art`);
 
       const desired = { artist: 'A', title: 'T', album: 'B', trackNumber: 5, year: 1999, genre: 'Rock' };
-      const { filledFields } = await writeMissingTags(file, desired);
+      const coverImage = { bytes: Buffer.from([0xff, 0xd8, 0xff, 0xd9]), mimeType: 'image/jpeg' };
+      const { filledFields } = await writeMissingTags(file, desired, { coverImage });
       assert.deepEqual(
         new Set(filledFields),
-        new Set(['artist', 'title', 'album', 'trackNumber', 'year', 'genre']),
-        `${name} should fill every field`
+        new Set(['artist', 'title', 'album', 'trackNumber', 'year', 'genre', 'coverArt']),
+        `${name} should fill every field including cover art`
       );
 
       const after = await readTags(file);
@@ -130,6 +132,7 @@ test('readTags/writeMissingTags work across MP3, FLAC, M4A, and OGG', async () =
       assert.equal(after.trackNumber, 5, `${name} should have trackNumber written`);
       assert.equal(after.year, 1999, `${name} should have year written`);
       assert.equal(after.genre, 'Rock', `${name} should have genre written`);
+      assert.equal(after.hasCoverArt, true, `${name} should have cover art embedded`);
     });
   }
 });
