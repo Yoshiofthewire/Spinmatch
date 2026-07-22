@@ -1,4 +1,4 @@
-import { searchCandidates, getDurations } from './youtube.js';
+import { searchCandidates } from './ytdlp.js';
 import { rankCandidates, pickResult } from './durationMatch.js';
 import { TTLCache } from '../lib/cache.js';
 
@@ -13,15 +13,7 @@ function cacheKey({ artist, title, album, lengthMs }) {
 async function fetchRankedCandidates(query, lengthMs) {
   const candidates = await searchCandidates(query);
   if (candidates.length === 0) return [];
-
-  const durations = await getDurations(candidates.map((c) => c.id));
-  const durationById = new Map(durations.map((d) => [d.id, d.durationMs]));
-
-  const withDurations = candidates
-    .map((c) => ({ ...c, durationMs: durationById.get(c.id) }))
-    .filter((c) => c.durationMs != null);
-
-  return rankCandidates(withDurations, lengthMs);
+  return rankCandidates(candidates, lengthMs);
 }
 
 export async function verifyTrack({ artist, title, album, lengthMs }) {
