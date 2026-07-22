@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import { useConfig } from '../ConfigContext.jsx';
 import EqualizerLoader from './EqualizerLoader.jsx';
+import { addEntry } from '../lib/history.js';
 
 // Posts directly to the user's MeTube instance from the browser (not proxied
 // through our backend) so the request carries the browser's own cookies/session
 // for that origin, the same way the official MeTube bookmarklet works.
-export default function SendToMeTubeButton({ url }) {
+export default function SendToMeTubeButton({ url, artist, title, album }) {
   const { metubeUrl } = useConfig();
   const [state, setState] = useState('idle'); // idle | sending | sent | error
 
@@ -34,6 +35,7 @@ export default function SendToMeTubeButton({ url }) {
         body: JSON.stringify({ url, quality: 'best' }),
       });
       setState('sent');
+      addEntry({ track: title, artist, album, action: 'sent' });
     } catch {
       setState('error');
     }

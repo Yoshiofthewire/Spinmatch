@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom';
 import { get } from '../api/client.js';
 import AlbumGrid from '../components/AlbumGrid.jsx';
 import EqualizerLoader from '../components/EqualizerLoader.jsx';
+import Breadcrumbs from '../components/Breadcrumbs.jsx';
 
 export default function ArtistPage() {
   const { mbid } = useParams();
@@ -22,6 +23,7 @@ export default function ArtistPage() {
 
   return (
     <div className="artist-page">
+      <Breadcrumbs crumbs={[{ label: 'Home', to: '/' }, { label: data.artist.name || 'Artist' }]} />
       <h1>{data.artist.name || 'Artist'}</h1>
       <AlbumGrid albums={data.albums} />
     </div>

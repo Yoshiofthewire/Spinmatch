@@ -10,7 +10,7 @@ function statusLabel(status) {
   return 'No results';
 }
 
-export default function VerifyResultsTable({ results }) {
+export default function VerifyResultsTable({ results, artist, album }) {
   const { page, setPage, pageCount, pageItems } = usePagination(results, 20);
 
   return (
@@ -47,7 +47,7 @@ export default function VerifyResultsTable({ results }) {
               <td>{r.video ? formatDuration(r.video.durationMs) : '—'}</td>
               <td>{r.deltaSeconds != null ? `${r.deltaSeconds}s` : '—'}</td>
               <td>{statusLabel(r.status)}</td>
-              <td>{r.video ? <SendToMeTubeButton url={r.video.url} /> : '—'}</td>
+              <td>{r.video ? <SendToMeTubeButton url={r.video.url} artist={artist} title={r.title} album={album} /> : '—'}</td>
             </tr>
           ))}
         </tbody>

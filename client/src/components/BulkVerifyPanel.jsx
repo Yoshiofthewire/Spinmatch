@@ -3,10 +3,11 @@ import { post } from '../api/client.js';
 import VerifyResultsTable from './VerifyResultsTable.jsx';
 import EqualizerLoader from './EqualizerLoader.jsx';
 import CopyButton from './CopyButton.jsx';
+import { addEntry } from '../lib/history.js';
 
 const ESTIMATED_MS_PER_TRACK = 1500;
 
-export default function BulkVerifyPanel({ releaseGroupMbid, trackCount, estimatedQuotaUnits }) {
+export default function BulkVerifyPanel({ artist, album, releaseGroupMbid, trackCount, estimatedQuotaUnits }) {
   const [state, setState] = useState('idle'); // idle | running | done | error
   const [progress, setProgress] = useState(0);
   const [data, setData] = useState(null);
@@ -34,6 +35,11 @@ export default function BulkVerifyPanel({ releaseGroupMbid, trackCount, estimate
       setData(result);
       setState(result.error ? 'error' : 'done');
       if (result.error) setError(result.error);
+      else {
+        result.results
+          .filter((r) => r.video)
+          .forEach((r) => addEntry({ track: r.title, artist, album, action: 'verified' }));
+      }
     } catch (err) {
       setError(err);
       setState('error');
@@ -84,7 +90,7 @@ export default function BulkVerifyPanel({ releaseGroupMbid, trackCount, estimate
               label="Copy all links to clipboard"
             />
           </div>
-          <VerifyResultsTable results={data.results} />
+          <VerifyResultsTable results={data.results} artist={artist} album={album} />
         </>
       )}
     </div>
