@@ -20,12 +20,20 @@ export default function SendToMeTubeButton({ url }) {
       // application/json here would require MeTube to answer an OPTIONS
       // preflight it was never built to handle, breaking the request outright
       // in setups where the plain bookmarklet works fine.
-      const res = await fetch(`${metubeUrl}/add`, {
+      //
+      // mode: 'no-cors' because most MeTube instances don't send back CORS
+      // headers for arbitrary calling origins — reading the response would
+      // throw even though the request already reached the server and was
+      // processed. This makes the response opaque (no res.ok to check), so
+      // we treat "the request went out without a network error" as success,
+      // same as the bookmarklet's fire-and-forget approach.
+      await fetch(`${metubeUrl}/add`, {
         method: 'POST',
+        mode: 'no-cors',
         credentials: 'include',
         body: JSON.stringify({ url, quality: 'best' }),
       });
-      setState(res.ok ? 'sent' : 'error');
+      setState('sent');
     } catch {
       setState('error');
     }
