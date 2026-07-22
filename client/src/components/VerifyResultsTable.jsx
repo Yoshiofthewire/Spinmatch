@@ -1,5 +1,6 @@
 import { formatDuration } from '../lib/format.js';
 import SendToMeTubeButton from './SendToMeTubeButton.jsx';
+import CopyButton from './CopyButton.jsx';
 import Pagination from './Pagination.jsx';
 import { usePagination } from '../lib/usePagination.js';
 
@@ -23,6 +24,7 @@ export default function VerifyResultsTable({ results }) {
             <th>YouTube Duration</th>
             <th>Δ</th>
             <th>Status</th>
+            <th>Download with MeTube</th>
           </tr>
         </thead>
         <tbody>
@@ -36,7 +38,7 @@ export default function VerifyResultsTable({ results }) {
                     <a href={r.video.url} target="_blank" rel="noreferrer">
                       {r.video.title}
                     </a>
-                    <SendToMeTubeButton url={r.video.url} />
+                    <CopyButton text={r.video.url} />
                   </span>
                 ) : (
                   '—'
@@ -45,6 +47,7 @@ export default function VerifyResultsTable({ results }) {
               <td>{r.video ? formatDuration(r.video.durationMs) : '—'}</td>
               <td>{r.deltaSeconds != null ? `${r.deltaSeconds}s` : '—'}</td>
               <td>{statusLabel(r.status)}</td>
+              <td>{r.video ? <SendToMeTubeButton url={r.video.url} /> : '—'}</td>
             </tr>
           ))}
         </tbody>

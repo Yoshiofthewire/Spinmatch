@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { post } from '../api/client.js';
 import EqualizerLoader from './EqualizerLoader.jsx';
 import SendToMeTubeButton from './SendToMeTubeButton.jsx';
+import CopyButton from './CopyButton.jsx';
 
 function StatusBadge({ status }) {
   if (status === 'confirmed') return <span className="badge badge-confirmed">Verified match</span>;
@@ -55,6 +56,7 @@ export default function VerifyButton({ artist, title, album, lengthMs }) {
           <a href={result.video.url} target="_blank" rel="noreferrer">
             {result.video.title}
           </a>
+          <CopyButton text={result.video.url} />
           <SendToMeTubeButton url={result.video.url} />
         </>
       )}

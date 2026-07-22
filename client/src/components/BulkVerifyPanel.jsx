@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { post } from '../api/client.js';
 import VerifyResultsTable from './VerifyResultsTable.jsx';
 import EqualizerLoader from './EqualizerLoader.jsx';
+import CopyButton from './CopyButton.jsx';
 
 const ESTIMATED_MS_PER_TRACK = 1500;
 
@@ -72,7 +73,20 @@ export default function BulkVerifyPanel({ releaseGroupMbid, trackCount, estimate
         </p>
       )}
 
-      {data && data.results.length > 0 && <VerifyResultsTable results={data.results} />}
+      {data && data.results.length > 0 && (
+        <>
+          <div className="bulk-verify-actions">
+            <CopyButton
+              text={data.results
+                .filter((r) => r.video)
+                .map((r) => r.video.url)
+                .join('\n')}
+              label="Copy all links to clipboard"
+            />
+          </div>
+          <VerifyResultsTable results={data.results} />
+        </>
+      )}
     </div>
   );
 }
