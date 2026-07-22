@@ -266,26 +266,26 @@ git commit -m "Add Docker/Compose plumbing and docs for the local library ingest
 - Create: `server/test/fixtures/silence.ogg`
 - Create: `server/test/fixtures/tagged.mp3`
 
-**Interfaces:** Produces: five small (~2 second, low-bitrate) real audio fixture files consumed by Task 4 (`fpcalc.test.js`) and Task 7 (`tags.test.js`).
+**Interfaces:** Produces: five small (~6 second, low-bitrate) real audio fixture files consumed by Task 4 (`fpcalc.test.js`) and Task 7 (`tags.test.js`).
 
 - [ ] **Step 1: Generate the fixtures with ffmpeg**
 
-Both `ffmpeg` and `fpcalc` are already installed in this environment (confirmed: `ffmpeg version n8.1.2` with `libmp3lame`/`flac`/`aac`/`libvorbis` encoders; `fpcalc version 1.6.0`). Run from the repo root:
+Both `ffmpeg` and `fpcalc` are already installed in this environment (confirmed: `ffmpeg version n8.1.2` with `libmp3lame`/`flac`/`aac`/`libvorbis` encoders; `fpcalc version 1.6.0`). **Use a 6-second duration, not shorter** — Chromaprint's `fpcalc` needs more than ~2 seconds of audio to produce a fingerprint at all; a 2-second clip was tried during implementation and reliably produced `ERROR: Empty fingerprint`, while 6 seconds fingerprints successfully (confirmed: `fpcalc` on a 6s fixture printed `DURATION=6` and a non-empty `FINGERPRINT=...`). Run from the repo root:
 
 ```bash
 mkdir -p server/test/fixtures
-ffmpeg -y -f lavfi -i "sine=frequency=440:duration=2" -codec:a libmp3lame -b:a 32k server/test/fixtures/silence.mp3
-ffmpeg -y -f lavfi -i "sine=frequency=440:duration=2" -codec:a flac server/test/fixtures/silence.flac
-ffmpeg -y -f lavfi -i "sine=frequency=440:duration=2" -codec:a aac -b:a 32k server/test/fixtures/silence.m4a
-ffmpeg -y -f lavfi -i "sine=frequency=440:duration=2" -codec:a libvorbis -qscale:a 2 server/test/fixtures/silence.ogg
-ffmpeg -y -f lavfi -i "sine=frequency=440:duration=2" -codec:a libmp3lame -b:a 32k \
+ffmpeg -y -f lavfi -i "sine=frequency=440:duration=6" -codec:a libmp3lame -b:a 32k server/test/fixtures/silence.mp3
+ffmpeg -y -f lavfi -i "sine=frequency=440:duration=6" -codec:a flac server/test/fixtures/silence.flac
+ffmpeg -y -f lavfi -i "sine=frequency=440:duration=6" -codec:a aac -b:a 32k server/test/fixtures/silence.m4a
+ffmpeg -y -f lavfi -i "sine=frequency=440:duration=6" -codec:a libvorbis -qscale:a 2 server/test/fixtures/silence.ogg
+ffmpeg -y -f lavfi -i "sine=frequency=440:duration=6" -codec:a libmp3lame -b:a 32k \
   -metadata title="Existing Title" -metadata artist="Existing Artist" server/test/fixtures/tagged.mp3
 ```
 
 - [ ] **Step 2: Verify the fixtures are valid and tiny**
 
 Run: `ls -la server/test/fixtures/ && fpcalc server/test/fixtures/silence.mp3`
-Expected: all five files exist, each well under 50KB, and `fpcalc` prints a `DURATION=2` / `FINGERPRINT=...` pair for `silence.mp3` without error (confirms it's a valid, decodable audio file).
+Expected: all five files exist, each well under 50KB, and `fpcalc` prints a `DURATION=6` and a non-empty `FINGERPRINT=...` for `silence.mp3` without error (confirms it's a valid, decodable audio file that Chromaprint can actually fingerprint).
 
 - [ ] **Step 3: Commit**
 
@@ -394,7 +394,7 @@ test('malformed JSON output throws UpstreamUnavailableError, not a raw SyntaxErr
 
 test('fingerprint works against the real fpcalc binary and a real audio fixture', async () => {
   const result = await fingerprint(FIXTURE);
-  assert.ok(result.durationSeconds > 1.5 && result.durationSeconds < 2.5, `expected ~2s, got ${result.durationSeconds}`);
+  assert.ok(result.durationSeconds > 5.5 && result.durationSeconds < 6.5, `expected ~6s, got ${result.durationSeconds}`);
   assert.equal(typeof result.fingerprint, 'string');
   assert.ok(result.fingerprint.length > 0);
 });
