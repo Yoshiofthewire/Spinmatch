@@ -92,6 +92,18 @@ test('a generic non-zero exit throws UpstreamUnavailableError', async (t) => {
   await assert.rejects(searchCandidates('anything'), UpstreamUnavailableError);
 });
 
+test('malformed JSON on stdout throws UpstreamUnavailableError, not a raw SyntaxError', async (t) => {
+  mockExecFile(t, (bin, args, opts, callback) => {
+    const stdout =
+      [JSON.stringify({ id: 'abc123', title: 'Song A', duration: 202 }), 'not valid json'].join(
+        '\n'
+      ) + '\n';
+    callback(null, stdout, '');
+  });
+
+  await assert.rejects(searchCandidates('anything'), UpstreamUnavailableError);
+});
+
 test('a missing yt-dlp binary throws UpstreamUnavailableError', async (t) => {
   mockExecFile(t, (bin, args, opts, callback) => {
     const error = new Error('spawn yt-dlp ENOENT');

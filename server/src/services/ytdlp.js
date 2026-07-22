@@ -59,10 +59,14 @@ async function runSearch(query, maxResults) {
 }
 
 function parseCandidates(stdout) {
-  return stdout
-    .split('\n')
-    .filter((line) => line.trim())
-    .map((line) => JSON.parse(line))
+  const lines = stdout.split('\n').filter((line) => line.trim());
+  let items;
+  try {
+    items = lines.map((line) => JSON.parse(line));
+  } catch (err) {
+    throw new UpstreamUnavailableError(`yt-dlp returned unparseable output: ${err.message}`);
+  }
+  return items
     .filter((item) => item.duration != null)
     .map((item) => ({
       id: item.id,
