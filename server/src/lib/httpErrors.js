@@ -16,15 +16,6 @@ export class NotFoundError extends Error {
   }
 }
 
-export class QuotaExceededError extends Error {
-  constructor(message) {
-    super(message);
-    this.name = 'QuotaExceededError';
-    this.code = 'QUOTA_EXCEEDED';
-    this.status = 403;
-  }
-}
-
 export class BadRequestError extends Error {
   constructor(message) {
     super(message);
