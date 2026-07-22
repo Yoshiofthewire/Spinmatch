@@ -119,7 +119,7 @@ export async function processIngest() {
       if (err instanceof RateLimitedError) {
         return { matched, needsReview, error: { code: err.code, message: err.message } };
       }
-      throw err;
+      needsReview.push({ path: item.path, name: item.name, reason: err.message });
     }
   }
 

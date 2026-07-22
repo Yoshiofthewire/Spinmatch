@@ -172,6 +172,59 @@ test('a directory entry is reported as needsReview with an "album folders not ye
   });
 });
 
+test('a non-rate-limit error on one item is caught, reported as needsReview, and the batch continues', async (t) => {
+  await withIngestDir(async (dir) => {
+    // 'a-track.mp3' sorts before 'b-track.mp3', so a-track fails first and we
+    // can prove the loop continued on to b-track rather than aborting.
+    await fs.writeFile(path.join(dir, 'a-track.mp3'), 'fake-audio');
+    await fs.writeFile(path.join(dir, 'b-track.mp3'), 'fake-audio');
+    const { UpstreamUnavailableError } = await import('../src/lib/httpErrors.js');
+
+    t.mock.module('../src/services/fpcalc.js', {
+      exports: {
+        fingerprint: async (filePath) => {
+          if (filePath.endsWith('a-track.mp3')) {
+            throw new UpstreamUnavailableError('fpcalc could not process this file');
+          }
+          return { durationSeconds: 200, fingerprint: 'AQAB...' };
+        },
+      },
+    });
+    t.mock.module('../src/services/acoustid.js', {
+      exports: { lookup: async () => [{ recordingMbid: 'rec-1', score: 0.9 }] },
+    });
+    t.mock.module('../src/services/musicbrainz.js', {
+      exports: {
+        getRecording: async () => ({
+          mbid: 'rec-1', title: 'Track Title', lengthMs: 200000, artist: 'Track Artist',
+          releaseGroups: [{ mbid: 'rg-1', title: 'Track Album' }], date: '2020-01-01',
+        }),
+      },
+    });
+    t.mock.module('../src/services/tags.js', {
+      exports: {
+        readTags: async () => ({
+          artist: null, title: null, album: null, trackNumber: null, year: null, genre: null, hasCoverArt: false,
+        }),
+        writeMissingTags: async () => ({ filledFields: ['artist', 'title', 'album'] }),
+      },
+    });
+    t.mock.module('../src/services/coverArt.js', {
+      exports: { getFrontCoverImage: async () => null },
+    });
+
+    const processIngestFresh = await freshProcessIngest();
+    const result = await processIngestFresh();
+
+    assert.equal(result.error, undefined, 'a per-item error must not surface as a batch-level error');
+    assert.equal(result.needsReview.length, 1, 'the failing file should be reported as needsReview');
+    assert.equal(result.needsReview[0].name, 'a-track.mp3');
+    assert.match(result.needsReview[0].reason, /fpcalc could not process this file/);
+    assert.equal(result.matched.length, 1, 'the second file should still have been processed (loop continued)');
+    assert.equal(result.matched[0].name, 'b-track.mp3');
+  });
+});
+
 test('a RateLimitedError mid-run stops processing and returns partial results plus error', async (t) => {
   await withIngestDir(async (dir) => {
     await fs.writeFile(path.join(dir, 'a-track.mp3'), 'fake-audio');
