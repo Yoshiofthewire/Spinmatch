@@ -5,3 +5,6 @@ services:
       - '3000:3000'
     env_file:
       - .env
+    volumes:
+      - ${INGEST_HOST_DIR:-./ingest}:/data/ingest
+      - ${MUSIC_HOST_DIR:-./music}:/data/music

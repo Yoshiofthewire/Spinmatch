@@ -58,6 +58,25 @@ app's server — the same way MeTube's own bookmarklet works — so your browser
 for that origin are used, and your MeTube instance must allow cross-origin requests from wherever
 this app is hosted.
 
+### Optional: local library ingest
+
+If you set `ACOUSTID_API_KEY`, `INGEST_DIR`, and `MUSIC_DIR` (see `.env.example`), an "Ingest"
+page appears letting you drop new, unorganized audio (loose files or whole album folders) into
+`INGEST_DIR` and have Spinmatch identify each track by acoustic fingerprint (via
+[Chromaprint](https://acoustid.org/chromaprint)/[AcoustID](https://acoustid.org/)), confirm it
+against the MusicBrainz-recorded duration, fill in whichever tags are missing (never overwriting
+ones you already have), embed cover art, and move the confirmed file into an organized
+`{Artist}/{Album}/{Track} - {Title}` structure under `MUSIC_DIR`.
+
+Get a free AcoustID API key at [acoustid.org/new-application](https://acoustid.org/new-application).
+`fpcalc` (Chromaprint's command-line tool) must be installed and on `PATH` — the Docker image
+installs it automatically; for local/non-Docker use, install it via your package manager (e.g.
+`apt install chromaprint` / `brew install chromaprint`) or set `FPCALC_PATH` if it's elsewhere.
+
+Anything that can't be confidently identified is left untouched in `INGEST_DIR` and listed on the
+Ingest page as "needs review" — nothing is ever deleted, and unmatched items are never moved
+anywhere without your review.
+
 ## Running locally
 
 ```
