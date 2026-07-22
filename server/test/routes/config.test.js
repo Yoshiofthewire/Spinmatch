@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-process.env.YOUTUBE_API_KEY = 'test-key';
 process.env.MB_CONTACT_EMAIL = 'test@example.com';
 
 let server;

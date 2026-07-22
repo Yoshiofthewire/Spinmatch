@@ -2,7 +2,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { MockAgent, setGlobalDispatcher } from 'undici';
 
-process.env.YOUTUBE_API_KEY = 'test-key';
 process.env.MB_CONTACT_EMAIL = 'test@example.com';
 
 const { createApp } = await import('../../src/app.js');
