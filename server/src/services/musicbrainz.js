@@ -140,3 +140,21 @@ export async function getReleaseWithTracks(releaseMbid) {
     tracks,
   };
 }
+
+export async function getRecording(recordingMbid) {
+  const res = await mbFetch(`/recording/${recordingMbid}`, { inc: 'artists+releases+release-groups' });
+
+  const releaseGroups = (res.releases || [])
+    .map((r) => r['release-group'])
+    .filter(Boolean)
+    .map((rg) => ({ mbid: rg.id, title: rg.title }));
+
+  return {
+    mbid: res.id,
+    title: res.title,
+    lengthMs: res.length || null,
+    artist: (res['artist-credit'] || []).map((c) => c.name).join(''),
+    releaseGroups,
+    date: res['first-release-date'] || null,
+  };
+}
