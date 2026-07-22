@@ -80,3 +80,30 @@ test('a repeat lookup for the same fingerprint is served from cache, not a secon
   await lookup(args);
   assert.equal(callCount, 1, 'second identical lookup should be served from cache');
 });
+
+test('lookup deduplicates by recordingMbid, keeping the highest score', async () => {
+  const pool = mockAcoustId();
+  pool.intercept({ path: '/v2/lookup', method: 'POST' }).reply(200, {
+    status: 'ok',
+    results: [
+      {
+        id: 'af-result-1',
+        score: 0.6,
+        recordings: [{ id: 'shared-recording', title: 'Song A' }],
+      },
+      {
+        id: 'af-result-2',
+        score: 0.9,
+        recordings: [{ id: 'shared-recording', title: 'Song A' }, { id: 'other-recording', title: 'Other' }],
+      },
+    ],
+  });
+
+  const candidates = await lookup({ fingerprint: 'AQAB-dedup', durationSeconds: 200 });
+  // Should deduplicate: shared-recording appears in both results (0.6 and 0.9),
+  // keep only the 0.9 entry. Results sorted by score descending (best-first).
+  assert.deepEqual(candidates, [
+    { recordingMbid: 'shared-recording', score: 0.9 },
+    { recordingMbid: 'other-recording', score: 0.9 },
+  ]);
+});

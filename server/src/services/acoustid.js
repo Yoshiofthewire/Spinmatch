@@ -45,9 +45,19 @@ export async function lookup({ fingerprint, durationSeconds }) {
     return parsed;
   });
 
-  const candidates = (json.results || []).flatMap((result) =>
-    (result.recordings || []).map((recording) => ({ recordingMbid: recording.id, score: result.score }))
-  );
+  // Flatten and deduplicate: if a recordingMbid appears in multiple results,
+  // keep only the highest score.
+  const deduped = new Map();
+  for (const result of json.results || []) {
+    for (const recording of result.recordings || []) {
+      const mbid = recording.id;
+      const existing = deduped.get(mbid);
+      if (!existing || result.score > existing.score) {
+        deduped.set(mbid, { recordingMbid: mbid, score: result.score });
+      }
+    }
+  }
+  const candidates = [...deduped.values()].sort((a, b) => b.score - a.score);
 
   cache.set(cacheKey, candidates, CACHE_TTL_MS);
   return candidates;
