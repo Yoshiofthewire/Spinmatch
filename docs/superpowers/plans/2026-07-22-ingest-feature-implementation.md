@@ -285,7 +285,7 @@ ffmpeg -y -f lavfi -i "sine=frequency=440:duration=6" -codec:a libmp3lame -b:a 3
 - [ ] **Step 2: Verify the fixtures are valid and tiny**
 
 Run: `ls -la server/test/fixtures/ && fpcalc server/test/fixtures/silence.mp3`
-Expected: all five files exist, each well under 50KB, and `fpcalc` prints a `DURATION=6` and a non-empty `FINGERPRINT=...` for `silence.mp3` without error (confirms it's a valid, decodable audio file that Chromaprint can actually fingerprint).
+Expected: all five files exist and are small (~13-26KB for the lossy formats; `silence.flac` is larger, ~80KB, since lossless compression on a synthetic sine tone doesn't shrink much — still tiny enough to commit), and `fpcalc` prints a `DURATION=6` and a non-empty `FINGERPRINT=...` for `silence.mp3` without error (confirms it's a valid, decodable audio file that Chromaprint can actually fingerprint).
 
 - [ ] **Step 3: Commit**
 
