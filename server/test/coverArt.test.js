@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { MockAgent, setGlobalDispatcher } from 'undici';
 
-const { getFrontCoverUrl } = await import('../src/services/coverArt.js');
+const { getFrontCoverUrl, getFrontCoverImage } = await import('../src/services/coverArt.js');
 
 function mockCoverArtArchive() {
   const agent = new MockAgent();
@@ -51,4 +51,29 @@ test('getFrontCoverUrl caches results so a repeat lookup does not hit the networ
   await getFrontCoverUrl('cover-cache-test');
   await getFrontCoverUrl('cover-cache-test');
   assert.equal(callCount, 1, 'second call should be served from cache');
+});
+
+test('getFrontCoverImage downloads the resolved cover art bytes', async () => {
+  const pool = mockCoverArtArchive();
+  pool
+    .intercept({ path: '/release-group/rg-cover-image-test/front', method: 'HEAD' })
+    .reply(307, '', { headers: { location: 'https://coverartarchive.org/release-group/rg-cover-image-test/front-1200.jpg' } });
+  pool
+    .intercept({ path: '/release-group/rg-cover-image-test/front-1200.jpg', method: 'HEAD' })
+    .reply(200, '', { headers: {} });
+  pool
+    .intercept({ path: '/release-group/rg-cover-image-test/front-1200.jpg', method: 'GET' })
+    .reply(200, Buffer.from([0xff, 0xd8, 0xff, 0xd9]), { headers: { 'content-type': 'image/jpeg' } });
+
+  const image = await getFrontCoverImage('rg-cover-image-test');
+  assert.deepEqual(image.bytes, Buffer.from([0xff, 0xd8, 0xff, 0xd9]));
+  assert.equal(image.mimeType, 'image/jpeg');
+});
+
+test('getFrontCoverImage returns null when no cover art exists', async () => {
+  const pool = mockCoverArtArchive();
+  pool.intercept({ path: '/release-group/rg-no-cover/front', method: 'HEAD' }).reply(404);
+
+  const image = await getFrontCoverImage('rg-no-cover');
+  assert.equal(image, null);
 });
