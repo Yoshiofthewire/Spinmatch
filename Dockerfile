@@ -13,6 +13,10 @@ RUN npm run build
 FROM node:24-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
+# yt-dlp is a Python app; the official standalone binary is a glibc-only
+# PyInstaller build and isn't reliable on Alpine's musl libc, so install it
+# via pip into the Python already available through apk instead.
+RUN apk add --no-cache python3 py3-pip && pip install --break-system-packages --no-cache-dir yt-dlp
 COPY server/package.json server/package.json
 RUN npm install --prefix server --omit=dev
 COPY server/src server/src

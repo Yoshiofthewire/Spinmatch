@@ -39,7 +39,6 @@ export default function AlbumPage() {
         album={data.release.title}
         releaseGroupMbid={mbid}
         trackCount={data.tracks.length}
-        estimatedQuotaUnits={data.estimatedQuotaUnits}
       />
 
       <TrackList artist={data.release.artist} album={data.release.title} tracks={data.tracks} />

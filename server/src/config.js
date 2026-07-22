@@ -10,7 +10,7 @@ function requireEnv(name) {
 
 export const config = {
   port: process.env.PORT || 3000,
-  youtubeApiKey: requireEnv('YOUTUBE_API_KEY'),
+  ytdlpPath: process.env.YTDLP_PATH || 'yt-dlp',
   musicbrainz: {
     contactEmail: requireEnv('MB_CONTACT_EMAIL'),
     appName: process.env.MB_APP_NAME || 'Spinmatch',

@@ -11,8 +11,8 @@ export default function AboutPage() {
         <strong>Spinmatch only finds and verifies YouTube links. It does not download or rip audio.</strong>
       </p>
       <p className="muted">
-        Verification runs against the YouTube Data API, which has a daily quota — heavy use
-        (especially bulk album verification) may be rate-limited until the quota resets.
+        Verification looks up each track via yt-dlp, not an official API — heavy use
+        (especially bulk album verification) may be temporarily rate-limited by YouTube.
       </p>
       <p className="muted">
         If a MeTube instance is configured, a "Send to MeTube" button appears next to verified

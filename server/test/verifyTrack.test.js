@@ -1,39 +1,29 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { MockAgent, setGlobalDispatcher } from 'undici';
+import child_process from 'node:child_process';
 
-process.env.YOUTUBE_API_KEY = 'test-key';
 process.env.MB_CONTACT_EMAIL = 'test@example.com';
 
 const { verifyTrack } = await import('../src/services/verifyTrack.js');
 
-function mockYouTube() {
-  const agent = new MockAgent();
-  agent.disableNetConnect();
-  setGlobalDispatcher(agent);
-  return agent.get('https://www.googleapis.com');
+function mockExecFile(t, impl) {
+  t.mock.method(child_process, 'execFile', impl);
 }
 
-test('verifyTrack retries without the album title when the full query has zero candidates', async () => {
-  const pool = mockYouTube();
+function ndjson(items) {
+  return items.map((i) => JSON.stringify(i)).join('\n') + '\n';
+}
+
+test('verifyTrack retries without the album title when the full query has zero candidates', async (t) => {
   let searchCallCount = 0;
-
-  pool
-    .intercept({ path: (path) => /\/youtube\/v3\/search\?/.test(path) && path.includes('Fallback+Test+Album') })
-    .reply(200, () => {
-      searchCallCount += 1;
-      return { items: [] };
-    });
-
-  pool
-    .intercept({ path: (path) => /\/youtube\/v3\/search\?/.test(path) && !path.includes('Fallback+Test+Album') })
-    .reply(200, () => {
-      searchCallCount += 1;
-      return { items: [{ id: { videoId: 'vid-1' }, snippet: { title: 'Found It' } }] };
-    });
-
-  pool.intercept({ path: /\/youtube\/v3\/videos\?/ }).reply(200, {
-    items: [{ id: 'vid-1', contentDetails: { duration: 'PT3M20S' } }],
+  mockExecFile(t, (bin, args, opts, callback) => {
+    searchCallCount += 1;
+    const query = args[args.length - 1];
+    if (query.includes('Fallback Test Album')) {
+      callback(null, ndjson([]), '');
+    } else {
+      callback(null, ndjson([{ id: 'vid-1', title: 'Found It', duration: 200 }]), '');
+    }
   });
 
   const result = await verifyTrack({
@@ -48,31 +38,23 @@ test('verifyTrack retries without the album title when the full query has zero c
   assert.equal(result.video.id, 'vid-1');
 });
 
-test('verifyTrack caches results so an identical repeat call makes no further HTTP requests', async () => {
-  const pool = mockYouTube();
+test('verifyTrack caches results so an identical repeat call makes no further yt-dlp calls', async (t) => {
   let searchCallCount = 0;
-
-  pool
-    .intercept({ path: /\/youtube\/v3\/search\?/ })
-    .reply(200, () => {
-      searchCallCount += 1;
-      return { items: [{ id: { videoId: 'vid-cache' }, snippet: { title: 'Cached Song' } }] };
-    });
-  pool.intercept({ path: /\/youtube\/v3\/videos\?/ }).reply(200, {
-    items: [{ id: 'vid-cache', contentDetails: { duration: 'PT3M20S' } }],
+  mockExecFile(t, (bin, args, opts, callback) => {
+    searchCallCount += 1;
+    callback(null, ndjson([{ id: 'vid-cache', title: 'Cached Song', duration: 200 }]), '');
   });
 
   const args = { artist: 'Cache Test Artist', title: 'Cache Test Song', album: 'Cache Test Album', lengthMs: 200000 };
   const first = await verifyTrack(args);
   const second = await verifyTrack(args);
 
-  assert.equal(searchCallCount, 1, 'second call should be served from cache, not re-hit YouTube');
+  assert.equal(searchCallCount, 1, 'second call should be served from cache, not re-invoke yt-dlp');
   assert.deepEqual(first, second);
 });
 
-test('verifyTrack returns no_results when YouTube has nothing even after the retry', async () => {
-  const pool = mockYouTube();
-  pool.intercept({ path: /\/youtube\/v3\/search\?/ }).reply(200, { items: [] }).persist();
+test('verifyTrack returns no_results when yt-dlp has nothing even after the retry', async (t) => {
+  mockExecFile(t, (bin, args, opts, callback) => callback(null, ndjson([]), ''));
 
   const result = await verifyTrack({
     artist: 'Empty Result Artist',

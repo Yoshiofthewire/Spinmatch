@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { verifyTrack } from '../services/verifyTrack.js';
 import { resolvePrimaryReleaseForGroup, getReleaseWithTracks } from '../services/musicbrainz.js';
-import { BadRequestError, QuotaExceededError, NotFoundError } from '../lib/httpErrors.js';
+import { BadRequestError, RateLimitedError, NotFoundError } from '../lib/httpErrors.js';
 
 export const verifyRouter = Router();
 
@@ -40,10 +40,9 @@ verifyRouter.post('/album/:mbid', async (req, res, next) => {
         });
         results.push({ position: track.position, title: track.title, lengthMs: track.lengthMs, ...verified });
       } catch (err) {
-        if (err instanceof QuotaExceededError) {
+        if (err instanceof RateLimitedError) {
           return res.json({
             album: { mbid: req.params.mbid, title: release.title, artist: release.artist },
-            estimatedQuotaUnits: tracks.length * 101,
             results,
             error: { code: err.code, message: err.message },
           });
@@ -54,7 +53,6 @@ verifyRouter.post('/album/:mbid', async (req, res, next) => {
 
     res.json({
       album: { mbid: req.params.mbid, title: release.title, artist: release.artist },
-      estimatedQuotaUnits: tracks.length * 101,
       results,
     });
   } catch (err) {

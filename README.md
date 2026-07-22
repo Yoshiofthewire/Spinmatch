@@ -9,21 +9,26 @@ This app **only finds and verifies YouTube links**. It does not download or rip 
 ## Prerequisites
 
 - Node.js 20+ (Node 24 recommended — this project uses native `fetch` and `--env-file`)
-- A YouTube Data API v3 key (see below)
+- [`yt-dlp`](https://github.com/yt-dlp/yt-dlp) installed and on `PATH`
 
-## Setting up a YouTube Data API v3 key
+## Installing yt-dlp
 
-1. Go to [console.cloud.google.com](https://console.cloud.google.com) and create a new project
-   (e.g. "spinmatch").
-2. Navigate to **APIs & Services → Library**, search for "YouTube Data API v3", and click **Enable**.
-3. Navigate to **APIs & Services → Credentials → Create Credentials → API key**.
-4. Click **Restrict key**, and under "API restrictions" choose **Restrict key** and select only
-   **YouTube Data API v3** — this limits the blast radius if the key ever leaks.
-5. Copy the key.
-6. The free tier gives you 10,000 quota units/day. Each track lookup costs about 101 units
-   (100 for the search, ~1 for the batched duration lookup), so roughly 100 single-track
-   lookups per day, or fewer if you use the bulk "Find all on YouTube" album action. You can
-   check your usage under **APIs & Services → Enabled APIs → YouTube Data API v3 → Quotas**.
+Spinmatch looks up and verifies YouTube matches by shelling out to `yt-dlp` — there's no API key
+or daily quota. Install it with one of:
+
+```
+pipx install yt-dlp   # recommended: isolated, easy to upgrade with `pipx upgrade yt-dlp`
+pip install --user yt-dlp
+brew install yt-dlp   # macOS
+```
+
+Confirm it's on `PATH`: `yt-dlp --version`. If you install it somewhere not on `PATH`, set
+`YTDLP_PATH` in `.env` to the full path of the binary.
+
+Because yt-dlp scrapes YouTube directly rather than calling an official API, heavy bulk use
+(especially the "Find all on YouTube" album action) can trigger temporary rate limiting from
+YouTube — Spinmatch serializes lookups to reduce this risk, but if it happens, wait a bit and
+retry, and consider running `yt-dlp -U` to pick up any anti-bot-detection fixes.
 
 ## Configuration
 
@@ -31,7 +36,7 @@ Copy `.env.example` to `.env` and fill in the values:
 
 ```
 PORT=3000
-YOUTUBE_API_KEY=your-key-here
+YTDLP_PATH=yt-dlp
 MB_CONTACT_EMAIL=you@example.com
 MB_APP_NAME=Spinmatch
 MB_APP_VERSION=0.1.0
@@ -90,6 +95,7 @@ the server in a single image — no separate frontend container needed.
 npm test
 ```
 
-Runs the backend test suite (Node's built-in test runner, with `undici`'s `MockAgent`
-mocking MusicBrainz/YouTube — no live API calls, no quota used). There are no automated
-frontend tests; verify UI changes by running `npm run dev` and testing in a browser.
+Runs the backend test suite (Node's built-in test runner — `undici`'s `MockAgent` mocks
+MusicBrainz, and `node:test`'s built-in method mocking stubs out `yt-dlp` calls — no live
+network calls). There are no automated frontend tests; verify UI changes by running
+`npm run dev` and testing in a browser.

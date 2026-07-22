@@ -44,7 +44,7 @@ export default function VerifyButton({ artist, title, album, lengthMs }) {
 
   if (state === 'error') {
     return (
-      <span className={error.code === 'QUOTA_EXCEEDED' ? 'banner banner-quota' : 'banner banner-error'}>
+      <span className={error.code === 'RATE_LIMITED' ? 'banner banner-rate-limited' : 'banner banner-error'}>
         {error.message}
       </span>
     );

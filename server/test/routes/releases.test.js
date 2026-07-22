@@ -2,7 +2,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { MockAgent, setGlobalDispatcher } from 'undici';
 
-process.env.YOUTUBE_API_KEY = 'test-key';
 process.env.MB_CONTACT_EMAIL = 'test@example.com';
 
 const { createApp } = await import('../../src/app.js');
@@ -27,7 +26,7 @@ function mockMusicBrainz() {
   return agent.get('https://musicbrainz.org');
 }
 
-test('GET /api/releases/:mbid/tracks returns tracks with an estimated quota cost', async () => {
+test('GET /api/releases/:mbid/tracks returns the release and its tracks', async () => {
   const pool = mockMusicBrainz();
   pool.intercept({ path: /\/ws\/2\/release\?.*release-group=route-release-group.*/ }).reply(200, {
     releases: [{ id: 'route-release-id', status: 'Official' }],
@@ -51,7 +50,7 @@ test('GET /api/releases/:mbid/tracks returns tracks with an estimated quota cost
   const body = await res.json();
   assert.equal(body.release.title, 'Route Test Album');
   assert.equal(body.tracks.length, 2);
-  assert.equal(body.estimatedQuotaUnits, 2 * 101);
+  assert.equal(body.estimatedQuotaUnits, undefined);
 });
 
 test('GET /api/releases/:mbid/tracks returns 404 when the release group has no releases', async () => {

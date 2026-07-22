@@ -7,7 +7,7 @@ import { addEntry } from '../lib/history.js';
 
 const ESTIMATED_MS_PER_TRACK = 1500;
 
-export default function BulkVerifyPanel({ artist, album, releaseGroupMbid, trackCount, estimatedQuotaUnits }) {
+export default function BulkVerifyPanel({ artist, album, releaseGroupMbid, trackCount }) {
   const [state, setState] = useState('idle'); // idle | running | done | error
   const [progress, setProgress] = useState(0);
   const [data, setData] = useState(null);
@@ -54,8 +54,8 @@ export default function BulkVerifyPanel({ artist, album, releaseGroupMbid, track
       {state === 'idle' && (
         <div className="bulk-verify-prompt">
           <p className="muted">
-            Finding all {trackCount} tracks on YouTube will use approximately{' '}
-            <strong>{estimatedQuotaUnits}</strong> YouTube quota units (out of your 10,000/day limit).
+            Finding all {trackCount} tracks on YouTube checks them one at a time to avoid
+            rate limits, so this may take a while.
           </p>
           <button onClick={handleClick}>Find all on YouTube</button>
         </div>
@@ -74,7 +74,7 @@ export default function BulkVerifyPanel({ artist, album, releaseGroupMbid, track
       )}
 
       {error && (
-        <p className={error.code === 'QUOTA_EXCEEDED' ? 'banner banner-quota' : 'banner banner-error'}>
+        <p className={error.code === 'RATE_LIMITED' ? 'banner banner-rate-limited' : 'banner banner-error'}>
           {error.message}
         </p>
       )}
