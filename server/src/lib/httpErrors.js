@@ -33,3 +33,12 @@ export class BadRequestError extends Error {
     this.status = 400;
   }
 }
+
+export class RateLimitedError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'RateLimitedError';
+    this.code = 'RATE_LIMITED';
+    this.status = 429;
+  }
+}
