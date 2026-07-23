@@ -3,14 +3,16 @@ import path from 'node:path';
 import { config } from '../config.js';
 import { fingerprint } from './fpcalc.js';
 import { lookup } from './acoustid.js';
-import { getRecording } from './musicbrainz.js';
+import { getRecording, resolvePrimaryReleaseForGroup, getReleaseWithTracks } from './musicbrainz.js';
 import { readTags, writeMissingTags } from './tags.js';
 import { getFrontCoverImage } from './coverArt.js';
 import { rankCandidates } from './durationMatch.js';
+import { moveIntoLibrary } from './organize.js';
 import { RateLimitedError } from '../lib/httpErrors.js';
 
 const AUDIO_EXTENSIONS = new Set(['.mp3', '.flac', '.m4a', '.aac', '.ogg']);
 const SCORE_THRESHOLD = 0.5;
+const DURATION_TOLERANCE_MS = 5000;
 
 function isAudioFile(name) {
   return AUDIO_EXTENSIONS.has(path.extname(name).toLowerCase());
@@ -68,6 +70,35 @@ async function identifyFile(filePath) {
   return { confirmed: best.recording, reason: null };
 }
 
+// Moves a file into MUSIC_DIR, translating the two non-matched outcomes into a
+// clean needsReview entry: a byte-identical duplicate (left in place), or an
+// fs-level move failure (the file was already tagged in place, just not moved).
+async function moveFileSafely(filePath, name, moveMeta) {
+  const ext = path.extname(filePath).toLowerCase();
+  let result;
+  try {
+    result = await moveIntoLibrary(filePath, moveMeta, ext);
+  } catch (err) {
+    return {
+      needsReview: {
+        path: filePath,
+        name,
+        reason: `tagged in place, but could not be moved into the library: ${err.message}`,
+      },
+    };
+  }
+  if (result.duplicate) {
+    return {
+      needsReview: {
+        path: filePath,
+        name,
+        reason: 'an identical file already exists in the library; left in place for review',
+      },
+    };
+  }
+  return { movedTo: result.movedTo };
+}
+
 async function processLooseFile(item) {
   const { confirmed, reason } = await identifyFile(item.path);
   if (!confirmed) {
@@ -75,17 +106,26 @@ async function processLooseFile(item) {
   }
 
   const current = await readTags(item.path);
-  const coverImage = confirmed.releaseGroups[0]
-    ? await getFrontCoverImage(confirmed.releaseGroups[0].mbid)
-    : null;
+  const releaseGroup = confirmed.releaseGroups[0];
+  const coverImage = releaseGroup ? await getFrontCoverImage(releaseGroup.mbid) : null;
 
+  // A track with no release group has no real album — leave the album *tag*
+  // empty (don't fabricate one), but file it under a "Singles" folder.
+  const albumTitle = releaseGroup?.title ?? null;
   const desired = {
     artist: confirmed.artist,
     title: confirmed.title,
-    album: confirmed.releaseGroups[0]?.title ?? null,
+    album: albumTitle,
     year: confirmed.date ? Number(confirmed.date.slice(0, 4)) : null,
   };
   const { filledFields } = await writeMissingTags(item.path, desired, { coverImage });
+
+  const moved = await moveFileSafely(item.path, item.name, {
+    artist: confirmed.artist,
+    album: albumTitle ?? 'Singles',
+    title: confirmed.title,
+  });
+  if (moved.needsReview) return { needsReview: moved.needsReview };
 
   return {
     matched: {
@@ -96,8 +136,117 @@ async function processLooseFile(item) {
       artist: confirmed.artist,
       filledFields,
       current,
+      movedTo: moved.movedTo,
     },
   };
+}
+
+// Positional coherence: with files sorted by name and tracks in (disc, position)
+// order, file[i] must correspond to track[i] either by a shared recording MBID
+// (strongest signal) or by a duration within tolerance.
+function albumIsCoherent(perFile, tracks) {
+  return perFile.every((f, i) => {
+    const track = tracks[i];
+    if (track.recordingMbid && f.recMbids.includes(track.recordingMbid)) return true;
+    return track.lengthMs != null && Math.abs(track.lengthMs - f.durationMs) <= DURATION_TOLERANCE_MS;
+  });
+}
+
+async function identifyAlbum(files) {
+  const perFile = [];
+  for (const filePath of files) {
+    const { durationSeconds, fingerprint: fp } = await fingerprint(filePath);
+    const candidates = await lookup({ fingerprint: fp, durationSeconds });
+    const recMbids = candidates.filter((c) => c.score >= SCORE_THRESHOLD).map((c) => c.recordingMbid);
+    perFile.push({ filePath, durationMs: durationSeconds * 1000, recMbids });
+  }
+
+  // Candidate release-groups come from the files' candidate recordings.
+  const recCache = new Map();
+  const releaseGroupMbids = new Set();
+  for (const f of perFile) {
+    for (const recMbid of f.recMbids) {
+      if (!recCache.has(recMbid)) recCache.set(recMbid, await getRecording(recMbid));
+      for (const rg of recCache.get(recMbid).releaseGroups || []) releaseGroupMbids.add(rg.mbid);
+    }
+  }
+  if (releaseGroupMbids.size === 0) {
+    return { reason: 'no confident AcoustID matches for the album tracks' };
+  }
+
+  // First release-group that resolves to a release whose tracklist coherently
+  // explains the whole folder wins (all-or-nothing at the folder level).
+  for (const rgMbid of releaseGroupMbids) {
+    const releaseId = await resolvePrimaryReleaseForGroup(rgMbid);
+    if (!releaseId) continue;
+    const { release, tracks } = await getReleaseWithTracks(releaseId);
+    if (tracks.length !== files.length) continue;
+    if (!albumIsCoherent(perFile, tracks)) continue;
+    const coverImage = await getFrontCoverImage(rgMbid);
+    return { release, tracks, coverImage };
+  }
+  return { reason: 'no release coherently matched the whole folder' };
+}
+
+async function processAlbumFolder(item) {
+  const entries = await fs.readdir(item.path);
+  const files = entries
+    .filter(isAudioFile)
+    .sort()
+    .map((name) => path.join(item.path, name));
+
+  const identified = await identifyAlbum(files);
+  if (identified.reason) {
+    return { needsReview: [{ path: item.path, name: item.name, reason: identified.reason }] };
+  }
+
+  const { release, tracks, coverImage } = identified;
+  const multiDisc = release.discCount > 1;
+  const matched = [];
+  const needsReview = [];
+
+  for (let i = 0; i < files.length; i += 1) {
+    const filePath = files[i];
+    const track = tracks[i];
+    const name = path.basename(filePath);
+    const discNumber = multiDisc ? track.discNumber : null;
+
+    const { filledFields } = await writeMissingTags(
+      filePath,
+      {
+        artist: release.artist,
+        title: track.title,
+        album: release.title,
+        trackNumber: track.position,
+        disc: discNumber,
+      },
+      { coverImage }
+    );
+
+    const moved = await moveFileSafely(filePath, name, {
+      artist: release.artist,
+      album: release.title,
+      title: track.title,
+      trackNumber: track.position,
+      discNumber,
+    });
+    if (moved.needsReview) {
+      needsReview.push(moved.needsReview);
+      continue;
+    }
+    matched.push({
+      path: filePath,
+      name,
+      recordingMbid: track.recordingMbid,
+      title: track.title,
+      artist: release.artist,
+      album: release.title,
+      filledFields,
+      movedTo: moved.movedTo,
+    });
+  }
+
+  return { matched, needsReview };
 }
 
 export async function processIngest() {
@@ -107,14 +256,11 @@ export async function processIngest() {
 
   for (const item of items) {
     try {
-      if (item.type === 'album') {
-        needsReview.push({ path: item.path, name: item.name, reason: 'album folders are not yet supported (coming in a later phase)' });
-        continue;
+      const result = item.type === 'album' ? await processAlbumFolder(item) : await processLooseFile(item);
+      if (result.matched) matched.push(...(Array.isArray(result.matched) ? result.matched : [result.matched]));
+      if (result.needsReview) {
+        needsReview.push(...(Array.isArray(result.needsReview) ? result.needsReview : [result.needsReview]));
       }
-
-      const result = await processLooseFile(item);
-      if (result.matched) matched.push(result.matched);
-      else needsReview.push(result.needsReview);
     } catch (err) {
       if (err instanceof RateLimitedError) {
         return { matched, needsReview, error: { code: err.code, message: err.message } };

@@ -62,7 +62,7 @@ test('scanIngestDir distinguishes loose files from album folders and ignores jun
   });
 });
 
-test('processIngest moves nothing yet for a confirmed loose file, tags it, and reports it matched', async (t) => {
+test('processIngest tags a confirmed loose file, moves it into the library, and reports it matched', async (t) => {
   await withIngestDir(async (dir) => {
     await fs.writeFile(path.join(dir, 'track.mp3'), 'fake-audio');
 
@@ -74,6 +74,10 @@ test('processIngest moves nothing yet for a confirmed loose file, tags it, and r
     });
     t.mock.module('../src/services/musicbrainz.js', {
       exports: {
+        // Stubs so ingest.js can link all three named imports; tests that
+        // exercise the album path override these with real values below.
+        resolvePrimaryReleaseForGroup: async () => null,
+        getReleaseWithTracks: async () => ({ release: {}, tracks: [] }),
         getRecording: async () => ({
           mbid: 'rec-1', title: 'Track Title', lengthMs: 200000, artist: 'Track Artist',
           releaseGroups: [{ mbid: 'rg-1', title: 'Track Album' }], date: '2020-01-01',
@@ -83,7 +87,7 @@ test('processIngest moves nothing yet for a confirmed loose file, tags it, and r
     t.mock.module('../src/services/tags.js', {
       exports: {
         readTags: async () => ({
-          artist: null, title: null, album: null, trackNumber: null, year: null, genre: null, hasCoverArt: false,
+          artist: null, title: null, album: null, trackNumber: null, disc: null, year: null, genre: null, hasCoverArt: false,
         }),
         writeMissingTags: async () => ({ filledFields: ['artist', 'title', 'album'] }),
       },
@@ -91,12 +95,175 @@ test('processIngest moves nothing yet for a confirmed loose file, tags it, and r
     t.mock.module('../src/services/coverArt.js', {
       exports: { getFrontCoverImage: async () => null },
     });
+    let moveArgs;
+    t.mock.module('../src/services/organize.js', {
+      exports: {
+        moveIntoLibrary: async (srcPath, meta, ext) => {
+          moveArgs = { srcPath, meta, ext };
+          return { movedTo: '/music/Track Artist/Track Album/Track Title.mp3', duplicate: false };
+        },
+      },
+    });
 
     const processIngestFresh = await freshProcessIngest();
     const result = await processIngestFresh();
     assert.equal(result.matched.length, 1);
     assert.equal(result.matched[0].recordingMbid, 'rec-1');
+    assert.equal(result.matched[0].movedTo, '/music/Track Artist/Track Album/Track Title.mp3');
     assert.equal(result.needsReview.length, 0);
+    assert.equal(moveArgs.meta.album, 'Track Album');
+    assert.equal(moveArgs.ext, '.mp3');
+  });
+});
+
+test('a confirmed loose file with no release group is filed under Singles with no album tag', async (t) => {
+  await withIngestDir(async (dir) => {
+    await fs.writeFile(path.join(dir, 'single.mp3'), 'fake-audio');
+
+    t.mock.module('../src/services/fpcalc.js', {
+      exports: { fingerprint: async () => ({ durationSeconds: 200, fingerprint: 'AQAB...' }) },
+    });
+    t.mock.module('../src/services/acoustid.js', {
+      exports: { lookup: async () => [{ recordingMbid: 'rec-s', score: 0.9 }] },
+    });
+    t.mock.module('../src/services/musicbrainz.js', {
+      exports: {
+        // Stubs so ingest.js can link all three named imports; tests that
+        // exercise the album path override these with real values below.
+        resolvePrimaryReleaseForGroup: async () => null,
+        getReleaseWithTracks: async () => ({ release: {}, tracks: [] }),
+        getRecording: async () => ({
+          mbid: 'rec-s', title: 'Lonely Single', lengthMs: 200000, artist: 'Solo Artist',
+          releaseGroups: [], date: '2019-01-01',
+        }),
+      },
+    });
+    let writtenDesired;
+    t.mock.module('../src/services/tags.js', {
+      exports: {
+        readTags: async () => ({
+          artist: null, title: null, album: null, trackNumber: null, disc: null, year: null, genre: null, hasCoverArt: false,
+        }),
+        writeMissingTags: async (filePath, desired) => {
+          writtenDesired = desired;
+          return { filledFields: ['artist', 'title'] };
+        },
+      },
+    });
+    t.mock.module('../src/services/coverArt.js', {
+      exports: { getFrontCoverImage: async () => null },
+    });
+    let moveMeta;
+    t.mock.module('../src/services/organize.js', {
+      exports: {
+        moveIntoLibrary: async (srcPath, meta) => {
+          moveMeta = meta;
+          return { movedTo: '/music/Solo Artist/Singles/Lonely Single.mp3', duplicate: false };
+        },
+      },
+    });
+
+    const processIngestFresh = await freshProcessIngest();
+    const result = await processIngestFresh();
+    assert.equal(result.matched.length, 1);
+    assert.equal(moveMeta.album, 'Singles', 'a track with no release group is filed under Singles');
+    assert.equal(writtenDesired.album, null, 'the album tag itself must stay empty, not "Singles"');
+  });
+});
+
+test('a confirmed loose file whose move fails is reported as tagged-but-not-moved', async (t) => {
+  await withIngestDir(async (dir) => {
+    await fs.writeFile(path.join(dir, 'track.mp3'), 'fake-audio');
+
+    t.mock.module('../src/services/fpcalc.js', {
+      exports: { fingerprint: async () => ({ durationSeconds: 200, fingerprint: 'AQAB...' }) },
+    });
+    t.mock.module('../src/services/acoustid.js', {
+      exports: { lookup: async () => [{ recordingMbid: 'rec-1', score: 0.9 }] },
+    });
+    t.mock.module('../src/services/musicbrainz.js', {
+      exports: {
+        // Stubs so ingest.js can link all three named imports; tests that
+        // exercise the album path override these with real values below.
+        resolvePrimaryReleaseForGroup: async () => null,
+        getReleaseWithTracks: async () => ({ release: {}, tracks: [] }),
+        getRecording: async () => ({
+          mbid: 'rec-1', title: 'T', lengthMs: 200000, artist: 'A',
+          releaseGroups: [{ mbid: 'rg-1', title: 'Alb' }], date: '2020-01-01',
+        }),
+      },
+    });
+    t.mock.module('../src/services/tags.js', {
+      exports: {
+        readTags: async () => ({
+          artist: null, title: null, album: null, trackNumber: null, disc: null, year: null, genre: null, hasCoverArt: false,
+        }),
+        writeMissingTags: async () => ({ filledFields: ['artist', 'title', 'album'] }),
+      },
+    });
+    t.mock.module('../src/services/coverArt.js', {
+      exports: { getFrontCoverImage: async () => null },
+    });
+    t.mock.module('../src/services/organize.js', {
+      exports: {
+        moveIntoLibrary: async () => {
+          const err = new Error('EACCES: permission denied');
+          err.code = 'EACCES';
+          throw err;
+        },
+      },
+    });
+
+    const processIngestFresh = await freshProcessIngest();
+    const result = await processIngestFresh();
+    assert.equal(result.matched.length, 0);
+    assert.equal(result.needsReview.length, 1);
+    assert.match(result.needsReview[0].reason, /tagged in place, but could not be moved/i);
+  });
+});
+
+test('a byte-identical duplicate is left in place and reported as needsReview', async (t) => {
+  await withIngestDir(async (dir) => {
+    await fs.writeFile(path.join(dir, 'dup.mp3'), 'fake-audio');
+
+    t.mock.module('../src/services/fpcalc.js', {
+      exports: { fingerprint: async () => ({ durationSeconds: 200, fingerprint: 'AQAB...' }) },
+    });
+    t.mock.module('../src/services/acoustid.js', {
+      exports: { lookup: async () => [{ recordingMbid: 'rec-1', score: 0.9 }] },
+    });
+    t.mock.module('../src/services/musicbrainz.js', {
+      exports: {
+        // Stubs so ingest.js can link all three named imports; tests that
+        // exercise the album path override these with real values below.
+        resolvePrimaryReleaseForGroup: async () => null,
+        getReleaseWithTracks: async () => ({ release: {}, tracks: [] }),
+        getRecording: async () => ({
+          mbid: 'rec-1', title: 'T', lengthMs: 200000, artist: 'A',
+          releaseGroups: [{ mbid: 'rg-1', title: 'Alb' }], date: '2020-01-01',
+        }),
+      },
+    });
+    t.mock.module('../src/services/tags.js', {
+      exports: {
+        readTags: async () => ({
+          artist: null, title: null, album: null, trackNumber: null, disc: null, year: null, genre: null, hasCoverArt: false,
+        }),
+        writeMissingTags: async () => ({ filledFields: [] }),
+      },
+    });
+    t.mock.module('../src/services/coverArt.js', {
+      exports: { getFrontCoverImage: async () => null },
+    });
+    t.mock.module('../src/services/organize.js', {
+      exports: { moveIntoLibrary: async () => ({ movedTo: null, duplicate: true }) },
+    });
+
+    const processIngestFresh = await freshProcessIngest();
+    const result = await processIngestFresh();
+    assert.equal(result.matched.length, 0);
+    assert.equal(result.needsReview.length, 1);
+    assert.match(result.needsReview[0].reason, /identical file already exists/i);
   });
 });
 
@@ -147,6 +314,10 @@ test('processIngest reports needsReview when duration/score confirmation fails',
     });
     t.mock.module('../src/services/musicbrainz.js', {
       exports: {
+        // Stubs so ingest.js can link all three named imports; tests that
+        // exercise the album path override these with real values below.
+        resolvePrimaryReleaseForGroup: async () => null,
+        getReleaseWithTracks: async () => ({ release: {}, tracks: [] }),
         getRecording: async () => ({
           mbid: 'rec-2', title: 'Wrong Length Track', lengthMs: 400000, artist: 'A', releaseGroups: [], date: null,
         }),
@@ -160,15 +331,207 @@ test('processIngest reports needsReview when duration/score confirmation fails',
   });
 });
 
-test('a directory entry is reported as needsReview with an "album folders not yet supported" reason', async (t) => {
+test('a coherent single-disc album folder tags and moves every track', async (t) => {
   await withIngestDir(async (dir) => {
     await fs.mkdir(path.join(dir, 'An Album'));
-    await fs.writeFile(path.join(dir, 'An Album', 'track1.mp3'), 'fake-audio');
+    await fs.writeFile(path.join(dir, 'An Album', '1.mp3'), 'fake-audio');
+    await fs.writeFile(path.join(dir, 'An Album', '2.mp3'), 'fake-audio');
 
-    const result = await processIngest();
+    t.mock.module('../src/services/fpcalc.js', {
+      exports: {
+        fingerprint: async (filePath) =>
+          filePath.endsWith('1.mp3')
+            ? { durationSeconds: 180, fingerprint: 'FP1' }
+            : { durationSeconds: 200, fingerprint: 'FP2' },
+      },
+    });
+    t.mock.module('../src/services/acoustid.js', {
+      exports: {
+        lookup: async ({ fingerprint: fp }) =>
+          fp === 'FP1' ? [{ recordingMbid: 'rec-1', score: 0.9 }] : [{ recordingMbid: 'rec-2', score: 0.9 }],
+      },
+    });
+    t.mock.module('../src/services/musicbrainz.js', {
+      exports: {
+        // Stubs so ingest.js can link all three named imports; tests that
+        // exercise the album path override these with real values below.
+        resolvePrimaryReleaseForGroup: async () => null,
+        getReleaseWithTracks: async () => ({ release: {}, tracks: [] }),
+        getRecording: async (mbid) => ({
+          mbid, title: mbid, lengthMs: 0, artist: 'The Band',
+          releaseGroups: [{ mbid: 'rg-1', title: 'An Album' }], date: '2005-01-01',
+        }),
+        resolvePrimaryReleaseForGroup: async () => 'release-1',
+        getReleaseWithTracks: async () => ({
+          release: { mbid: 'release-1', title: 'An Album', artist: 'The Band', discCount: 1 },
+          tracks: [
+            { position: 1, discNumber: 1, recordingMbid: 'rec-1', title: 'Opener', lengthMs: 180000 },
+            { position: 2, discNumber: 1, recordingMbid: 'rec-2', title: 'Closer', lengthMs: 200000 },
+          ],
+        }),
+      },
+    });
+    const written = [];
+    t.mock.module('../src/services/tags.js', {
+      exports: {
+        readTags: async () => ({}),
+        writeMissingTags: async (filePath, desired) => {
+          written.push(desired);
+          return { filledFields: ['artist', 'title', 'album', 'trackNumber'] };
+        },
+      },
+    });
+    t.mock.module('../src/services/coverArt.js', {
+      exports: { getFrontCoverImage: async () => ({ bytes: Buffer.from([1]), mimeType: 'image/jpeg' }) },
+    });
+    const moves = [];
+    t.mock.module('../src/services/organize.js', {
+      exports: {
+        moveIntoLibrary: async (srcPath, meta, ext) => {
+          moves.push(meta);
+          return { movedTo: `/music/${meta.artist}/${meta.album}/${meta.trackNumber}${ext}`, duplicate: false };
+        },
+      },
+    });
+
+    const processIngestFresh = await freshProcessIngest();
+    const result = await processIngestFresh();
+    assert.equal(result.matched.length, 2);
+    assert.equal(result.needsReview.length, 0);
+    // Single-disc release: no disc number written or passed to the mover.
+    assert.equal(written[0].disc, null);
+    assert.equal(moves[0].discNumber, null);
+    assert.deepEqual(moves.map((m) => m.trackNumber), [1, 2]);
+    assert.deepEqual(moves.map((m) => m.title), ['Opener', 'Closer']);
+  });
+});
+
+test('a coherent two-disc album folder writes disc numbers and disc-aware move metadata', async (t) => {
+  await withIngestDir(async (dir) => {
+    await fs.mkdir(path.join(dir, 'Double'));
+    await fs.writeFile(path.join(dir, 'Double', 'a.mp3'), 'fake-audio');
+    await fs.writeFile(path.join(dir, 'Double', 'b.mp3'), 'fake-audio');
+    await fs.writeFile(path.join(dir, 'Double', 'c.mp3'), 'fake-audio');
+
+    t.mock.module('../src/services/fpcalc.js', {
+      exports: { fingerprint: async () => ({ durationSeconds: 180, fingerprint: 'FP' }) },
+    });
+    t.mock.module('../src/services/acoustid.js', {
+      exports: { lookup: async () => [{ recordingMbid: 'rec-x', score: 0.9 }] },
+    });
+    t.mock.module('../src/services/musicbrainz.js', {
+      exports: {
+        // Stubs so ingest.js can link all three named imports; tests that
+        // exercise the album path override these with real values below.
+        resolvePrimaryReleaseForGroup: async () => null,
+        getReleaseWithTracks: async () => ({ release: {}, tracks: [] }),
+        getRecording: async () => ({
+          mbid: 'rec-x', title: 'x', lengthMs: 0, artist: 'The Band',
+          releaseGroups: [{ mbid: 'rg-2', title: 'Double' }], date: '2005-01-01',
+        }),
+        resolvePrimaryReleaseForGroup: async () => 'release-2',
+        getReleaseWithTracks: async () => ({
+          release: { mbid: 'release-2', title: 'Double', artist: 'The Band', discCount: 2 },
+          tracks: [
+            { position: 1, discNumber: 1, recordingMbid: null, title: 'D1T1', lengthMs: 180000 },
+            { position: 2, discNumber: 1, recordingMbid: null, title: 'D1T2', lengthMs: 180000 },
+            { position: 1, discNumber: 2, recordingMbid: null, title: 'D2T1', lengthMs: 180000 },
+          ],
+        }),
+      },
+    });
+    const written = [];
+    t.mock.module('../src/services/tags.js', {
+      exports: {
+        readTags: async () => ({}),
+        writeMissingTags: async (filePath, desired) => {
+          written.push(desired);
+          return { filledFields: ['artist', 'title', 'album', 'trackNumber', 'disc'] };
+        },
+      },
+    });
+    t.mock.module('../src/services/coverArt.js', {
+      exports: { getFrontCoverImage: async () => null },
+    });
+    const moves = [];
+    t.mock.module('../src/services/organize.js', {
+      exports: {
+        moveIntoLibrary: async (srcPath, meta) => {
+          moves.push(meta);
+          return { movedTo: `/music/${meta.discNumber}-${meta.trackNumber}`, duplicate: false };
+        },
+      },
+    });
+
+    const processIngestFresh = await freshProcessIngest();
+    const result = await processIngestFresh();
+    assert.equal(result.matched.length, 3);
+    assert.deepEqual(written.map((w) => w.disc), [1, 1, 2]);
+    assert.deepEqual(moves.map((m) => ({ disc: m.discNumber, track: m.trackNumber })), [
+      { disc: 1, track: 1 },
+      { disc: 1, track: 2 },
+      { disc: 2, track: 1 },
+    ]);
+  });
+});
+
+test('an incoherent album folder (track count mismatch) is left untouched and reported as needsReview', async (t) => {
+  await withIngestDir(async (dir) => {
+    await fs.mkdir(path.join(dir, 'Messy'));
+    await fs.writeFile(path.join(dir, 'Messy', '1.mp3'), 'fake-audio');
+    await fs.writeFile(path.join(dir, 'Messy', '2.mp3'), 'fake-audio');
+
+    t.mock.module('../src/services/fpcalc.js', {
+      exports: { fingerprint: async () => ({ durationSeconds: 180, fingerprint: 'FP' }) },
+    });
+    t.mock.module('../src/services/acoustid.js', {
+      exports: { lookup: async () => [{ recordingMbid: 'rec-1', score: 0.9 }] },
+    });
+    let moveCalled = false;
+    t.mock.module('../src/services/musicbrainz.js', {
+      exports: {
+        // Stubs so ingest.js can link all three named imports; tests that
+        // exercise the album path override these with real values below.
+        resolvePrimaryReleaseForGroup: async () => null,
+        getReleaseWithTracks: async () => ({ release: {}, tracks: [] }),
+        getRecording: async () => ({
+          mbid: 'rec-1', title: 'x', lengthMs: 0, artist: 'The Band',
+          releaseGroups: [{ mbid: 'rg-3', title: 'Messy' }], date: null,
+        }),
+        resolvePrimaryReleaseForGroup: async () => 'release-3',
+        // Release has 3 tracks but the folder has only 2 → incoherent.
+        getReleaseWithTracks: async () => ({
+          release: { mbid: 'release-3', title: 'Messy', artist: 'The Band', discCount: 1 },
+          tracks: [
+            { position: 1, discNumber: 1, recordingMbid: 'rec-1', title: 'A', lengthMs: 180000 },
+            { position: 2, discNumber: 1, recordingMbid: 'rec-2', title: 'B', lengthMs: 180000 },
+            { position: 3, discNumber: 1, recordingMbid: 'rec-3', title: 'C', lengthMs: 180000 },
+          ],
+        }),
+      },
+    });
+    t.mock.module('../src/services/tags.js', {
+      exports: { readTags: async () => ({}), writeMissingTags: async () => ({ filledFields: [] }) },
+    });
+    t.mock.module('../src/services/coverArt.js', {
+      exports: { getFrontCoverImage: async () => null },
+    });
+    t.mock.module('../src/services/organize.js', {
+      exports: {
+        moveIntoLibrary: async () => {
+          moveCalled = true;
+          return { movedTo: '/music/x', duplicate: false };
+        },
+      },
+    });
+
+    const processIngestFresh = await freshProcessIngest();
+    const result = await processIngestFresh();
     assert.equal(result.matched.length, 0);
     assert.equal(result.needsReview.length, 1);
-    assert.match(result.needsReview[0].reason, /album folders/i);
+    assert.equal(result.needsReview[0].name, 'Messy');
+    assert.match(result.needsReview[0].reason, /coherently matched/i);
+    assert.equal(moveCalled, false, 'nothing in an incoherent folder should be moved');
   });
 });
 
@@ -195,6 +558,10 @@ test('a non-rate-limit error on one item is caught, reported as needsReview, and
     });
     t.mock.module('../src/services/musicbrainz.js', {
       exports: {
+        // Stubs so ingest.js can link all three named imports; tests that
+        // exercise the album path override these with real values below.
+        resolvePrimaryReleaseForGroup: async () => null,
+        getReleaseWithTracks: async () => ({ release: {}, tracks: [] }),
         getRecording: async () => ({
           mbid: 'rec-1', title: 'Track Title', lengthMs: 200000, artist: 'Track Artist',
           releaseGroups: [{ mbid: 'rg-1', title: 'Track Album' }], date: '2020-01-01',
@@ -204,13 +571,16 @@ test('a non-rate-limit error on one item is caught, reported as needsReview, and
     t.mock.module('../src/services/tags.js', {
       exports: {
         readTags: async () => ({
-          artist: null, title: null, album: null, trackNumber: null, year: null, genre: null, hasCoverArt: false,
+          artist: null, title: null, album: null, trackNumber: null, disc: null, year: null, genre: null, hasCoverArt: false,
         }),
         writeMissingTags: async () => ({ filledFields: ['artist', 'title', 'album'] }),
       },
     });
     t.mock.module('../src/services/coverArt.js', {
       exports: { getFrontCoverImage: async () => null },
+    });
+    t.mock.module('../src/services/organize.js', {
+      exports: { moveIntoLibrary: async () => ({ movedTo: '/music/b.mp3', duplicate: false }) },
     });
 
     const processIngestFresh = await freshProcessIngest();
