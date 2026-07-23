@@ -19,11 +19,11 @@ export default function IngestPanel() {
     }
   }
 
-  async function handleProcess() {
+  async function runProcess({ dryRun }) {
     setState('running');
     setError(null);
     try {
-      const data = await post('/ingest/process', {});
+      const data = await post('/ingest/process', { dryRun });
       setResult(data);
       setState(data.error ? 'error' : 'done');
       if (data.error) setError(data.error);
@@ -33,14 +33,21 @@ export default function IngestPanel() {
     }
   }
 
+  const isPreview = result?.dryRun === true;
+
   return (
     <div className="bulk-verify-panel">
       <div className="bulk-verify-actions">
-        <button onClick={handleScan}>Scan ingest folder</button>
+        <button onClick={handleScan} disabled={state === 'running'}>Scan ingest folder</button>
         {items && items.length > 0 && (
-          <button onClick={handleProcess} disabled={state === 'running'}>
-            Process {items.length} item{items.length === 1 ? '' : 's'}
-          </button>
+          <>
+            <button onClick={() => runProcess({ dryRun: true })} disabled={state === 'running'}>
+              Preview {items.length} item{items.length === 1 ? '' : 's'}
+            </button>
+            <button onClick={() => runProcess({ dryRun: false })} disabled={state === 'running'}>
+              Process {items.length} item{items.length === 1 ? '' : 's'}
+            </button>
+          </>
         )}
       </div>
 
@@ -54,15 +61,23 @@ export default function IngestPanel() {
         </p>
       )}
 
+      {isPreview && state === 'done' && (
+        <p className="banner">Preview only — no tags were written and no files were moved.</p>
+      )}
+
       {result && (
         <>
-          <h2>Matched &amp; tagged ({result.matched.length})</h2>
+          <h2>{isPreview ? 'Would match & tag' : 'Matched & tagged'} ({result.matched.length})</h2>
           {result.matched.length === 0 ? (
             <p className="muted">Nothing was confidently matched this run.</p>
           ) : (
             <table>
               <thead>
-                <tr><th>File</th><th>Title</th><th>Artist</th><th>Fields filled</th></tr>
+                <tr>
+                  <th>File</th><th>Title</th><th>Artist</th>
+                  <th>{isPreview ? 'Would fill' : 'Fields filled'}</th>
+                  <th>{isPreview ? 'Would move to' : 'Moved to'}</th>
+                </tr>
               </thead>
               <tbody>
                 {result.matched.map((m) => (
@@ -71,6 +86,7 @@ export default function IngestPanel() {
                     <td>{m.title}</td>
                     <td>{m.artist}</td>
                     <td>{m.filledFields.join(', ') || 'none (already complete)'}</td>
+                    <td className="muted">{m.movedTo || '—'}</td>
                   </tr>
                 ))}
               </tbody>
