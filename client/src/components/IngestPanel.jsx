@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { get, post } from '../api/client.js';
+import { addEntry } from '../lib/history.js';
 import EqualizerLoader from './EqualizerLoader.jsx';
 
 export default function IngestPanel() {
@@ -27,6 +28,12 @@ export default function IngestPanel() {
       setResult(data);
       setState(data.error ? 'error' : 'done');
       if (data.error) setError(data.error);
+      // Log only real ingests, never previews.
+      if (!dryRun) {
+        for (const m of data.matched) {
+          addEntry({ track: m.title, artist: m.artist, album: m.album, action: 'ingested' });
+        }
+      }
     } catch (err) {
       setError(err);
       setState('error');

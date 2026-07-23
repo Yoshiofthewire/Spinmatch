@@ -2,7 +2,9 @@ import { useState } from 'react';
 import { getHistory, clearHistory } from '../lib/history.js';
 
 function actionLabel(action) {
-  return action === 'sent' ? 'Sent to MeTube' : 'Verified';
+  if (action === 'sent') return 'Sent to MeTube';
+  if (action === 'ingested') return 'Ingested';
+  return 'Verified';
 }
 
 export default function HistoryPage() {

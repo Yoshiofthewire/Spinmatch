@@ -152,6 +152,7 @@ async function processLooseFile(item, { dryRun }) {
       recordingMbid: confirmed.mbid,
       title: confirmed.title,
       artist: confirmed.artist,
+      album: albumTitle,
       filledFields,
       current,
       movedTo: moved.movedTo,
