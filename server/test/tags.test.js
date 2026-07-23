@@ -59,6 +59,30 @@ test('writeMissingTags fills blank fields on an untagged fixture', async () => {
   });
 });
 
+test('writeMissingTags fills a blank disc number and reads it back', async () => {
+  await withCopiedFixture('silence.mp3', async (file) => {
+    const before = await readTags(file);
+    assert.equal(before.disc, null);
+
+    const { filledFields } = await writeMissingTags(file, { artist: 'A', title: 'T', album: 'B', disc: 2 });
+    assert.ok(filledFields.includes('disc'));
+
+    const after = await readTags(file);
+    assert.equal(after.disc, 2);
+  });
+});
+
+test('writeMissingTags never overwrites an existing disc number', async () => {
+  await withCopiedFixture('silence.mp3', async (file) => {
+    await writeMissingTags(file, { artist: 'A', title: 'T', album: 'B', disc: 1 });
+    const { filledFields } = await writeMissingTags(file, { artist: 'A', title: 'T', album: 'B', disc: 2 });
+    assert.ok(!filledFields.includes('disc'));
+
+    const after = await readTags(file);
+    assert.equal(after.disc, 1);
+  });
+});
+
 test('writeMissingTags never overwrites a field that already has a value', async () => {
   await withCopiedFixture('tagged.mp3', async (file) => {
     const { filledFields } = await writeMissingTags(file, {

@@ -135,6 +135,7 @@ test('getReleaseWithTracks flattens media/tracks into a single track list', asyn
     'artist-credit': [{ name: '311' }],
     media: [
       {
+        position: 1,
         tracks: [
           { position: 1, title: 'Welcome', length: 175054, recording: { id: 'rec-1', length: 175054 } },
           { position: 2, title: 'Freak Out', length: 222816, recording: { id: 'rec-2', length: 222816 } },
@@ -145,9 +146,47 @@ test('getReleaseWithTracks flattens media/tracks into a single track list', asyn
 
   const { release, tracks } = await getReleaseWithTracks('release-tracks-test');
   assert.equal(release.artist, '311');
+  assert.equal(release.discCount, 1);
   assert.equal(tracks.length, 2);
   assert.equal(tracks[0].title, 'Welcome');
   assert.equal(tracks[0].lengthMs, 175054);
+  assert.equal(tracks[0].discNumber, 1);
+});
+
+test('getReleaseWithTracks tags each track with its disc number on a multi-disc release', async () => {
+  const pool = mockMusicBrainz();
+  pool.intercept({ path: '/ws/2/release/multi-disc-test?inc=recordings%2Bartist-credits&fmt=json' }).reply(200, {
+    id: 'multi-disc-test',
+    title: 'Double Album',
+    'artist-credit': [{ name: 'The Band' }],
+    media: [
+      {
+        position: 1,
+        tracks: [
+          { position: 1, title: 'D1T1', length: 180000, recording: { id: 'rec-11', length: 180000 } },
+          { position: 2, title: 'D1T2', length: 190000, recording: { id: 'rec-12', length: 190000 } },
+        ],
+      },
+      {
+        position: 2,
+        tracks: [
+          { position: 1, title: 'D2T1', length: 200000, recording: { id: 'rec-21', length: 200000 } },
+        ],
+      },
+    ],
+  });
+
+  const { release, tracks } = await getReleaseWithTracks('multi-disc-test');
+  assert.equal(release.discCount, 2);
+  assert.equal(tracks.length, 3);
+  assert.deepEqual(
+    tracks.map((t) => ({ disc: t.discNumber, pos: t.position, title: t.title })),
+    [
+      { disc: 1, pos: 1, title: 'D1T1' },
+      { disc: 1, pos: 2, title: 'D1T2' },
+      { disc: 2, pos: 1, title: 'D2T1' },
+    ]
+  );
 });
 
 test('getRecording flattens a MusicBrainz recording response', async () => {

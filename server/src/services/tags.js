@@ -5,6 +5,7 @@ const FIELD_TO_TAG_PROP = {
   title: 'title',
   album: 'album',
   trackNumber: 'track',
+  disc: 'disc',
   year: 'year',
   genre: 'genres',
 };
@@ -37,6 +38,7 @@ export async function readTags(filePath) {
       title: readField(tag, 'title'),
       album: readField(tag, 'album'),
       trackNumber: readField(tag, 'trackNumber'),
+      disc: readField(tag, 'disc'),
       year: readField(tag, 'year'),
       genre: readField(tag, 'genre'),
       hasCoverArt: Boolean(tag.pictures && tag.pictures.length > 0),

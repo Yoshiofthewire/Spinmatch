@@ -119,23 +119,28 @@ export async function resolvePrimaryReleaseForGroup(releaseGroupMbid) {
 export async function getReleaseWithTracks(releaseMbid) {
   const res = await mbFetch(`/release/${releaseMbid}`, { inc: 'recordings+artist-credits' });
 
+  const media = res.media || [];
   const tracks = [];
-  for (const medium of res.media || []) {
+  media.forEach((medium, index) => {
+    // MusicBrainz numbers media (discs) with `position`; fall back to order.
+    const discNumber = medium.position ?? index + 1;
     for (const track of medium.tracks || []) {
       tracks.push({
         position: track.position,
+        discNumber,
         recordingMbid: track.recording?.id || null,
         title: track.title,
         lengthMs: track.length || track.recording?.length || null,
       });
     }
-  }
+  });
 
   return {
     release: {
       mbid: res.id,
       title: res.title,
       artist: (res['artist-credit'] || []).map((c) => c.name).join(''),
+      discCount: media.length,
     },
     tracks,
   };
