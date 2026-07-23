@@ -61,14 +61,16 @@ this app is hosted.
 ### Optional: local library ingest
 
 If you set `ACOUSTID_API_KEY`, `INGEST_DIR`, and `MUSIC_DIR` (see `.env.example`), an "Ingest"
-page appears letting you drop new audio into `INGEST_DIR` and have Spinmatch identify each loose
-track by acoustic fingerprint (via [Chromaprint](https://acoustid.org/chromaprint)/
-[AcoustID](https://acoustid.org/)), confirm it against the MusicBrainz-recorded duration, and fill
-in whichever tags are missing (never overwriting ones you already have) plus embed cover art —
-all in place, without moving the file. Whole album folders are scanned but not yet processed;
-they're currently listed as "needs review" until per-track handling for albums lands in a later
-update, as is moving confirmed files into an organized `{Artist}/{Album}/{Track} - {Title}`
-structure under `MUSIC_DIR`.
+page appears letting you drop new audio (loose files or whole album folders) into `INGEST_DIR`
+and have Spinmatch identify each track by acoustic fingerprint (via
+[Chromaprint](https://acoustid.org/chromaprint)/[AcoustID](https://acoustid.org/)), confirm it
+against the MusicBrainz-recorded duration, fill in whichever tags are missing (never overwriting
+ones you already have), embed cover art, and move the confirmed file into an organized
+`{Artist}/{Album}/{Track} - {Title}` structure under `MUSIC_DIR`. Tracks with no album land under
+`{Artist}/Singles/`, and multi-disc releases get disc-prefixed track names. Album folders are
+handled as a unit: a folder is only tagged and moved when a single release cleanly accounts for
+every file in it — otherwise the whole folder is left untouched for review. If a file identical
+to one already in your library turns up, it's left in place rather than duplicated.
 
 Get a free AcoustID API key at [acoustid.org/new-application](https://acoustid.org/new-application).
 `fpcalc` (Chromaprint's command-line tool) must be installed and on `PATH` — the Docker image
