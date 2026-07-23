@@ -1,13 +1,22 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { get, post } from '../api/client.js';
 import { addEntry } from '../lib/history.js';
 import EqualizerLoader from './EqualizerLoader.jsx';
+
+// Log only real ingests, never previews.
+function logIngested(matched) {
+  for (const m of matched) {
+    addEntry({ track: m.title, artist: m.artist, album: m.album, action: 'ingested' });
+  }
+}
 
 export default function IngestPanel() {
   const [items, setItems] = useState(null);
   const [state, setState] = useState('idle'); // idle | running | done | error
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
+  const [processed, setProcessed] = useState(0);
+  const doneRef = useRef(false);
 
   async function handleScan() {
     setError(null);
@@ -20,24 +29,65 @@ export default function IngestPanel() {
     }
   }
 
-  async function runProcess({ dryRun }) {
-    setState('running');
-    setError(null);
+  // Fallback for environments without EventSource: one blocking request.
+  async function runBlocking({ dryRun }) {
     try {
       const data = await post('/ingest/process', { dryRun });
       setResult(data);
       setState(data.error ? 'error' : 'done');
       if (data.error) setError(data.error);
-      // Log only real ingests, never previews.
-      if (!dryRun) {
-        for (const m of data.matched) {
-          addEntry({ track: m.title, artist: m.artist, album: m.album, action: 'ingested' });
-        }
-      }
+      else if (!dryRun) logIngested(data.matched);
     } catch (err) {
       setError(err);
       setState('error');
     }
+  }
+
+  function runProcess({ dryRun }) {
+    setState('running');
+    setError(null);
+    setProcessed(0);
+    if (typeof EventSource === 'undefined') {
+      runBlocking({ dryRun });
+      return;
+    }
+
+    doneRef.current = false;
+    const acc = { matched: [], needsReview: [], dryRun };
+    setResult({ matched: [], needsReview: [], dryRun });
+    const es = new EventSource(`/api/ingest/process-stream${dryRun ? '?dryRun=1' : ''}`);
+
+    es.addEventListener('item', (e) => {
+      const item = JSON.parse(e.data);
+      if (item.kind === 'matched') acc.matched.push(item);
+      else acc.needsReview.push(item);
+      setResult({ matched: [...acc.matched], needsReview: [...acc.needsReview], dryRun });
+      setProcessed((n) => n + 1);
+    });
+    es.addEventListener('done', (e) => {
+      doneRef.current = true;
+      es.close();
+      const summary = JSON.parse(e.data);
+      if (summary.error) {
+        setError(summary.error);
+        setState('error');
+        return;
+      }
+      setState('done');
+      if (!dryRun) logIngested(acc.matched);
+    });
+    es.addEventListener('error', (e) => {
+      if (doneRef.current) return; // normal stream close right after a done event
+      es.close();
+      let message = 'The ingest stream failed.';
+      try {
+        if (e.data) message = JSON.parse(e.data).message;
+      } catch {
+        /* connection-level error carries no data */
+      }
+      setError({ message });
+      setState('error');
+    });
   }
 
   const isPreview = result?.dryRun === true;
@@ -60,7 +110,9 @@ export default function IngestPanel() {
 
       {items && items.length === 0 && <p className="muted">The ingest folder is empty.</p>}
 
-      {state === 'running' && <EqualizerLoader label="Identifying and tagging files…" />}
+      {state === 'running' && (
+        <EqualizerLoader label={`Identifying and tagging files… (${processed} processed)`} />
+      )}
 
       {error && (
         <p className={error.code === 'RATE_LIMITED' ? 'banner banner-rate-limited' : 'banner banner-error'}>

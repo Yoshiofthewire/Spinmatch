@@ -39,3 +39,15 @@ test('GET /api/ingest/scan lists items in the configured ingest dir', async () =
   const body = await res.json();
   assert.ok(body.items.some((i) => i.name === 'route-track.mp3'));
 });
+
+test('GET /api/ingest/process-stream streams SSE and ends with a done event', async () => {
+  // Empty the ingest dir so the stream finishes deterministically without
+  // depending on external tools to process a fixture file.
+  await fs.rm(path.join(tmpDir, 'route-track.mp3'), { force: true });
+
+  const res = await fetch(`${baseUrl}/api/ingest/process-stream`);
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get('content-type'), /text\/event-stream/);
+  const body = await res.text();
+  assert.match(body, /event: done/);
+});

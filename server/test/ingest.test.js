@@ -660,6 +660,56 @@ test('a dry-run previews an album without writing or moving any track', async (t
   });
 });
 
+test('processIngest calls onItem once per completed item, in order', async (t) => {
+  await withIngestDir(async (dir) => {
+    await fs.writeFile(path.join(dir, 'a.mp3'), 'fake-audio');
+    await fs.writeFile(path.join(dir, 'b.mp3'), 'fake-audio');
+
+    t.mock.module('../src/services/fpcalc.js', {
+      exports: { fingerprint: async () => ({ durationSeconds: 200, fingerprint: 'FP' }) },
+    });
+    t.mock.module('../src/services/acoustid.js', {
+      exports: { lookup: async () => [{ recordingMbid: 'rec-1', score: 0.9 }] },
+    });
+    t.mock.module('../src/services/musicbrainz.js', {
+      exports: {
+        resolvePrimaryReleaseForGroup: async () => null,
+        getReleaseWithTracks: async () => ({ release: {}, tracks: [] }),
+        getRecording: async () => ({
+          mbid: 'rec-1', title: 'T', lengthMs: 200000, artist: 'A',
+          releaseGroups: [{ mbid: 'rg-1', title: 'Alb' }], date: '2020-01-01',
+        }),
+      },
+    });
+    t.mock.module('../src/services/tags.js', {
+      exports: {
+        readTags: async () => ({
+          artist: null, title: null, album: null, trackNumber: null, disc: null, year: null, genre: null, hasCoverArt: false,
+        }),
+        plannedFills: () => [],
+        writeMissingTags: async () => ({ filledFields: ['artist'] }),
+      },
+    });
+    t.mock.module('../src/services/coverArt.js', {
+      exports: { getFrontCoverImage: async () => null },
+    });
+    t.mock.module('../src/services/organize.js', {
+      exports: {
+        targetPathFor: () => '/music/x',
+        moveIntoLibrary: async (srcPath) => ({ movedTo: `/music/${path.basename(srcPath)}`, duplicate: false }),
+      },
+    });
+
+    const events = [];
+    const processIngestFresh = await freshProcessIngest();
+    const result = await processIngestFresh({ onItem: (e) => events.push(e) });
+
+    assert.deepEqual(events.map((e) => e.kind), ['matched', 'matched']);
+    assert.deepEqual(events.map((e) => e.name), ['a.mp3', 'b.mp3']);
+    assert.equal(result.matched.length, 2);
+  });
+});
+
 test('a non-rate-limit error on one item is caught, reported as needsReview, and the batch continues', async (t) => {
   await withIngestDir(async (dir) => {
     // 'a-track.mp3' sorts before 'b-track.mp3', so a-track fails first and we

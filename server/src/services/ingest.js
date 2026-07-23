@@ -266,25 +266,36 @@ async function processAlbumFolder(item, { dryRun }) {
   return { matched, needsReview };
 }
 
-export async function processIngest({ dryRun = false } = {}) {
+// `onItem`, when given, is called once per completed item as it resolves
+// (`{ kind: 'matched' | 'needsReview', ...entry }`) so callers can stream
+// progress. Without it, behaviour is identical — everything is just collected.
+export async function processIngest({ dryRun = false, onItem } = {}) {
   const { items } = await scanIngestDir();
   const matched = [];
   const needsReview = [];
+
+  const toArray = (v) => (v == null ? [] : Array.isArray(v) ? v : [v]);
+  const emitMatched = (m) => {
+    matched.push(m);
+    onItem?.({ kind: 'matched', ...m });
+  };
+  const emitNeedsReview = (r) => {
+    needsReview.push(r);
+    onItem?.({ kind: 'needsReview', ...r });
+  };
 
   for (const item of items) {
     try {
       const result = item.type === 'album'
         ? await processAlbumFolder(item, { dryRun })
         : await processLooseFile(item, { dryRun });
-      if (result.matched) matched.push(...(Array.isArray(result.matched) ? result.matched : [result.matched]));
-      if (result.needsReview) {
-        needsReview.push(...(Array.isArray(result.needsReview) ? result.needsReview : [result.needsReview]));
-      }
+      toArray(result.matched).forEach(emitMatched);
+      toArray(result.needsReview).forEach(emitNeedsReview);
     } catch (err) {
       if (err instanceof RateLimitedError) {
         return { matched, needsReview, dryRun, error: { code: err.code, message: err.message } };
       }
-      needsReview.push({ path: item.path, name: item.name, reason: err.message });
+      emitNeedsReview({ path: item.path, name: item.name, reason: err.message });
     }
   }
 

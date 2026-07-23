@@ -28,3 +28,30 @@ ingestRouter.post('/process', async (req, res, next) => {
     next(err);
   }
 });
+
+// Streaming variant: emits one `item` event per file as it finishes, then a
+// terminal `done` (or `error`). GET so the browser's EventSource can consume it;
+// dryRun is a query flag (?dryRun=1) since EventSource can't send a body.
+ingestRouter.get('/process-stream', async (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders?.();
+
+  const dryRun = req.query.dryRun === '1' || req.query.dryRun === 'true';
+  const send = (event, data) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+
+  try {
+    const result = await processIngest({ dryRun, onItem: (item) => send('item', item) });
+    send('done', {
+      matched: result.matched.length,
+      needsReview: result.needsReview.length,
+      dryRun: result.dryRun,
+      error: result.error,
+    });
+  } catch (err) {
+    send('error', { message: err.message, code: err.code });
+  } finally {
+    res.end();
+  }
+});
