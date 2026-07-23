@@ -1,9 +1,39 @@
 import { Router } from 'express';
 import { ingestEnabled } from '../config.js';
 import { scanIngestDir, processIngest } from '../services/ingest.js';
-import { NotFoundError } from '../lib/httpErrors.js';
+import { NotFoundError, BadRequestError } from '../lib/httpErrors.js';
 
 export const ingestRouter = Router();
+
+// CSRF guard for the state-changing ingest routes (they move/tag real files).
+// The app is cookieless and same-origin only, so we reject anything a browser
+// marks as cross-site. `Sec-Fetch-Site` is set by the browser on every request
+// including EventSource (which, unlike fetch, can't send custom headers), so it
+// works for the SSE endpoint too; `Origin` is a fallback. Requests with neither
+// header (older browsers, curl, our own tests) are allowed — this is a
+// defense against the drive-by <img>/fetch CSRF vector, not an auth control.
+function sameOriginOnly(req, res, next) {
+  const site = req.get('Sec-Fetch-Site');
+  if (site) {
+    if (site !== 'same-origin' && site !== 'none') {
+      return next(new BadRequestError('Cross-site requests are not allowed for this endpoint'));
+    }
+    return next();
+  }
+  const origin = req.get('Origin');
+  if (origin) {
+    let originHost;
+    try {
+      originHost = new URL(origin).host;
+    } catch {
+      return next(new BadRequestError('Invalid Origin header'));
+    }
+    if (originHost !== req.get('Host')) {
+      return next(new BadRequestError('Cross-origin requests are not allowed for this endpoint'));
+    }
+  }
+  next();
+}
 
 ingestRouter.use((req, res, next) => {
   if (!ingestEnabled()) return next(new NotFoundError('The ingest feature is not configured'));
@@ -19,7 +49,7 @@ ingestRouter.get('/scan', async (req, res, next) => {
   }
 });
 
-ingestRouter.post('/process', async (req, res, next) => {
+ingestRouter.post('/process', sameOriginOnly, async (req, res, next) => {
   try {
     const { dryRun = false } = req.body || {};
     const result = await processIngest({ dryRun: Boolean(dryRun) });
@@ -32,7 +62,7 @@ ingestRouter.post('/process', async (req, res, next) => {
 // Streaming variant: emits one `item` event per file as it finishes, then a
 // terminal `done` (or `error`). GET so the browser's EventSource can consume it;
 // dryRun is a query flag (?dryRun=1) since EventSource can't send a body.
-ingestRouter.get('/process-stream', async (req, res) => {
+ingestRouter.get('/process-stream', sameOriginOnly, async (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');

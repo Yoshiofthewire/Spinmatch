@@ -51,3 +51,26 @@ test('GET /api/ingest/process-stream streams SSE and ends with a done event', as
   const body = await res.text();
   assert.match(body, /event: done/);
 });
+
+test('the mutating ingest routes reject cross-site requests (CSRF guard)', async () => {
+  const stream = await fetch(`${baseUrl}/api/ingest/process-stream`, {
+    headers: { 'Sec-Fetch-Site': 'cross-site' },
+  });
+  assert.equal(stream.status, 400);
+
+  const process = await fetch(`${baseUrl}/api/ingest/process`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Sec-Fetch-Site': 'cross-site' },
+    body: JSON.stringify({ dryRun: true }),
+  });
+  assert.equal(process.status, 400);
+});
+
+test('a same-origin request to the stream is allowed', async () => {
+  const res = await fetch(`${baseUrl}/api/ingest/process-stream`, {
+    headers: { 'Sec-Fetch-Site': 'same-origin' },
+  });
+  assert.equal(res.status, 200);
+  const body = await res.text();
+  assert.match(body, /event: done/);
+});
