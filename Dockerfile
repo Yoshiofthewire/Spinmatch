@@ -21,8 +21,12 @@ ENV NODE_ENV=production
 # PyPI and stamps it as a label so the publish workflow can tell which yt-dlp
 # a published image contains). An empty value installs the latest — the
 # default for plain local `docker build`.
+#
+# chromaprint provides the `fpcalc` binary used by the local library ingest
+# feature (musl-native on Alpine — no glibc concern like yt-dlp's standalone
+# binary had).
 ARG YTDLP_VERSION=
-RUN apk add --no-cache python3 py3-pip && \
+RUN apk add --no-cache python3 py3-pip chromaprint && \
     pip install --break-system-packages --no-cache-dir \
       "yt-dlp${YTDLP_VERSION:+==$YTDLP_VERSION}"
 LABEL ytdlp.version=$YTDLP_VERSION

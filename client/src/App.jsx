@@ -4,13 +4,17 @@ import ArtistPage from './pages/ArtistPage.jsx';
 import AlbumPage from './pages/AlbumPage.jsx';
 import HistoryPage from './pages/HistoryPage.jsx';
 import AboutPage from './pages/AboutPage.jsx';
+import IngestPage from './pages/IngestPage.jsx';
 import Logo from './components/Logo.jsx';
+import { useConfig } from './ConfigContext.jsx';
 
 function navLinkClass({ isActive }) {
   return isActive ? 'nav-link nav-link-active' : 'nav-link';
 }
 
 export default function App() {
+  const { ingestEnabled } = useConfig();
+
   return (
     <div className="app">
       <header className="app-header">
@@ -21,6 +25,7 @@ export default function App() {
         <p className="app-subtitle">Track down the right take — matched against MusicBrainz, verified by length</p>
         <nav className="app-nav">
           <NavLink to="/" end className={navLinkClass}>Search</NavLink>
+          {ingestEnabled && <NavLink to="/ingest" className={navLinkClass}>Ingest</NavLink>}
           <NavLink to="/history" className={navLinkClass}>History</NavLink>
           <NavLink to="/about" className={navLinkClass}>About</NavLink>
         </nav>
@@ -30,6 +35,7 @@ export default function App() {
           <Route path="/" element={<SearchPage />} />
           <Route path="/artist/:mbid" element={<ArtistPage />} />
           <Route path="/release-group/:mbid" element={<AlbumPage />} />
+          {ingestEnabled && <Route path="/ingest" element={<IngestPage />} />}
           <Route path="/history" element={<HistoryPage />} />
           <Route path="/about" element={<AboutPage />} />
         </Routes>

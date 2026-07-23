@@ -7,10 +7,11 @@
   "scripts": {
     "dev": "node --env-file=../.env --watch src/index.js",
     "start": "node --env-file=../.env src/index.js",
-    "test": "node --test test/"
+    "test": "node --experimental-test-module-mocks --test test/"
   },
   "dependencies": {
-    "express": "^4.21.1"
+    "express": "^4.21.1",
+    "node-taglib-sharp": "^6.0.3"
   },
   "devDependencies": {
     "undici": "^7.2.0"

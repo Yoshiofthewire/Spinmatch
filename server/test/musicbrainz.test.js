@@ -9,6 +9,7 @@ const {
   browseReleaseGroupsByArtist,
   resolvePrimaryReleaseForGroup,
   getReleaseWithTracks,
+  getRecording,
 } = await import('../src/services/musicbrainz.js');
 const { UpstreamUnavailableError } = await import('../src/lib/httpErrors.js');
 
@@ -147,4 +148,30 @@ test('getReleaseWithTracks flattens media/tracks into a single track list', asyn
   assert.equal(tracks.length, 2);
   assert.equal(tracks[0].title, 'Welcome');
   assert.equal(tracks[0].lengthMs, 175054);
+});
+
+test('getRecording flattens a MusicBrainz recording response', async () => {
+  const pool = mockMusicBrainz();
+  pool.intercept({ path: '/ws/2/recording/rec-mbid-1?inc=artists%2Breleases%2Brelease-groups&fmt=json' }).reply(200, {
+    id: 'rec-mbid-1',
+    title: 'Getting Recording Test',
+    length: 202000,
+    'first-release-date': '2001-05-01',
+    'artist-credit': [{ name: 'Recording Test Artist' }],
+    releases: [
+      {
+        'release-group': { id: 'rg-mbid-1', title: 'Recording Test Album' },
+      },
+    ],
+  });
+
+  const recording = await getRecording('rec-mbid-1');
+  assert.deepEqual(recording, {
+    mbid: 'rec-mbid-1',
+    title: 'Getting Recording Test',
+    lengthMs: 202000,
+    artist: 'Recording Test Artist',
+    releaseGroups: [{ mbid: 'rg-mbid-1', title: 'Recording Test Album' }],
+    date: '2001-05-01',
+  });
 });

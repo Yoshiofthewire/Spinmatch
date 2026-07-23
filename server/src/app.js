@@ -8,6 +8,7 @@ import { releasesRouter } from './routes/releases.js';
 import { verifyRouter } from './routes/verify.js';
 import { coverRouter } from './routes/cover.js';
 import { configRouter } from './routes/config.js';
+import { ingestRouter } from './routes/ingest.js';
 import { errorHandler } from './middleware/errorHandler.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -24,6 +25,7 @@ export function createApp() {
   app.use('/api/verify', verifyRouter);
   app.use('/api/cover', coverRouter);
   app.use('/api/config', configRouter);
+  app.use('/api/ingest', ingestRouter);
 
   // In production, the client is pre-built by Vite; serve it and fall back to
   // index.html for client-side routing on any non-API path.
