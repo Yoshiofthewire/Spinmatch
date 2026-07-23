@@ -4,10 +4,10 @@ import { config } from '../config.js';
 import { fingerprint } from './fpcalc.js';
 import { lookup } from './acoustid.js';
 import { getRecording, resolvePrimaryReleaseForGroup, getReleaseWithTracks } from './musicbrainz.js';
-import { readTags, writeMissingTags } from './tags.js';
+import * as tags from './tags.js';
 import { getFrontCoverImage } from './coverArt.js';
 import { rankCandidates } from './durationMatch.js';
-import { moveIntoLibrary } from './organize.js';
+import * as organize from './organize.js';
 import { RateLimitedError } from '../lib/httpErrors.js';
 
 const AUDIO_EXTENSIONS = new Set(['.mp3', '.flac', '.m4a', '.aac', '.ogg']);
@@ -70,6 +70,17 @@ async function identifyFile(filePath) {
   return { confirmed: best.recording, reason: null };
 }
 
+// Applies fill-missing tags, or (dryRun) just reports which fields WOULD be
+// filled — computed from the already-read `current` tags, nothing written.
+async function applyOrPreviewTags(filePath, current, desired, coverImage, dryRun) {
+  if (!dryRun) {
+    return tags.writeMissingTags(filePath, desired, { coverImage });
+  }
+  const filledFields = tags.plannedFills(current, desired);
+  if (coverImage && !current.hasCoverArt) filledFields.push('coverArt');
+  return { filledFields };
+}
+
 // Moves a file into MUSIC_DIR, translating the two non-matched outcomes into a
 // clean needsReview entry: a byte-identical duplicate (left in place), or an
 // fs-level move failure (the file was already tagged in place, just not moved).
@@ -77,7 +88,7 @@ async function moveFileSafely(filePath, name, moveMeta) {
   const ext = path.extname(filePath).toLowerCase();
   let result;
   try {
-    result = await moveIntoLibrary(filePath, moveMeta, ext);
+    result = await organize.moveIntoLibrary(filePath, moveMeta, ext);
   } catch (err) {
     return {
       needsReview: {
@@ -99,13 +110,20 @@ async function moveFileSafely(filePath, name, moveMeta) {
   return { movedTo: result.movedTo };
 }
 
-async function processLooseFile(item) {
+// Real move, or (dryRun) the path the file WOULD move to — no filesystem access
+// and no collision resolution (a preview shows the intended destination).
+async function moveOrPreview(filePath, name, moveMeta, dryRun) {
+  if (!dryRun) return moveFileSafely(filePath, name, moveMeta);
+  return { movedTo: organize.targetPathFor(moveMeta, path.extname(filePath).toLowerCase()) };
+}
+
+async function processLooseFile(item, { dryRun }) {
   const { confirmed, reason } = await identifyFile(item.path);
   if (!confirmed) {
     return { needsReview: { path: item.path, name: item.name, reason } };
   }
 
-  const current = await readTags(item.path);
+  const current = await tags.readTags(item.path);
   const releaseGroup = confirmed.releaseGroups[0];
   const coverImage = releaseGroup ? await getFrontCoverImage(releaseGroup.mbid) : null;
 
@@ -118,13 +136,13 @@ async function processLooseFile(item) {
     album: albumTitle,
     year: confirmed.date ? Number(confirmed.date.slice(0, 4)) : null,
   };
-  const { filledFields } = await writeMissingTags(item.path, desired, { coverImage });
+  const { filledFields } = await applyOrPreviewTags(item.path, current, desired, coverImage, dryRun);
 
-  const moved = await moveFileSafely(item.path, item.name, {
+  const moved = await moveOrPreview(item.path, item.name, {
     artist: confirmed.artist,
     album: albumTitle ?? 'Singles',
     title: confirmed.title,
-  });
+  }, dryRun);
   if (moved.needsReview) return { needsReview: moved.needsReview };
 
   return {
@@ -188,7 +206,7 @@ async function identifyAlbum(files) {
   return { reason: 'no release coherently matched the whole folder' };
 }
 
-async function processAlbumFolder(item) {
+async function processAlbumFolder(item, { dryRun }) {
   const entries = await fs.readdir(item.path);
   const files = entries
     .filter(isAudioFile)
@@ -211,25 +229,23 @@ async function processAlbumFolder(item) {
     const name = path.basename(filePath);
     const discNumber = multiDisc ? track.discNumber : null;
 
-    const { filledFields } = await writeMissingTags(
-      filePath,
-      {
-        artist: release.artist,
-        title: track.title,
-        album: release.title,
-        trackNumber: track.position,
-        disc: discNumber,
-      },
-      { coverImage }
-    );
+    const desired = {
+      artist: release.artist,
+      title: track.title,
+      album: release.title,
+      trackNumber: track.position,
+      disc: discNumber,
+    };
+    const current = dryRun ? await tags.readTags(filePath) : null;
+    const { filledFields } = await applyOrPreviewTags(filePath, current, desired, coverImage, dryRun);
 
-    const moved = await moveFileSafely(filePath, name, {
+    const moved = await moveOrPreview(filePath, name, {
       artist: release.artist,
       album: release.title,
       title: track.title,
       trackNumber: track.position,
       discNumber,
-    });
+    }, dryRun);
     if (moved.needsReview) {
       needsReview.push(moved.needsReview);
       continue;
@@ -249,25 +265,27 @@ async function processAlbumFolder(item) {
   return { matched, needsReview };
 }
 
-export async function processIngest() {
+export async function processIngest({ dryRun = false } = {}) {
   const { items } = await scanIngestDir();
   const matched = [];
   const needsReview = [];
 
   for (const item of items) {
     try {
-      const result = item.type === 'album' ? await processAlbumFolder(item) : await processLooseFile(item);
+      const result = item.type === 'album'
+        ? await processAlbumFolder(item, { dryRun })
+        : await processLooseFile(item, { dryRun });
       if (result.matched) matched.push(...(Array.isArray(result.matched) ? result.matched : [result.matched]));
       if (result.needsReview) {
         needsReview.push(...(Array.isArray(result.needsReview) ? result.needsReview : [result.needsReview]));
       }
     } catch (err) {
       if (err instanceof RateLimitedError) {
-        return { matched, needsReview, error: { code: err.code, message: err.message } };
+        return { matched, needsReview, dryRun, error: { code: err.code, message: err.message } };
       }
       needsReview.push({ path: item.path, name: item.name, reason: err.message });
     }
   }
 
-  return { matched, needsReview };
+  return { matched, needsReview, dryRun };
 }

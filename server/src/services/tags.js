@@ -29,6 +29,13 @@ function writeField(tag, field, value) {
   }
 }
 
+// Pure preview of what writeMissingTags would fill: the fields desired provides
+// (non-null) that are currently empty. Used by the dry-run path so a preview can
+// report planned fills without touching the file.
+export function plannedFills(current, desired) {
+  return Object.keys(desired).filter((key) => desired[key] != null && current[key] == null);
+}
+
 export async function readTags(filePath) {
   const file = File.createFromPath(filePath);
   try {

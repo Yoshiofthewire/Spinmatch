@@ -21,7 +21,8 @@ ingestRouter.get('/scan', async (req, res, next) => {
 
 ingestRouter.post('/process', async (req, res, next) => {
   try {
-    const result = await processIngest();
+    const { dryRun = false } = req.body || {};
+    const result = await processIngest({ dryRun: Boolean(dryRun) });
     res.json(result);
   } catch (err) {
     next(err);

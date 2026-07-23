@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const { readTags, writeMissingTags } = await import('../src/services/tags.js');
+const { readTags, writeMissingTags, plannedFills } = await import('../src/services/tags.js');
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURES_DIR = path.join(__dirname, 'fixtures');
@@ -57,6 +57,19 @@ test('writeMissingTags fills blank fields on an untagged fixture', async () => {
     assert.equal(after.trackNumber, 3);
     assert.equal(after.year, 2020);
   });
+});
+
+test('plannedFills lists only fields that are missing now and provided by desired', () => {
+  const current = { artist: 'Have Artist', title: null, album: null, trackNumber: null, disc: null, year: null, genre: null };
+  const desired = { artist: 'New Artist', title: 'New Title', album: null, trackNumber: 5, disc: 2 };
+  // artist already present → skipped; album desired is null → skipped; the rest fill.
+  assert.deepEqual(new Set(plannedFills(current, desired)), new Set(['title', 'trackNumber', 'disc']));
+});
+
+test('plannedFills returns nothing when every desired field is already present', () => {
+  const current = { artist: 'A', title: 'T', album: 'B' };
+  const desired = { artist: 'X', title: 'Y', album: 'Z' };
+  assert.deepEqual(plannedFills(current, desired), []);
 });
 
 test('writeMissingTags fills a blank disc number and reads it back', async () => {
