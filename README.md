@@ -171,8 +171,11 @@ https://raw.githubusercontent.com/Yoshiofthewire/Spinmatch/main/unraid-template.
 
 This fills in the repository, port, paths, and environment variables from
 [`unraid-template.xml`](unraid-template.xml). At minimum, set **MB Contact Email**. The mapped
-paths (**Ingest Directory**, **Music Directory**, and **Library DB Directory**) correspond to
-`INGEST_DIR`, `MUSIC_DIR`, and the directory holding `LIBRARY_DB` in `.env.example` — point
+paths (**Ingest Directory**, **Music Directory**, and **Library DB Directory**) are the host folders
+bind-mounted at the container paths `/data/ingest`, `/data/music`, and `/data/db`. A path mapping on
+its own doesn't tell the app anything, so the template also ships the matching `INGEST_DIR`,
+`MUSIC_DIR`, and `LIBRARY_DB` variables (under **Show more settings**) pointing at those container
+paths — leave them as-is unless you change a container path. Point
 **Music Directory** at your existing music share to enable the local library ingest feature
 described above, and set **AcoustID API Key** as well if you want automatic track identification
 (otherwise ingest still works, just with manual matching only). **Library DB Directory** should
