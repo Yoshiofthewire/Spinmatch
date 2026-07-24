@@ -3,7 +3,7 @@ import { get, post } from '../api/client.js';
 import { formatDuration } from '../lib/format.js';
 import EqualizerLoader from './EqualizerLoader.jsx';
 
-function CandidateRow({ candidate, mbid, title, artist, releaseGroupTitle, lengthMs, score, busy, onUse }) {
+function CandidateRow({ mbid, title, artist, releaseGroupTitle, lengthMs, score, busy, onUse }) {
   return (
     <li className="ingest-candidate-row">
       <span>
