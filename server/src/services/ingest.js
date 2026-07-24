@@ -94,6 +94,7 @@ async function moveFileSafely(filePath, name, moveMeta) {
       needsReview: {
         path: filePath,
         name,
+        code: 'move_failed',
         reason: `tagged in place, but could not be moved into the library: ${err.message}`,
       },
     };
@@ -103,6 +104,7 @@ async function moveFileSafely(filePath, name, moveMeta) {
       needsReview: {
         path: filePath,
         name,
+        code: 'duplicate',
         reason: 'an identical file already exists in the library; left in place for review',
       },
     };
@@ -120,7 +122,7 @@ async function moveOrPreview(filePath, name, moveMeta, dryRun) {
 async function processLooseFile(item, { dryRun }) {
   const { confirmed, reason } = await identifyFile(item.path);
   if (!confirmed) {
-    return { needsReview: { path: item.path, name: item.name, reason } };
+    return { needsReview: { path: item.path, name: item.name, code: 'no_match', reason } };
   }
 
   const current = await tags.readTags(item.path);
@@ -216,7 +218,7 @@ async function processAlbumFolder(item, { dryRun }) {
 
   const identified = await identifyAlbum(files);
   if (identified.reason) {
-    return { needsReview: [{ path: item.path, name: item.name, reason: identified.reason }] };
+    return { needsReview: [{ path: item.path, name: item.name, code: 'album_incoherent', reason: identified.reason }] };
   }
 
   const { release, tracks, coverImage } = identified;

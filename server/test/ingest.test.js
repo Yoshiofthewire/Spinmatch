@@ -219,6 +219,7 @@ test('a confirmed loose file whose move fails is reported as tagged-but-not-move
     assert.equal(result.matched.length, 0);
     assert.equal(result.needsReview.length, 1);
     assert.match(result.needsReview[0].reason, /tagged in place, but could not be moved/i);
+    assert.equal(result.needsReview[0].code, 'move_failed');
   });
 });
 
@@ -264,6 +265,7 @@ test('a byte-identical duplicate is left in place and reported as needsReview', 
     assert.equal(result.matched.length, 0);
     assert.equal(result.needsReview.length, 1);
     assert.match(result.needsReview[0].reason, /identical file already exists/i);
+    assert.equal(result.needsReview[0].code, 'duplicate');
   });
 });
 
@@ -282,6 +284,7 @@ test('processIngest reports needsReview when AcoustID finds no candidates', asyn
     assert.equal(result.matched.length, 0);
     assert.equal(result.needsReview.length, 1);
     assert.match(result.needsReview[0].reason, /no.*candidate/i);
+    assert.equal(result.needsReview[0].code, 'no_match');
   });
 });
 
@@ -300,6 +303,7 @@ test('processIngest reports needsReview when no AcoustID candidate meets the con
     assert.equal(result.matched.length, 0);
     assert.equal(result.needsReview.length, 1);
     assert.match(result.needsReview[0].reason, /confidence|threshold/i);
+    assert.equal(result.needsReview[0].code, 'no_match');
   });
 });
 
@@ -328,6 +332,7 @@ test('processIngest reports needsReview when duration/score confirmation fails',
     const result = await processIngestFresh();
     assert.equal(result.matched.length, 0);
     assert.equal(result.needsReview.length, 1);
+    assert.equal(result.needsReview[0].code, 'no_match');
   });
 });
 
@@ -531,6 +536,7 @@ test('an incoherent album folder (track count mismatch) is left untouched and re
     assert.equal(result.needsReview.length, 1);
     assert.equal(result.needsReview[0].name, 'Messy');
     assert.match(result.needsReview[0].reason, /coherently matched/i);
+    assert.equal(result.needsReview[0].code, 'album_incoherent');
     assert.equal(moveCalled, false, 'nothing in an incoherent folder should be moved');
   });
 });
