@@ -21,17 +21,19 @@ export default function IngestPanel() {
   const [expandedPath, setExpandedPath] = useState(null);
 
   function handleResolved(oldItem, resolution) {
+    if (resolution.matched) {
+      addEntry({
+        track: resolution.matched.title,
+        artist: resolution.matched.artist,
+        album: resolution.matched.album,
+        action: 'ingested',
+      });
+    }
     setResult((prev) => {
       const needsReview = prev.needsReview.filter((r) => r.path !== oldItem.path);
       const matched = [...prev.matched];
       if (resolution.matched) {
         matched.push(resolution.matched);
-        addEntry({
-          track: resolution.matched.title,
-          artist: resolution.matched.artist,
-          album: resolution.matched.album,
-          action: 'ingested',
-        });
       } else if (resolution.needsReview) {
         needsReview.push(resolution.needsReview);
       }
@@ -43,6 +45,7 @@ export default function IngestPanel() {
   async function handleScan() {
     setError(null);
     setResult(null);
+    setExpandedPath(null);
     try {
       const data = await get('/ingest/scan');
       setItems(data.items);
@@ -69,6 +72,7 @@ export default function IngestPanel() {
     setState('running');
     setError(null);
     setProcessed(0);
+    setExpandedPath(null);
     if (typeof EventSource === 'undefined') {
       runBlocking({ dryRun });
       return;
@@ -199,7 +203,7 @@ export default function IngestPanel() {
                         )}
                       </td>
                     </tr>
-                    {expandedPath === r.path && (
+                    {expandedPath === r.path && !isPreview && (
                       <tr>
                         <td colSpan={3}>
                           <IngestMatchPicker
