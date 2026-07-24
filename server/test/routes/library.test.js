@@ -17,7 +17,7 @@ test.before(async () => {
   repo.recomputeStats(db);
   setDbForTest(db);
   const { createApp } = await import('../../src/app.js');
-  server = createApp().listen(0);
+  server = createApp({ auth: false }).listen(0);
   await new Promise((resolve) => server.once('listening', resolve));
   baseUrl = `http://localhost:${server.address().port}`;
 });

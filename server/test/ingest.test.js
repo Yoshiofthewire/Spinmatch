@@ -930,3 +930,98 @@ test('resolveLooseFileOverride rejects a path outside INGEST_DIR', async (t) => 
     );
   });
 });
+
+test('resolveLooseFileOverride rejects a symlink inside INGEST_DIR that targets an outside file', async (t) => {
+  await withIngestDir(async (dir) => {
+    // A link whose *name* is inside INGEST_DIR but whose target escapes it.
+    const outside = path.join(__dirname, '.tmp-outside-secret');
+    await fs.writeFile(outside, 'secret');
+    const link = path.join(dir, 'sneaky.mp3');
+    await fs.symlink(outside, link);
+
+    const { resolveLooseFileOverride } = await freshIngestExports();
+    const { BadRequestError } = await import('../src/lib/httpErrors.js');
+    await assert.rejects(
+      () => resolveLooseFileOverride({ filePath: link, name: 'sneaky.mp3', recordingMbid: 'rec-1', dryRun: false }),
+      (err) => err instanceof BadRequestError,
+      'a symlink escaping INGEST_DIR must be refused before any tag/move work',
+    );
+    await fs.rm(outside, { force: true });
+  });
+});
+
+test('scanIngestDir ignores a symlinked audio file', async (t) => {
+  await withIngestDir(async (dir) => {
+    const outside = path.join(__dirname, '.tmp-outside-audio.mp3');
+    await fs.writeFile(outside, 'audio');
+    await fs.symlink(outside, path.join(dir, 'linked.mp3'));
+    await fs.writeFile(path.join(dir, 'real.mp3'), 'audio');
+
+    const { scanIngestDir } = await freshIngestExports();
+    const { items } = await scanIngestDir();
+    assert.deepEqual(items.map((i) => i.name), ['real.mp3'], 'only the real file, not the symlink');
+    await fs.rm(outside, { force: true });
+  });
+});
+
+test('an album folder is track-ordered by natural sort, not lexicographically', async (t) => {
+  await withIngestDir(async (dir) => {
+    // Lexicographic sort would order these ["10 - a", "2 - b"]; natural sort
+    // (and the release tracklist) puts track 2 before track 10.
+    await fs.mkdir(path.join(dir, 'Numbered'));
+    await fs.writeFile(path.join(dir, 'Numbered', '10 - a.mp3'), 'audio');
+    await fs.writeFile(path.join(dir, 'Numbered', '2 - b.mp3'), 'audio');
+
+    t.mock.module('../src/services/fpcalc.js', {
+      exports: {
+        fingerprint: async (filePath) =>
+          filePath.endsWith('2 - b.mp3')
+            ? { durationSeconds: 180, fingerprint: 'FP-b' }
+            : { durationSeconds: 200, fingerprint: 'FP-a' },
+      },
+    });
+    t.mock.module('../src/services/acoustid.js', {
+      exports: {
+        lookup: async ({ fingerprint: fp }) =>
+          fp === 'FP-b' ? [{ recordingMbid: 'rec-b', score: 0.9 }] : [{ recordingMbid: 'rec-a', score: 0.9 }],
+      },
+    });
+    t.mock.module('../src/services/musicbrainz.js', {
+      exports: {
+        getRecording: async (mbid) => ({
+          mbid, title: mbid, lengthMs: 0, artist: 'The Band',
+          releaseGroups: [{ mbid: 'rg-1', title: 'Numbered' }], date: '2005-01-01',
+        }),
+        resolvePrimaryReleaseForGroup: async () => 'release-1',
+        getReleaseWithTracks: async () => ({
+          release: { mbid: 'release-1', title: 'Numbered', artist: 'The Band', discCount: 1 },
+          tracks: [
+            { position: 2, discNumber: 1, recordingMbid: 'rec-b', title: 'Bee', lengthMs: 180000 },
+            { position: 10, discNumber: 1, recordingMbid: 'rec-a', title: 'Ay', lengthMs: 200000 },
+          ],
+        }),
+      },
+    });
+    t.mock.module('../src/services/tags.js', {
+      exports: { readTags: async () => ({}), writeMissingTags: async () => ({ filledFields: [] }) },
+    });
+    t.mock.module('../src/services/coverArt.js', {
+      exports: { getFrontCoverImage: async () => null },
+    });
+    const moves = [];
+    t.mock.module('../src/services/organize.js', {
+      exports: {
+        moveIntoLibrary: async (srcPath, meta) => {
+          moves.push({ title: meta.title, track: meta.trackNumber });
+          return { movedTo: `/music/${meta.trackNumber}`, duplicate: false };
+        },
+      },
+    });
+
+    const processIngestFresh = await freshProcessIngest();
+    const result = await processIngestFresh();
+    assert.equal(result.matched.length, 2, 'the folder is coherent only when files are naturally sorted');
+    assert.deepEqual(moves.map((m) => m.title), ['Bee', 'Ay']);
+    assert.deepEqual(moves.map((m) => m.track), [2, 10]);
+  });
+});

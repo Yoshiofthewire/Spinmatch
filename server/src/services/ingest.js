@@ -14,13 +14,20 @@ const AUDIO_EXTENSIONS = new Set(['.mp3', '.flac', '.m4a', '.aac', '.ogg']);
 const SCORE_THRESHOLD = 0.5;
 const DURATION_TOLERANCE_MS = 5000;
 
-// Defense-in-depth: paths reaching this module from the manual-override
-// routes are client-supplied, so verify they resolve inside INGEST_DIR
-// before any fingerprint/tag/move work touches the filesystem.
-function assertInsideIngestDir(filePath) {
-  const resolved = path.resolve(filePath);
-  const root = path.resolve(config.ingest.ingestDir);
-  if (!resolved.startsWith(root + path.sep)) {
+// Paths reaching this module from the manual-override routes are client-
+// supplied. Resolve BOTH the target and the root through fs.realpath so a
+// symlink planted in INGEST_DIR that points at, say, /etc/passwd is rejected —
+// path.resolve() alone only normalizes "..", it does not follow symlinks, so it
+// would have let the link's in-tree name pass while the real target escaped.
+async function assertInsideIngestDir(filePath) {
+  const root = await fs.realpath(config.ingest.ingestDir);
+  let real;
+  try {
+    real = await fs.realpath(filePath);
+  } catch {
+    throw new BadRequestError(`No such file inside INGEST_DIR: ${filePath}`);
+  }
+  if (real !== root && !real.startsWith(root + path.sep)) {
     throw new BadRequestError(`Refusing to operate outside INGEST_DIR: ${filePath}`);
   }
 }
@@ -36,13 +43,17 @@ export async function scanIngestDir() {
 
   for (const entry of entries) {
     if (entry.name.startsWith('.')) continue;
+    // Skip symlinks entirely: a link planted in INGEST_DIR could point the
+    // fingerprint/tag/move pipeline at a file outside it (see also the realpath
+    // guard on the manual-override path).
+    if (entry.isSymbolicLink()) continue;
     if (entry.isDirectory()) {
-      const children = await fs.readdir(path.join(dir, entry.name));
-      const trackCount = children.filter(isAudioFile).length;
+      const children = await fs.readdir(path.join(dir, entry.name), { withFileTypes: true });
+      const trackCount = children.filter((c) => !c.isSymbolicLink() && isAudioFile(c.name)).length;
       if (trackCount > 0) {
         items.push({ id: entry.name, type: 'album', name: entry.name, path: path.join(dir, entry.name), trackCount });
       }
-    } else if (isAudioFile(entry.name)) {
+    } else if (entry.isFile() && isAudioFile(entry.name)) {
       items.push({ id: entry.name, type: 'file', name: entry.name, path: path.join(dir, entry.name) });
     }
   }
@@ -227,10 +238,14 @@ async function identifyAlbum(files) {
 }
 
 async function processAlbumFolder(item, { dryRun }) {
-  const entries = await fs.readdir(item.path);
+  const entries = await fs.readdir(item.path, { withFileTypes: true });
   const files = entries
-    .filter(isAudioFile)
-    .sort()
+    .filter((e) => !e.isSymbolicLink() && isAudioFile(e.name))
+    .map((e) => e.name)
+    // Natural sort so "10 - x.mp3" follows "2 - x.mp3"; plain lexicographic
+    // sort would mis-order any album with 10+ un-zero-padded track numbers and
+    // fail the positional coherence check for the whole folder.
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }))
     .map((name) => path.join(item.path, name));
 
   const identified = await identifyAlbum(files);
@@ -288,7 +303,7 @@ async function processAlbumFolder(item, { dryRun }) {
 // `onItem`, when given, is called once per completed item as it resolves
 // (`{ kind: 'matched' | 'needsReview', ...entry }`) so callers can stream
 // progress. Without it, behaviour is identical — everything is just collected.
-export async function processIngest({ dryRun = false, onItem } = {}) {
+export async function processIngest({ dryRun = false, onItem, signal } = {}) {
   const { items } = await scanIngestDir();
   const matched = [];
   const needsReview = [];
@@ -304,6 +319,9 @@ export async function processIngest({ dryRun = false, onItem } = {}) {
   };
 
   for (const item of items) {
+    // Stop between items if the caller aborted (e.g. the SSE client
+    // disconnected) so we don't keep tagging/moving files with nobody watching.
+    if (signal?.aborted) return { matched, needsReview, dryRun, aborted: true };
     try {
       const result = item.type === 'album'
         ? await processAlbumFolder(item, { dryRun })
@@ -325,7 +343,7 @@ export async function processIngest({ dryRun = false, onItem } = {}) {
 // every candidate (not just ones scoring above SCORE_THRESHOLD) so a human can
 // pick from AcoustID's near-misses when auto-matching failed.
 export async function findCandidatesForFile(filePath) {
-  assertInsideIngestDir(filePath);
+  await assertInsideIngestDir(filePath);
   const { durationSeconds, fingerprint: fp } = await fingerprint(filePath);
   const acoustidCandidates = await lookup({ fingerprint: fp, durationSeconds });
   const top = acoustidCandidates.slice(0, 10);
@@ -347,7 +365,7 @@ export async function findCandidatesForFile(filePath) {
 // the recording is already chosen (by the user, via findCandidatesForFile's
 // near-misses or a text search), so just resolve it and finalize.
 export async function resolveLooseFileOverride({ filePath, name, recordingMbid, dryRun = false }) {
-  assertInsideIngestDir(filePath);
+  await assertInsideIngestDir(filePath);
   const confirmed = await getRecording(recordingMbid);
   return finalizeLooseFile(filePath, name, confirmed, { dryRun });
 }

@@ -30,10 +30,10 @@ export async function fingerprint(filePath) {
     if (err.killed) {
       throw new UpstreamUnavailableError('fpcalc timed out');
     }
-    const stderr = err.stderr || '';
-    throw new UpstreamUnavailableError(
-      `fpcalc exited with an error: ${(stderr || err.message).slice(0, 500)}`
-    );
+    // Log real stderr for operators; keep the client-facing message generic so
+    // it can't leak the ingest file path or other internal detail.
+    console.error(`fpcalc failed: ${(err.stderr || err.message).slice(0, 500)}`);
+    throw new UpstreamUnavailableError('The audio fingerprinting tool failed — see the server logs for details.');
   }
 
   let parsed;

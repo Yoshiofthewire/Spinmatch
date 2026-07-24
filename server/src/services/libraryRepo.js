@@ -12,8 +12,6 @@ export function upsertLocalTrack(db, { path, artist, album, title, durationMs, c
       removed = 0,
       updated_at = excluded.updated_at
   `).run(path, artist, album, title, durationMs, changeKey, now);
-  const { id } = db.prepare('SELECT id FROM local_tracks WHERE path = ?').get(path);
-  return id;
 }
 
 export function getChangeKeys(db) {
@@ -33,7 +31,9 @@ export function markRemoved(db, keepPaths) {
 export function recomputeStats(db) {
   const { c: totalTracks } = db.prepare('SELECT COUNT(*) c FROM local_tracks WHERE removed = 0').get();
   const { c: totalAlbums } = db.prepare(
-    "SELECT COUNT(DISTINCT COALESCE(artist,'') || '\\u0000' || album) c FROM local_tracks WHERE removed = 0 AND album IS NOT NULL"
+    // char(31) is the ASCII unit separator — a real control char that can't
+    // occur in a tag value, so "Artist␟Album" pairs collide only on true dupes.
+    "SELECT COUNT(DISTINCT COALESCE(artist,'') || char(31) || album) c FROM local_tracks WHERE removed = 0 AND album IS NOT NULL"
   ).get();
   const { c: totalArtists } = db.prepare(
     'SELECT COUNT(DISTINCT artist) c FROM local_tracks WHERE removed = 0 AND artist IS NOT NULL'
@@ -101,4 +101,14 @@ export function hasRecording(db, { artist, title }) {
     LIMIT 1
   `).get(artist, title);
   return Boolean(row);
+}
+
+// All live track titles for an artist (case-insensitive). Used by gap detection
+// to match owned tracks against a MusicBrainz tracklist with title
+// normalization, which exact-equality hasRecording() can't do.
+export function listArtistTitles(db, artist) {
+  return db.prepare(`
+    SELECT title FROM local_tracks
+    WHERE removed = 0 AND artist = ? COLLATE NOCASE AND title IS NOT NULL
+  `).all(artist).map((r) => r.title);
 }

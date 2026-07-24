@@ -5,49 +5,89 @@ import EqualizerLoader from './EqualizerLoader.jsx';
 import CopyButton from './CopyButton.jsx';
 import { addEntry } from '../lib/history.js';
 
-const ESTIMATED_MS_PER_TRACK = 1500;
-
 export default function BulkVerifyPanel({ artist, album, releaseGroupMbid, trackCount }) {
   const [state, setState] = useState('idle'); // idle | running | done | error
-  const [progress, setProgress] = useState(0);
-  const [data, setData] = useState(null);
+  const [results, setResults] = useState([]);
+  const [total, setTotal] = useState(trackCount);
   const [error, setError] = useState(null);
-  const intervalRef = useRef(null);
+  const esRef = useRef(null);
+  const doneRef = useRef(false);
 
-  useEffect(() => () => clearInterval(intervalRef.current), []);
+  // Close any open stream if the component unmounts mid-run (also tells the
+  // server to abort via its req 'close' handler).
+  useEffect(() => () => esRef.current?.close(), []);
 
-  async function handleClick() {
-    setState('running');
-    setError(null);
-    setProgress(0);
+  function logVerified(list) {
+    list.filter((r) => r.video).forEach((r) => addEntry({ track: r.title, artist, album, action: 'verified' }));
+  }
 
-    // No real server-side progress in the current (blocking) design, so simulate
-    // based on an elapsed-time estimate and cap short of 100% until the response lands.
-    const estimatedTotalMs = trackCount * ESTIMATED_MS_PER_TRACK;
-    const startedAt = Date.now();
-    intervalRef.current = setInterval(() => {
-      const elapsed = Date.now() - startedAt;
-      setProgress(Math.min(95, Math.round((elapsed / estimatedTotalMs) * 100)));
-    }, 200);
-
+  // Fallback for environments without EventSource: one blocking request.
+  async function runBlocking() {
     try {
       const result = await post(`/verify/album/${releaseGroupMbid}`, {});
-      setData(result);
-      setState(result.error ? 'error' : 'done');
-      if (result.error) setError(result.error);
-      else {
-        result.results
-          .filter((r) => r.video)
-          .forEach((r) => addEntry({ track: r.title, artist, album, action: 'verified' }));
+      setResults(result.results);
+      if (result.error) {
+        setError(result.error);
+        setState('error');
+      } else {
+        setState('done');
+        logVerified(result.results);
       }
     } catch (err) {
       setError(err);
       setState('error');
-    } finally {
-      clearInterval(intervalRef.current);
-      setProgress(100);
     }
   }
+
+  function handleClick() {
+    setState('running');
+    setError(null);
+    setResults([]);
+    setTotal(trackCount);
+
+    if (typeof EventSource === 'undefined') {
+      runBlocking();
+      return;
+    }
+
+    doneRef.current = false;
+    const acc = [];
+    const es = new EventSource(`/api/verify/album/${releaseGroupMbid}/stream`);
+    esRef.current = es;
+
+    es.addEventListener('album', (e) => setTotal(JSON.parse(e.data).total));
+    es.addEventListener('result', (e) => {
+      acc.push(JSON.parse(e.data));
+      setResults([...acc]);
+    });
+    es.addEventListener('rate_limited', (e) => {
+      doneRef.current = true;
+      es.close();
+      setError(JSON.parse(e.data));
+      setState('error');
+    });
+    es.addEventListener('done', () => {
+      doneRef.current = true;
+      es.close();
+      setState('done');
+      logVerified(acc);
+    });
+    es.addEventListener('error', (e) => {
+      if (doneRef.current) return; // normal close right after a terminal event
+      es.close();
+      let message = 'The verification stream failed.';
+      let code;
+      try {
+        if (e.data) ({ message, code } = JSON.parse(e.data));
+      } catch {
+        /* connection-level error carries no data */
+      }
+      setError({ message, code });
+      setState('error');
+    });
+  }
+
+  const progress = total ? Math.round((results.length / total) * 100) : 0;
 
   return (
     <div className="bulk-verify-panel">
@@ -68,7 +108,9 @@ export default function BulkVerifyPanel({ artist, album, releaseGroupMbid, track
             <div className="progress-bar">
               <div className="progress-bar-fill" style={{ width: `${progress}%` }} />
             </div>
-            <p className="muted" style={{ margin: 0 }}>Matching each track against YouTube — this can take a while.</p>
+            <p className="muted" style={{ margin: 0 }}>
+              Matched {results.length}{total ? ` of ${total}` : ''} tracks…
+            </p>
           </div>
         </div>
       )}
@@ -79,18 +121,18 @@ export default function BulkVerifyPanel({ artist, album, releaseGroupMbid, track
         </p>
       )}
 
-      {data && data.results.length > 0 && (
+      {results.length > 0 && (
         <>
           <div className="bulk-verify-actions">
             <CopyButton
-              text={data.results
+              text={results
                 .filter((r) => r.video)
                 .map((r) => r.video.url)
                 .join('\n')}
               label="Copy all links to clipboard"
             />
           </div>
-          <VerifyResultsTable results={data.results} artist={artist} album={album} />
+          <VerifyResultsTable results={results} artist={artist} album={album} />
         </>
       )}
     </div>
