@@ -3,6 +3,7 @@ import { libraryEnabled } from '../config.js';
 import { getDb } from '../lib/db.js';
 import { getStats, listArtists, listAlbums, listTracks } from '../services/libraryRepo.js';
 import { scanLibrary } from '../services/libraryScanner.js';
+import { detectAlbumGaps } from '../services/libraryGaps.js';
 import { NotFoundError, BadRequestError } from '../lib/httpErrors.js';
 
 export const libraryRouter = Router();
@@ -54,6 +55,16 @@ libraryRouter.post('/scan', sameOriginOnly, async (req, res, next) => {
   try {
     const summary = await scanLibrary();
     res.json(summary);
+  } catch (err) {
+    next(err);
+  }
+});
+
+libraryRouter.get('/missing', async (req, res, next) => {
+  try {
+    const releaseGroup = req.query.releaseGroup ? String(req.query.releaseGroup) : '';
+    if (!releaseGroup) throw new BadRequestError('releaseGroup is required');
+    res.json(await detectAlbumGaps(releaseGroup));
   } catch (err) {
     next(err);
   }
