@@ -5,6 +5,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 process.env.MB_CONTACT_EMAIL = 'test@example.com';
+// Most tests in this file exercise the automatic AcoustID-matching path via
+// mocked fpcalc/acoustid modules, so a key must be configured for those mocks
+// to actually be reached; the "ACOUSTID_API_KEY unset" tests below flip
+// config.acoustidApiKey off per-test (mirroring withIngestDir's mutate/restore).
+process.env.ACOUSTID_API_KEY = 'test-acoustid-key';
 
 const configModule = await import('../src/config.js');
 const { scanIngestDir, processIngest } = await import('../src/services/ingest.js');
@@ -20,6 +25,16 @@ async function withIngestDir(fn) {
   } finally {
     configModule.config.ingest.ingestDir = original;
     await fs.rm(dir, { recursive: true, force: true });
+  }
+}
+
+async function withoutAcoustidKey(fn) {
+  const original = configModule.config.acoustidApiKey;
+  configModule.config.acoustidApiKey = null;
+  try {
+    await fn();
+  } finally {
+    configModule.config.acoustidApiKey = original;
   }
 }
 
@@ -338,6 +353,59 @@ test('processIngest reports needsReview when duration/score confirmation fails',
     assert.equal(result.matched.length, 0);
     assert.equal(result.needsReview.length, 1);
     assert.equal(result.needsReview[0].code, 'no_match');
+  });
+});
+
+test('processIngest reports needsReview without calling fpcalc/AcoustID when ACOUSTID_API_KEY is unset', async (t) => {
+  await withIngestDir(async (dir) => {
+    await withoutAcoustidKey(async () => {
+      await fs.writeFile(path.join(dir, 'unconfigured.mp3'), 'fake-audio');
+
+      const fingerprintCalls = [];
+      const lookupCalls = [];
+      t.mock.module('../src/services/fpcalc.js', {
+        exports: { fingerprint: async (...args) => { fingerprintCalls.push(args); return { durationSeconds: 1, fingerprint: 'x' }; } },
+      });
+      t.mock.module('../src/services/acoustid.js', {
+        exports: { lookup: async (...args) => { lookupCalls.push(args); return []; } },
+      });
+
+      const processIngestFresh = await freshProcessIngest();
+      const result = await processIngestFresh();
+
+      assert.equal(fingerprintCalls.length, 0, 'fpcalc should never be invoked without a key');
+      assert.equal(lookupCalls.length, 0, 'AcoustID should never be called without a key');
+      assert.equal(result.matched.length, 0);
+      assert.equal(result.needsReview.length, 1);
+      assert.match(result.needsReview[0].reason, /not configured/i);
+      assert.equal(result.needsReview[0].code, 'no_match');
+    });
+  });
+});
+
+test('an album folder reports needsReview without auto-matching when ACOUSTID_API_KEY is unset', async (t) => {
+  await withIngestDir(async (dir) => {
+    await withoutAcoustidKey(async () => {
+      await fs.mkdir(path.join(dir, 'An Album'));
+      await fs.writeFile(path.join(dir, 'An Album', 'track1.flac'), 'fake-audio');
+
+      const fingerprintCalls = [];
+      t.mock.module('../src/services/fpcalc.js', {
+        exports: { fingerprint: async (...args) => { fingerprintCalls.push(args); return { durationSeconds: 1, fingerprint: 'x' }; } },
+      });
+      t.mock.module('../src/services/acoustid.js', {
+        exports: { lookup: async () => { throw new Error('AcoustID should not be called without a key'); } },
+      });
+
+      const processIngestFresh = await freshProcessIngest();
+      const result = await processIngestFresh();
+
+      assert.equal(fingerprintCalls.length, 0, 'fpcalc should never be invoked without a key');
+      assert.equal(result.matched.length, 0);
+      assert.equal(result.needsReview.length, 1);
+      assert.equal(result.needsReview[0].code, 'album_incoherent');
+      assert.match(result.needsReview[0].reason, /not configured/i);
+    });
   });
 });
 
@@ -863,6 +931,29 @@ test('findCandidatesForFile returns an empty list when AcoustID finds nothing', 
     const result = await findCandidatesForFile(filePath);
 
     assert.deepEqual(result.candidates, []);
+  });
+});
+
+test('findCandidatesForFile returns an empty list without calling fpcalc/AcoustID when ACOUSTID_API_KEY is unset', async (t) => {
+  await withIngestDir(async (dir) => {
+    await withoutAcoustidKey(async () => {
+      const filePath = path.join(dir, 'unconfigured.mp3');
+      await fs.writeFile(filePath, 'fake-audio');
+
+      const fingerprintCalls = [];
+      t.mock.module('../src/services/fpcalc.js', {
+        exports: { fingerprint: async (...args) => { fingerprintCalls.push(args); return { durationSeconds: 1, fingerprint: 'x' }; } },
+      });
+      t.mock.module('../src/services/acoustid.js', {
+        exports: { lookup: async () => { throw new Error('AcoustID should not be called without a key'); } },
+      });
+
+      const { findCandidatesForFile } = await freshIngestExports();
+      const result = await findCandidatesForFile(filePath);
+
+      assert.deepEqual(result.candidates, []);
+      assert.equal(fingerprintCalls.length, 0, 'fpcalc should never be invoked without a key');
+    });
   });
 });
 

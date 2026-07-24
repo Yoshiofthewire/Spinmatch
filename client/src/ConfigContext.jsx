@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useState } from 'react';
 import { get } from './api/client.js';
 
-const ConfigContext = createContext({ metubeUrl: null, ingestEnabled: false, libraryEnabled: false });
+const ConfigContext = createContext({ metubeUrl: null, ingestEnabled: false, libraryEnabled: false, acoustidConfigured: false });
 
 export function ConfigProvider({ children }) {
   const [config, setConfig] = useState({ metubeUrl: null });

@@ -35,29 +35,40 @@ test('config.js normalizes an unset METUBE_URL to null', async () => {
   process.env.METUBE_URL = originalUrl;
 });
 
-test('GET /api/config reports ingestEnabled: false when ACOUSTID_API_KEY/MUSIC_DIR/INGEST_DIR are unset', async () => {
+test('GET /api/config reports ingestEnabled: false when MUSIC_DIR/INGEST_DIR are unset', async () => {
   const res = await fetch(`${baseUrl}/api/config`);
   assert.equal(res.status, 200);
   const body = await res.json();
   assert.equal(body.ingestEnabled, false);
 });
 
-test('ingestEnabled() returns true only when acoustidApiKey, musicDir, and ingestDir are all set', async () => {
-  process.env.ACOUSTID_API_KEY = 'test-acoustid-key';
+test('GET /api/config reports acoustidConfigured: false when ACOUSTID_API_KEY is unset', async () => {
+  const res = await fetch(`${baseUrl}/api/config`);
+  const body = await res.json();
+  assert.equal(body.acoustidConfigured, false);
+});
+
+test('ingestEnabled() returns true when musicDir and ingestDir are set, regardless of acoustidApiKey', async () => {
   process.env.MUSIC_DIR = '/tmp/music';
   process.env.INGEST_DIR = '/tmp/ingest';
   const { ingestEnabled } = await import('../../src/config.js?variant=ingest-enabled-true');
   assert.equal(ingestEnabled(), true);
-  delete process.env.ACOUSTID_API_KEY;
   delete process.env.MUSIC_DIR;
   delete process.env.INGEST_DIR;
 });
 
-test('ingestEnabled() returns false when only some ingest vars are set', async () => {
-  process.env.ACOUSTID_API_KEY = 'test-acoustid-key';
-  // MUSIC_DIR / INGEST_DIR left unset
+test('ingestEnabled() returns false when only one of musicDir/ingestDir is set', async () => {
+  process.env.MUSIC_DIR = '/tmp/music';
+  // INGEST_DIR left unset
   const { ingestEnabled } = await import('../../src/config.js?variant=ingest-enabled-partial');
   assert.equal(ingestEnabled(), false);
+  delete process.env.MUSIC_DIR;
+});
+
+test('acoustidConfigured is true when ACOUSTID_API_KEY is set', async () => {
+  process.env.ACOUSTID_API_KEY = 'test-acoustid-key';
+  const { config } = await import('../../src/config.js?variant=acoustid-configured-true');
+  assert.equal(Boolean(config.acoustidApiKey), true);
   delete process.env.ACOUSTID_API_KEY;
 });
 

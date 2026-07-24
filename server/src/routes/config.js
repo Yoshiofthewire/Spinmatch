@@ -8,5 +8,6 @@ configRouter.get('/', (req, res) => {
     metubeUrl: config.metubeUrl,
     ingestEnabled: ingestEnabled(),
     libraryEnabled: libraryEnabled(),
+    acoustidConfigured: Boolean(config.acoustidApiKey),
   });
 });

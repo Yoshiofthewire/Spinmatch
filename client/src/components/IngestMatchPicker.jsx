@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { get, post } from '../api/client.js';
 import { formatDuration } from '../lib/format.js';
+import { useConfig } from '../ConfigContext.jsx';
 import EqualizerLoader from './EqualizerLoader.jsx';
 
 function CandidateRow({ mbid, title, artist, releaseGroupTitle, lengthMs, score, busy, onUse }) {
@@ -19,6 +20,7 @@ function CandidateRow({ mbid, title, artist, releaseGroupTitle, lengthMs, score,
 }
 
 export default function IngestMatchPicker({ item, onResolved, onCancel }) {
+  const { acoustidConfigured } = useConfig();
   const [candidates, setCandidates] = useState(null);
   const [loadError, setLoadError] = useState(null);
   const [query, setQuery] = useState('');
@@ -80,7 +82,11 @@ export default function IngestMatchPicker({ item, onResolved, onCancel }) {
       {loadError && <p className="banner banner-error">{loadError.message}</p>}
       {candidates === null && !loadError && <EqualizerLoader label="Looking for near-misses…" />}
       {candidates && candidates.length === 0 && (
-        <p className="muted">AcoustID found no other candidates for this file.</p>
+        <p className="muted">
+          {acoustidConfigured
+            ? 'AcoustID found no other candidates for this file.'
+            : "AcoustID isn't configured — search MusicBrainz manually below."}
+        </p>
       )}
       {candidates && candidates.length > 0 && (
         <ul className="ingest-candidate-list">

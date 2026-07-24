@@ -62,6 +62,10 @@ export async function scanIngestDir() {
 }
 
 async function identifyFile(filePath) {
+  if (!config.acoustidApiKey) {
+    return { confirmed: null, reason: 'AcoustID is not configured — use "Find a match" to search manually' };
+  }
+
   const { durationSeconds, fingerprint: fp } = await fingerprint(filePath);
   const candidates = await lookup({ fingerprint: fp, durationSeconds });
 
@@ -202,6 +206,10 @@ function albumIsCoherent(perFile, tracks) {
 }
 
 async function identifyAlbum(files) {
+  if (!config.acoustidApiKey) {
+    return { reason: 'AcoustID is not configured, so album tracks cannot be auto-matched' };
+  }
+
   const perFile = [];
   for (const filePath of files) {
     const { durationSeconds, fingerprint: fp } = await fingerprint(filePath);
@@ -344,6 +352,10 @@ export async function processIngest({ dryRun = false, onItem, signal } = {}) {
 // pick from AcoustID's near-misses when auto-matching failed.
 export async function findCandidatesForFile(filePath) {
   await assertInsideIngestDir(filePath);
+  if (!config.acoustidApiKey) {
+    return { candidates: [] };
+  }
+
   const { durationSeconds, fingerprint: fp } = await fingerprint(filePath);
   const acoustidCandidates = await lookup({ fingerprint: fp, durationSeconds });
   const top = acoustidCandidates.slice(0, 10);

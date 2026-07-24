@@ -40,7 +40,7 @@ export function assertRequiredConfig() {
 }
 
 export function ingestEnabled() {
-  return Boolean(config.acoustidApiKey && config.ingest.musicDir && config.ingest.ingestDir);
+  return Boolean(config.ingest.musicDir && config.ingest.ingestDir);
 }
 
 export function libraryEnabled() {

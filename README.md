@@ -61,29 +61,32 @@ MusicBrainz may block the app's IP.
 
 ### Optional: local library ingest
 
-If you set `ACOUSTID_API_KEY`, `INGEST_DIR`, and `MUSIC_DIR` (see `.env.example`), an "Ingest"
-page appears letting you drop new audio (loose files or whole album folders) into `INGEST_DIR`
-and have Spinmatch identify each track by acoustic fingerprint (via
-[Chromaprint](https://acoustid.org/chromaprint)/[AcoustID](https://acoustid.org/)), confirm it
-against the MusicBrainz-recorded duration, fill in whichever tags are missing (never overwriting
-ones you already have), embed cover art, and move the confirmed file into an organized
-`{Artist}/{Album}/{Track} - {Title}` structure under `MUSIC_DIR`. Tracks with no album land under
-`{Artist}/Singles/`, and multi-disc releases get disc-prefixed track names. Album folders are
-handled as a unit: a folder is only tagged and moved when a single release cleanly accounts for
-every file in it — otherwise the whole folder is left untouched for review. If a file identical
-to one already in your library turns up, it's left in place rather than duplicated.
+If you set `INGEST_DIR` and `MUSIC_DIR` (see `.env.example`), an "Ingest" page appears letting you
+drop new audio (loose files or whole album folders) into `INGEST_DIR` and have Spinmatch tag and
+move it into an organized `{Artist}/{Album}/{Track} - {Title}` structure under `MUSIC_DIR`. Tracks
+with no album land under `{Artist}/Singles/`, and multi-disc releases get disc-prefixed track
+names. If a file identical to one already in your library turns up, it's left in place rather than
+duplicated.
 
-Get a free AcoustID API key at [acoustid.org/new-application](https://acoustid.org/new-application).
+Also setting `ACOUSTID_API_KEY` turns on *automatic* identification: each track is fingerprinted
+(via [Chromaprint](https://acoustid.org/chromaprint)/[AcoustID](https://acoustid.org/)) and
+confirmed against the MusicBrainz-recorded duration before being tagged and moved. Album folders
+are handled as a unit: a folder is only auto-tagged and moved when a single release cleanly
+accounts for every file in it — otherwise the whole folder is left untouched for review. Get a
+free AcoustID API key at [acoustid.org/new-application](https://acoustid.org/new-application).
 `fpcalc` (Chromaprint's command-line tool) must be installed and on `PATH` — the Docker image
 installs it automatically; for local/non-Docker use, install it via your package manager (e.g.
 `apt install chromaprint` / `brew install chromaprint`) or set `FPCALC_PATH` if it's elsewhere.
 
+Without `ACOUSTID_API_KEY`, loose files just land straight in "needs review" for manual resolution
+(see below); album folders can't be auto-matched at all without it.
+
 Anything that can't be confidently identified is left untouched in `INGEST_DIR` and listed on the
 Ingest page as "needs review" — nothing is ever deleted, and unmatched items are never moved
-anywhere without your review. For a loose file that AcoustID couldn't confidently match, you can
-resolve it manually right from the needs-review list: pick one of AcoustID's lower-confidence
-near-misses, or search MusicBrainz by artist/title yourself, and Spinmatch tags and moves the file
-the same way an auto-confirmed match would be. Non-audio files are left untouched.
+anywhere without your review. For a loose file, you can resolve it manually right from the
+needs-review list: pick one of AcoustID's lower-confidence near-misses (if `ACOUSTID_API_KEY` is
+set), or search MusicBrainz by artist/title yourself, and Spinmatch tags and moves the file the
+same way an auto-confirmed match would be. Non-audio files are left untouched.
 
 ### Library / Collection Manager
 
@@ -161,9 +164,10 @@ This fills in the repository, port, paths, and environment variables from
 [`unraid-template.xml`](unraid-template.xml). At minimum, set **MB Contact Email**. The mapped
 paths (**Ingest Directory**, **Music Directory**, and **Library DB Directory**) correspond to
 `INGEST_DIR`, `MUSIC_DIR`, and the directory holding `LIBRARY_DB` in `.env.example` — point
-**Music Directory** at your existing music share, and set **AcoustID API Key** if you want the
-local library ingest feature described above. Leave **AcoustID API Key** blank to hide the Ingest
-page entirely. **Library DB Directory** should point at a persistent appdata path so the
+**Music Directory** at your existing music share to enable the local library ingest feature
+described above, and set **AcoustID API Key** as well if you want automatic track identification
+(otherwise ingest still works, just with manual matching only). **Library DB Directory** should
+point at a persistent appdata path so the
 collection index survives container rebuilds; it's used automatically once **Music Directory** is
 set, no separate toggle needed.
 

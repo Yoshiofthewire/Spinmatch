@@ -2,8 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 process.env.MB_CONTACT_EMAIL = 'test@example.com';
-// Intentionally NOT setting ACOUSTID_API_KEY, MUSIC_DIR, or INGEST_DIR
-// so that ingestEnabled() returns false
+// Intentionally NOT setting MUSIC_DIR or INGEST_DIR so that ingestEnabled()
+// returns false. ACOUSTID_API_KEY is irrelevant to this gate (see
+// ingest-no-acoustid.test.js for the "enabled without a key" case).
 
 const { createApp } = await import('../../src/app.js');
 
