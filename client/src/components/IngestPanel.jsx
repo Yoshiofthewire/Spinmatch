@@ -1,7 +1,8 @@
-import { useRef, useState } from 'react';
+import { Fragment, useRef, useState } from 'react';
 import { get, post } from '../api/client.js';
 import { addEntry } from '../lib/history.js';
 import EqualizerLoader from './EqualizerLoader.jsx';
+import IngestMatchPicker from './IngestMatchPicker.jsx';
 
 // Log only real ingests, never previews.
 function logIngested(matched) {
@@ -17,6 +18,27 @@ export default function IngestPanel() {
   const [error, setError] = useState(null);
   const [processed, setProcessed] = useState(0);
   const doneRef = useRef(false);
+  const [expandedPath, setExpandedPath] = useState(null);
+
+  function handleResolved(oldItem, resolution) {
+    setResult((prev) => {
+      const needsReview = prev.needsReview.filter((r) => r.path !== oldItem.path);
+      const matched = [...prev.matched];
+      if (resolution.matched) {
+        matched.push(resolution.matched);
+        addEntry({
+          track: resolution.matched.title,
+          artist: resolution.matched.artist,
+          album: resolution.matched.album,
+          action: 'ingested',
+        });
+      } else if (resolution.needsReview) {
+        needsReview.push(resolution.needsReview);
+      }
+      return { ...prev, matched, needsReview };
+    });
+    setExpandedPath(null);
+  }
 
   async function handleScan() {
     setError(null);
@@ -158,14 +180,37 @@ export default function IngestPanel() {
           ) : (
             <table>
               <thead>
-                <tr><th>File</th><th>Reason</th></tr>
+                <tr><th>File</th><th>Reason</th><th>Action</th></tr>
               </thead>
               <tbody>
                 {result.needsReview.map((r) => (
-                  <tr key={r.path}>
-                    <td>{r.name}</td>
-                    <td className="muted">{r.reason}</td>
-                  </tr>
+                  <Fragment key={r.path}>
+                    <tr>
+                      <td>{r.name}</td>
+                      <td className="muted">{r.reason}</td>
+                      <td>
+                        {r.code === 'no_match' && !isPreview && (
+                          <button
+                            type="button"
+                            onClick={() => setExpandedPath(expandedPath === r.path ? null : r.path)}
+                          >
+                            {expandedPath === r.path ? 'Cancel' : 'Find a match'}
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                    {expandedPath === r.path && (
+                      <tr>
+                        <td colSpan={3}>
+                          <IngestMatchPicker
+                            item={r}
+                            onResolved={(resolution) => handleResolved(r, resolution)}
+                            onCancel={() => setExpandedPath(null)}
+                          />
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
                 ))}
               </tbody>
             </table>
