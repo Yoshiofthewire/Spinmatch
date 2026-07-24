@@ -1,5 +1,5 @@
 # ---- Build stage: install all workspace deps, build the Vite client ----
-FROM node:24-alpine AS build
+FROM node:24-bookworm AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 COPY server/package.json server/package.json
@@ -12,7 +12,7 @@ COPY client client
 RUN npm run build
 
 # ---- Runtime stage: server + its production deps + the built client only ----
-FROM node:24-alpine AS runtime
+FROM node:24-bookworm AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 # The SQLite index (and the admin login stored alongside it) must live on a
@@ -20,7 +20,7 @@ ENV NODE_ENV=production
 ENV LIBRARY_DB=/data/db/library.db
 # yt-dlp is a Python app; the official standalone binary is a glibc-only
 # PyInstaller build and isn't reliable on Alpine's musl libc, so install it
-# via pip into the Python already available through apk instead.
+# via pip into the Python already available through apt instead.
 #
 # YTDLP_VERSION pins a specific release when set (CI passes the latest from
 # PyPI and stamps it as a label so the publish workflow can tell which yt-dlp
@@ -28,10 +28,11 @@ ENV LIBRARY_DB=/data/db/library.db
 # default for plain local `docker build`.
 #
 # chromaprint provides the `fpcalc` binary used by the local library ingest
-# feature (musl-native on Alpine — no glibc concern like yt-dlp's standalone
-# binary had).
+# feature.
 ARG YTDLP_VERSION=
-RUN apk add --no-cache python3 py3-pip chromaprint && \
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends python3 python3-pip chromaprint && \
+    rm -rf /var/lib/apt/lists/* && \
     pip install --break-system-packages --no-cache-dir \
       "yt-dlp${YTDLP_VERSION:+==$YTDLP_VERSION}"
 LABEL ytdlp.version=$YTDLP_VERSION
