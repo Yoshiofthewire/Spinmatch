@@ -124,8 +124,14 @@ async function processLooseFile(item, { dryRun }) {
   if (!confirmed) {
     return { needsReview: { path: item.path, name: item.name, code: 'no_match', reason } };
   }
+  return finalizeLooseFile(item.path, item.name, confirmed, { dryRun });
+}
 
-  const current = await tags.readTags(item.path);
+// Tags and moves a loose file given an already-resolved MusicBrainz recording
+// (the shape `getRecording` returns). Shared by the automatic identify-then-finalize
+// path above and the manual-override resolve path (see resolveLooseFileOverride).
+async function finalizeLooseFile(filePath, name, confirmed, { dryRun }) {
+  const current = await tags.readTags(filePath);
   const releaseGroup = confirmed.releaseGroups[0];
   const coverImage = releaseGroup ? await getFrontCoverImage(releaseGroup.mbid) : null;
 
@@ -138,9 +144,9 @@ async function processLooseFile(item, { dryRun }) {
     album: albumTitle,
     year: confirmed.date ? Number(confirmed.date.slice(0, 4)) : null,
   };
-  const { filledFields } = await applyOrPreviewTags(item.path, current, desired, coverImage, dryRun);
+  const { filledFields } = await applyOrPreviewTags(filePath, current, desired, coverImage, dryRun);
 
-  const moved = await moveOrPreview(item.path, item.name, {
+  const moved = await moveOrPreview(filePath, name, {
     artist: confirmed.artist,
     album: albumTitle ?? 'Singles',
     title: confirmed.title,
@@ -149,8 +155,8 @@ async function processLooseFile(item, { dryRun }) {
 
   return {
     matched: {
-      path: item.path,
-      name: item.name,
+      path: filePath,
+      name,
       recordingMbid: confirmed.mbid,
       title: confirmed.title,
       artist: confirmed.artist,
