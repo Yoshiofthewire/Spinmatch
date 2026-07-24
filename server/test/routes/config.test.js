@@ -60,3 +60,21 @@ test('ingestEnabled() returns false when only some ingest vars are set', async (
   assert.equal(ingestEnabled(), false);
   delete process.env.ACOUSTID_API_KEY;
 });
+
+test('GET /api/config reports libraryEnabled: false when MUSIC_DIR is unset', async () => {
+  const res = await fetch(`${baseUrl}/api/config`);
+  const body = await res.json();
+  assert.equal(body.libraryEnabled, false);
+});
+
+test('libraryEnabled() is true when MUSIC_DIR is set', async () => {
+  process.env.MUSIC_DIR = '/tmp/music';
+  const { libraryEnabled } = await import('../../src/config.js?variant=library-enabled');
+  assert.equal(libraryEnabled(), true);
+  delete process.env.MUSIC_DIR;
+});
+
+test('config.library.dbPath defaults to /data/library.db', async () => {
+  const { config } = await import('../../src/config.js?variant=db-default');
+  assert.equal(config.library.dbPath, '/data/library.db');
+});

@@ -25,6 +25,9 @@ export const config = {
     musicDir: process.env.MUSIC_DIR || null,
     ingestDir: process.env.INGEST_DIR || null,
   },
+  library: {
+    dbPath: process.env.LIBRARY_DB || '/data/library.db',
+  },
 };
 
 export function userAgent() {
@@ -34,4 +37,8 @@ export function userAgent() {
 
 export function ingestEnabled() {
   return Boolean(config.acoustidApiKey && config.ingest.musicDir && config.ingest.ingestDir);
+}
+
+export function libraryEnabled() {
+  return Boolean(config.ingest.musicDir);
 }
