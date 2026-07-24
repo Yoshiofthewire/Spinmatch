@@ -90,6 +90,12 @@ jobs:
           context: .
           push: true
           platforms: linux/amd64
+          # Buildx defaults to attaching a provenance attestation on GitHub
+          # Actions, which wraps this single-platform build in an OCI index and
+          # publishes three GHCR versions per push (image + attestation + index).
+          # We only need the one image manifest.
+          provenance: false
+          sbom: false
           build-args: |
             YTDLP_VERSION=${{ steps.ytdlp.outputs.latest }}
           tags: |
