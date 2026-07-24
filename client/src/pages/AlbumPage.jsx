@@ -45,7 +45,7 @@ export default function AlbumPage() {
       />
 
       {libraryEnabled && (
-        <GapDetectionPanel releaseGroupMbid={mbid} albumTitle={data.release.title} />
+        <GapDetectionPanel key={mbid} releaseGroupMbid={mbid} albumTitle={data.release.title} />
       )}
 
       <TrackList artist={data.release.artist} album={data.release.title} tracks={data.tracks} />
