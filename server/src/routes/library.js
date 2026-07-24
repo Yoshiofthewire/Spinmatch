@@ -1,0 +1,60 @@
+import { Router } from 'express';
+import { libraryEnabled } from '../config.js';
+import { getDb } from '../lib/db.js';
+import { getStats, listArtists, listAlbums, listTracks } from '../services/libraryRepo.js';
+import { scanLibrary } from '../services/libraryScanner.js';
+import { NotFoundError, BadRequestError } from '../lib/httpErrors.js';
+
+export const libraryRouter = Router();
+
+function sameOriginOnly(req, res, next) {
+  const site = req.get('Sec-Fetch-Site');
+  if (site) {
+    if (site !== 'same-origin' && site !== 'none') {
+      return next(new BadRequestError('Cross-site requests are not allowed for this endpoint'));
+    }
+    return next();
+  }
+  const origin = req.get('Origin');
+  if (origin) {
+    let originHost;
+    try { originHost = new URL(origin).host; } catch { return next(new BadRequestError('Invalid Origin header')); }
+    if (originHost !== req.get('Host')) {
+      return next(new BadRequestError('Cross-origin requests are not allowed for this endpoint'));
+    }
+  }
+  next();
+}
+
+libraryRouter.use((req, res, next) => {
+  if (!libraryEnabled()) return next(new NotFoundError('The library feature is not configured'));
+  next();
+});
+
+libraryRouter.get('/stats', (req, res) => {
+  res.json(getStats(getDb()));
+});
+
+libraryRouter.get('/artists', (req, res) => {
+  res.json({ artists: listArtists(getDb()) });
+});
+
+libraryRouter.get('/albums', (req, res) => {
+  const artist = req.query.artist ? String(req.query.artist) : undefined;
+  res.json({ albums: listAlbums(getDb(), artist) });
+});
+
+libraryRouter.get('/tracks', (req, res) => {
+  const artist = req.query.artist ? String(req.query.artist) : undefined;
+  const album = req.query.album ? String(req.query.album) : undefined;
+  res.json({ tracks: listTracks(getDb(), { artist, album }) });
+});
+
+libraryRouter.post('/scan', sameOriginOnly, async (req, res, next) => {
+  try {
+    const summary = await scanLibrary();
+    res.json(summary);
+  } catch (err) {
+    next(err);
+  }
+});
