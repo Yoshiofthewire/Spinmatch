@@ -61,7 +61,12 @@ export async function scanLibrary() {
       meta = await readTags(filePath);
     } catch (err) {
       console.warn(`libraryScanner: skipping unreadable file ${filePath}: ${err.message}`);
-      seen.delete(filePath); // don't let a skipped file mark a prior good row removed... it stays as-is
+      // Skip the upsert for this scan, but keep the file in `seen`: if it was
+      // already indexed, its existing row is left intact so a transient tag
+      // read failure doesn't cause markRemoved() to mark a previously-good
+      // track as removed. If it's a brand-new unreadable file, it has no row
+      // yet, so leaving it in `seen` is harmless (markRemoved only affects
+      // existing rows).
       continue;
     }
 

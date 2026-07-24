@@ -105,3 +105,28 @@ test('a file whose tags throw is skipped without aborting the scan', async () =>
     assert.equal(repo.getStats(db).totalTracks, 1);
   });
 });
+
+test('a previously-indexed file whose tags later throw is kept, not removed', async () => {
+  await withMusicDir(async (dir, db) => {
+    const p = path.join(dir, 'track.mp3');
+    await fs.writeFile(p, 'x');
+    const { scanLibrary: firstScan } = await freshScanner(
+      async () => ({ artist: 'A', album: 'B', title: 'Keeper' }),
+    );
+    await firstScan();
+    const repo = await import('../src/services/libraryRepo.js');
+    assert.equal(repo.getStats(db).totalTracks, 1);
+
+    // Force a change so the second scan actually re-reads tags instead of
+    // skipping the unchanged file.
+    const future = new Date(Date.now() + 1000);
+    await fs.utimes(p, future, future);
+
+    const { scanLibrary: secondScan } = await freshScanner(
+      async () => { throw new Error('transient read error'); },
+    );
+    await secondScan();
+    assert.equal(repo.getStats(db).totalTracks, 1);
+    assert.equal(repo.hasRecording(db, { artist: 'A', title: 'Keeper' }), true);
+  });
+});
