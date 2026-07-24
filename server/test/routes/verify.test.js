@@ -11,7 +11,7 @@ let server;
 let baseUrl;
 
 test.before(async () => {
-  const app = createApp();
+  const app = createApp({ auth: false });
   server = app.listen(0);
   await new Promise((resolve) => server.once('listening', resolve));
   baseUrl = `http://localhost:${server.address().port}`;
@@ -33,6 +33,15 @@ function mockExecFile(t, impl) {
 
 function ndjson(items) {
   return items.map((i) => JSON.stringify(i)).join('\n') + '\n';
+}
+
+function parseSse(text) {
+  return text.split('\n\n').filter((b) => b.trim()).map((block) => {
+    const lines = block.split('\n');
+    const event = lines.find((l) => l.startsWith('event:'))?.slice(6).trim();
+    const data = lines.find((l) => l.startsWith('data:'))?.slice(5).trim();
+    return { event, data: data ? JSON.parse(data) : null };
+  });
 }
 
 test('POST /api/verify returns 400 when required fields are missing', async () => {
@@ -132,4 +141,45 @@ test('POST /api/verify/album/:mbid returns partial results plus a rate-limited e
   assert.equal(body.results[0].title, 'Bulk Track One');
   assert.equal(body.results[0].status, 'confirmed');
   assert.equal(body.error.code, 'RATE_LIMITED');
+});
+
+test('GET /api/verify/album/:mbid/stream emits an album header, a result per track, then done', async (t) => {
+  const agent = mockMusicBrainzAgent();
+  const mb = agent.get('https://musicbrainz.org');
+
+  mb.intercept({ path: /\/ws\/2\/release\?.*release-group=stream-album.*/ }).reply(200, {
+    releases: [{ id: 'stream-release', status: 'Official' }],
+  });
+  mb.intercept({ path: '/ws/2/release/stream-release?inc=recordings%2Bartist-credits&fmt=json' }).reply(200, {
+    id: 'stream-release',
+    title: 'Stream Album',
+    'artist-credit': [{ name: 'Stream Artist' }],
+    media: [
+      {
+        tracks: [
+          { position: 1, title: 'Stream One', length: 180000, recording: { id: 'r1' } },
+          { position: 2, title: 'Stream Two', length: 190000, recording: { id: 'r2' } },
+        ],
+      },
+    ],
+  });
+
+  mockExecFile(t, (bin, args, opts, callback) => {
+    const query = args[args.length - 1];
+    if (query.includes('Stream One')) callback(null, ndjson([{ id: 'v1', title: 'Stream One', duration: 180 }]), '');
+    else callback(null, ndjson([{ id: 'v2', title: 'Stream Two', duration: 190 }]), '');
+  });
+
+  const res = await fetch(`${baseUrl}/api/verify/album/stream-album/stream`);
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get('content-type'), /text\/event-stream/);
+
+  const events = parseSse(await res.text());
+  assert.equal(events.find((e) => e.event === 'album').data.total, 2);
+  const results = events.filter((e) => e.event === 'result');
+  assert.equal(results.length, 2);
+  assert.equal(results[0].data.title, 'Stream One');
+  assert.equal(results[0].data.status, 'confirmed');
+  assert.equal(results[1].data.title, 'Stream Two');
+  assert.ok(events.some((e) => e.event === 'done'), 'stream ends with a done event');
 });

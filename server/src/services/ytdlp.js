@@ -52,9 +52,11 @@ async function runSearch(query, maxResults) {
         'YouTube is temporarily rate-limiting automated requests — try again shortly.'
       );
     }
-    throw new UpstreamUnavailableError(
-      `yt-dlp exited with an error: ${(stderr || err.message).slice(0, 500)}`
-    );
+    // Log the real stderr for operators; return a generic message to the client
+    // so subprocess output (which can contain internal paths) is never
+    // reflected back over HTTP.
+    console.error(`yt-dlp failed: ${(stderr || err.message).slice(0, 500)}`);
+    throw new UpstreamUnavailableError('The YouTube lookup tool failed — see the server logs for details.');
   }
 }
 

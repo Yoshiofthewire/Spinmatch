@@ -2,3 +2,6 @@ node_modules/
 .env
 client/dist/
 *.log
+# Runtime SQLite index / admin-credential DB when LIBRARY_DB is left at its
+# cwd-relative default (matches both repo-root and server/ working dirs).
+data/
