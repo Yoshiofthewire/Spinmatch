@@ -115,6 +115,25 @@ docker compose up --build
 The app will be available at http://localhost:3000. The container builds the client and runs
 the server in a single image — no separate frontend container needed.
 
+## Running on Unraid
+
+A published image is available at `ghcr.io/yoshiofthewire/spinmatch:latest`, rebuilt automatically
+on every push to `main` and daily whenever a new `yt-dlp` release comes out.
+
+In the Unraid **Docker** tab, click **Add Container**, switch the template dropdown to
+**Enter URL**, and paste:
+
+```
+https://raw.githubusercontent.com/Yoshiofthewire/Spinmatch/main/unraid-template.xml
+```
+
+This fills in the repository, port, paths, and environment variables from
+[`unraid-template.xml`](unraid-template.xml). At minimum, set **MB Contact Email**. The two
+mapped paths (**Ingest Directory** and **Music Directory**) correspond to `INGEST_DIR` and
+`MUSIC_DIR` in `.env.example` — point **Music Directory** at your existing music share, and set
+**AcoustID API Key** if you want the local library ingest feature described above. Leave
+**AcoustID API Key** blank to hide the Ingest page entirely.
+
 ## Tests
 
 ```
