@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { ingestEnabled } from '../config.js';
-import { scanIngestDir, processIngest } from '../services/ingest.js';
+import { scanIngestDir, processIngest, findCandidatesForFile, resolveLooseFileOverride } from '../services/ingest.js';
 import { NotFoundError, BadRequestError } from '../lib/httpErrors.js';
 
 export const ingestRouter = Router();
@@ -49,10 +49,34 @@ ingestRouter.get('/scan', async (req, res, next) => {
   }
 });
 
+ingestRouter.get('/file/candidates', async (req, res, next) => {
+  try {
+    const filePath = String(req.query.path || '');
+    if (!filePath) throw new BadRequestError('path is required');
+    const result = await findCandidatesForFile(filePath);
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
 ingestRouter.post('/process', sameOriginOnly, async (req, res, next) => {
   try {
     const { dryRun = false } = req.body || {};
     const result = await processIngest({ dryRun: Boolean(dryRun) });
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+ingestRouter.post('/file/resolve', sameOriginOnly, async (req, res, next) => {
+  try {
+    const { path: filePath, name, recordingMbid, dryRun = false } = req.body || {};
+    if (!filePath || !name || !recordingMbid) {
+      throw new BadRequestError('path, name, and recordingMbid are required');
+    }
+    const result = await resolveLooseFileOverride({ filePath, name, recordingMbid, dryRun: Boolean(dryRun) });
     res.json(result);
   } catch (err) {
     next(err);

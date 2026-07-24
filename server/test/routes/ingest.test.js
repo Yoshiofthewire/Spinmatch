@@ -52,6 +52,43 @@ test('GET /api/ingest/process-stream streams SSE and ends with a done event', as
   assert.match(body, /event: done/);
 });
 
+test('GET /api/ingest/file/candidates requires a path query param', async () => {
+  const res = await fetch(`${baseUrl}/api/ingest/file/candidates`);
+  assert.equal(res.status, 400);
+});
+
+test('GET /api/ingest/file/candidates rejects a path outside INGEST_DIR', async () => {
+  const res = await fetch(`${baseUrl}/api/ingest/file/candidates?path=${encodeURIComponent('/etc/passwd')}`);
+  assert.equal(res.status, 400);
+});
+
+test('POST /api/ingest/file/resolve requires path, name, and recordingMbid', async () => {
+  const res = await fetch(`${baseUrl}/api/ingest/file/resolve`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+  assert.equal(res.status, 400);
+});
+
+test('POST /api/ingest/file/resolve rejects cross-site requests (CSRF guard)', async () => {
+  const res = await fetch(`${baseUrl}/api/ingest/file/resolve`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Sec-Fetch-Site': 'cross-site' },
+    body: JSON.stringify({ path: path.join(tmpDir, 'x.mp3'), name: 'x.mp3', recordingMbid: 'rec-1' }),
+  });
+  assert.equal(res.status, 400);
+});
+
+test('POST /api/ingest/file/resolve rejects a path outside INGEST_DIR', async () => {
+  const res = await fetch(`${baseUrl}/api/ingest/file/resolve`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path: '/etc/passwd', name: 'passwd', recordingMbid: 'rec-1' }),
+  });
+  assert.equal(res.status, 400);
+});
+
 test('the mutating ingest routes reject cross-site requests (CSRF guard)', async () => {
   const stream = await fetch(`${baseUrl}/api/ingest/process-stream`, {
     headers: { 'Sec-Fetch-Site': 'cross-site' },
