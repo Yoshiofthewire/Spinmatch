@@ -8,6 +8,7 @@ import IngestPage from './pages/IngestPage.jsx';
 import LibraryPage from './pages/LibraryPage.jsx';
 import Logo from './components/Logo.jsx';
 import { useConfig } from './ConfigContext.jsx';
+import { useAuth } from './AuthContext.jsx';
 
 function navLinkClass({ isActive }) {
   return isActive ? 'nav-link nav-link-active' : 'nav-link';
@@ -15,6 +16,7 @@ function navLinkClass({ isActive }) {
 
 export default function App() {
   const { ingestEnabled, libraryEnabled } = useConfig();
+  const { username, logout } = useAuth();
 
   return (
     <div className="app">
@@ -30,6 +32,9 @@ export default function App() {
           {libraryEnabled && <NavLink to="/library" className={navLinkClass}>Library</NavLink>}
           <NavLink to="/history" className={navLinkClass}>History</NavLink>
           <NavLink to="/about" className={navLinkClass}>About</NavLink>
+          <button type="button" className="nav-logout" onClick={logout} title={username ? `Signed in as ${username}` : undefined}>
+            Log out
+          </button>
         </nav>
       </header>
       <main className="app-main">

@@ -1,13 +1,17 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { Worker } from 'node:worker_threads';
 import { config } from '../config.js';
 import { readTags } from './tags.js';
-import { getDb } from '../lib/db.js';
+import { getDb, withTransaction } from '../lib/db.js';
 import {
   upsertLocalTrack, getChangeKeys, markRemoved, recomputeStats,
 } from './libraryRepo.js';
 
 const AUDIO_EXTENSIONS = new Set(['.mp3', '.flac', '.m4a', '.aac', '.ogg']);
+// Write in batches so the SQLite write lock is released periodically (letting a
+// concurrent login/auth write through) instead of held for one giant commit.
+const WRITE_CHUNK = 5000;
 
 function isAudioFile(name) {
   return AUDIO_EXTENSIONS.has(path.extname(name).toLowerCase());
@@ -35,15 +39,70 @@ async function* walk(dir) {
   }
 }
 
-export async function scanLibrary() {
+// Shared across every caller (the interval timer, the fs-watch debounce, and
+// the manual POST /api/library/scan route) so a scan started from any of them
+// coalesces onto the one in flight instead of racing it. Two concurrent scans
+// build independent `seen` sets, so a file created mid-scan could be wrongly
+// markRemoved()'d by whichever run finishes last — this prevents that.
+let inFlight = null;
+
+// Runs the scan in a worker thread so its synchronous, CPU-bound work — a tag
+// read per file (node-taglib-sharp is sync) and the DB writes — never blocks
+// the main event loop. At 100k tracks the main thread stays fully responsive
+// (dashboard reads hit the same WAL DB from a separate connection). The worker
+// opens its own DB connection from the same config.library.dbPath.
+export function scanLibrary() {
+  if (inFlight) return inFlight;
+  inFlight = spawnScanWorker().finally(() => { inFlight = null; });
+  return inFlight;
+}
+
+function spawnScanWorker() {
+  return new Promise((resolve, reject) => {
+    // execArgv: [] so the worker doesn't inherit the parent's CLI flags (e.g.
+    // `--test` under the test runner, or `--env-file`); process.env is still
+    // inherited, so config.js resolves MUSIC_DIR/LIBRARY_DB normally.
+    const worker = new Worker(new URL('./libraryScanWorker.js', import.meta.url), { execArgv: [] });
+    let settled = false;
+    worker.once('message', (msg) => {
+      settled = true;
+      if (msg.ok) resolve(msg.summary);
+      else reject(new Error(msg.error));
+    });
+    worker.once('error', (err) => { settled = true; reject(err); });
+    worker.once('exit', (code) => {
+      if (!settled) reject(new Error(`library scan worker exited with code ${code}`));
+    });
+  });
+}
+
+// The actual scan. Exported so it runs directly inside the worker thread (and
+// in-process in unit tests, where tags.js is mocked and getDb() is an in-memory
+// DB). Not called on the main thread in production — scanLibrary() spawns it.
+export async function runScanOnce() {
   const root = config.ingest.musicDir;
   const db = getDb();
+
+  // If the music root itself is unreadable (unmounted volume, permissions),
+  // treat it as fatal and bail BEFORE any writes — an empty walk would
+  // otherwise markRemoved() the entire library. Deep unreadable subdirs are
+  // still skipped gracefully by walk().
+  try {
+    await fs.access(root, fs.constants.R_OK);
+  } catch {
+    console.warn(`libraryScanner: MUSIC_DIR is unreadable, skipping scan to protect the index: ${root}`);
+    return { scanned: 0, added: 0, updated: 0, removed: 0, skipped: true };
+  }
+
   const known = getChangeKeys(db);
   const seen = new Set();
+  const toUpsert = [];
   let scanned = 0;
   let added = 0;
   let updated = 0;
 
+  // Phase 1 (async IO): walk, stat, and read tags for changed files only,
+  // collecting the rows to write. No DB mutation happens here.
   for await (const filePath of walk(root)) {
     scanned += 1;
     seen.add(filePath);
@@ -61,17 +120,14 @@ export async function scanLibrary() {
       meta = await readTags(filePath);
     } catch (err) {
       console.warn(`libraryScanner: skipping unreadable file ${filePath}: ${err.message}`);
-      // Skip the upsert for this scan, but keep the file in `seen`: if it was
-      // already indexed, its existing row is left intact so a transient tag
-      // read failure doesn't cause markRemoved() to mark a previously-good
-      // track as removed. If it's a brand-new unreadable file, it has no row
-      // yet, so leaving it in `seen` is harmless (markRemoved only affects
-      // existing rows).
+      // Keep it in `seen` so a transient read failure doesn't mark an
+      // already-indexed track removed; a brand-new unreadable file simply has
+      // no row yet, so this is harmless.
       continue;
     }
 
-    const isNew = !known.has(filePath);
-    upsertLocalTrack(db, {
+    if (!known.has(filePath)) added += 1; else updated += 1;
+    toUpsert.push({
       path: filePath,
       artist: meta.artist ?? null,
       album: meta.album ?? path.basename(path.dirname(filePath)),
@@ -79,11 +135,23 @@ export async function scanLibrary() {
       durationMs: null,
       changeKey,
     });
-    if (isNew) added += 1; else updated += 1;
   }
 
-  markRemoved(db, seen);
-  recomputeStats(db);
+  // Phase 2 (chunked transactions): batch the upserts so each commit is one
+  // fsync for thousands of rows (not one per row), while still releasing the
+  // write lock between chunks so a concurrent auth write isn't starved on a
+  // 100k-track scan. Removal + stats commit last so counts settle atomically.
+  for (let i = 0; i < toUpsert.length; i += WRITE_CHUNK) {
+    const batch = toUpsert.slice(i, i + WRITE_CHUNK);
+    withTransaction(db, () => {
+      for (const row of batch) upsertLocalTrack(db, row);
+    });
+  }
+  withTransaction(db, () => {
+    markRemoved(db, seen);
+    recomputeStats(db);
+  });
+
   const removed = known.size - [...known.keys()].filter((p) => seen.has(p)).length;
   return { scanned, added, updated, removed };
 }

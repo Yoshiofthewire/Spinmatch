@@ -6,6 +6,18 @@ MusicBrainz-recorded track length.
 
 This app **only finds and verifies YouTube links**. It does not download or rip audio.
 
+## First-run login
+
+The whole app is gated behind a single admin account. The **first time** you open Spinmatch
+it shows a one-time setup screen — pick a username and password (minimum 8 characters) and it
+logs you in. After that, every visit shows a login screen, and all `/api` routes except
+`/api/health` and `/api/config` require a valid session.
+
+The credential is stored (scrypt-hashed) in the same SQLite database as the library index
+(`LIBRARY_DB`, default `/data/db/library.db`), so keep that path on a persistent volume. No
+extra configuration is required — auth is always on. To reset a forgotten password, stop the
+app and delete the `app_auth` row (or the DB file) to return to the first-run setup screen.
+
 ## Prerequisites
 
 - Node.js 20+ (Node 24 recommended — this project uses native `fetch` and `--env-file`)
@@ -90,14 +102,17 @@ Whenever `MUSIC_DIR` is set (see above), Spinmatch also indexes it into a local 
 and turns on a "Your Library" page: browse the collection by artist and album, see aggregate
 stats (track/album/artist counts), and rescan on demand. The index is built at startup and kept
 current afterward by a background scan plus a filesystem watcher, so changes made outside the app
-(e.g. copying files in directly) are picked up without a restart.
+(e.g. copying files in directly) are picked up without a restart. The scan runs in a worker
+thread — the per-file tag reads and database writes happen off the main event loop, so the app
+stays responsive even while indexing a large (100k+ track) collection.
 
 Album pages also get gap detection: given a MusicBrainz release group, Spinmatch compares its
 official tracklist against what's indexed from `MUSIC_DIR` and reports which tracks you already
-have versus which are missing, with a YouTube link for each gap. Matching is done by artist and
-track title (case-insensitive), so results depend on your files' tag hygiene — tag drift (e.g.
-"The Beatles" vs "Beatles", or a "(Remastered)" suffix on one side but not the other) can cause a
-track you already own to show up as missing.
+have versus which are missing, with a YouTube link for each gap. Matching is by artist and track
+title, normalized to fold away case, punctuation, featured-artist tails, and parenthetical
+suffixes like "(Remastered 2011)" or "[Live]" — so a remaster you own isn't reported as missing.
+Larger tag drift (e.g. "The Beatles" vs "Beatles") can still cause a track you own to show up as
+missing, so results depend on your files' tag hygiene.
 
 This feature needs no separate opt-in flag — it's enabled automatically as soon as `MUSIC_DIR` is
 configured, independent of the ingest feature above. The index itself lives at `LIBRARY_DB`

@@ -1,8 +1,22 @@
 import { resolvePrimaryReleaseForGroup, getReleaseWithTracks } from './musicbrainz.js';
 import { verifyTrack } from './verifyTrack.js';
 import { getDb } from '../lib/db.js';
-import { hasRecording } from './libraryRepo.js';
+import { listArtistTitles } from './libraryRepo.js';
 import { NotFoundError } from '../lib/httpErrors.js';
+
+// Fold away the differences that make an owned track look "missing" versus the
+// MusicBrainz tracklist: case, parenthetical/bracketed suffixes like
+// "(Remastered 2011)" or "[Live]", featured-artist tails, and punctuation.
+export function normalizeTitle(title) {
+  return String(title || '')
+    .toLowerCase()
+    .replace(/\([^)]*\)/g, ' ')
+    .replace(/\[[^\]]*\]/g, ' ')
+    .replace(/\b(feat|ft|featuring)\b.*$/i, ' ')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 
 export async function detectAlbumGaps(releaseGroupMbid) {
   const releaseMbid = await resolvePrimaryReleaseForGroup(releaseGroupMbid);
@@ -10,11 +24,14 @@ export async function detectAlbumGaps(releaseGroupMbid) {
 
   const { release, tracks } = await getReleaseWithTracks(releaseMbid);
   const db = getDb();
+  // One query for the artist's owned titles, normalized, instead of an exact
+  // match per track — catches "Song (Remastered)" as owning "Song".
+  const ownedTitles = new Set(listArtistTitles(db, release.artist).map(normalizeTitle));
   const owned = [];
   const missing = [];
 
   for (const track of tracks) {
-    if (hasRecording(db, { artist: release.artist, title: track.title })) {
+    if (ownedTitles.has(normalizeTitle(track.title))) {
       owned.push({ position: track.position, title: track.title });
       continue;
     }

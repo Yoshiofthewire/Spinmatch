@@ -1,4 +1,6 @@
 import fs from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { config } from '../config.js';
 import { BadRequestError } from '../lib/httpErrors.js';
@@ -45,11 +47,19 @@ async function fileExists(p) {
   }
 }
 
+async function sha256(filePath) {
+  const hash = createHash('sha256');
+  for await (const chunk of createReadStream(filePath)) hash.update(chunk);
+  return hash.digest('hex');
+}
+
+// Cheap size check first, then a streaming hash of each side so we never hold a
+// whole (potentially 100MB+ lossless) file in memory just to detect a duplicate.
 async function filesAreIdentical(a, b) {
   const [statA, statB] = await Promise.all([fs.stat(a), fs.stat(b)]);
   if (statA.size !== statB.size) return false;
-  const [bufA, bufB] = await Promise.all([fs.readFile(a), fs.readFile(b)]);
-  return bufA.equals(bufB);
+  const [hashA, hashB] = await Promise.all([sha256(a), sha256(b)]);
+  return hashA === hashB;
 }
 
 function withSuffix(destPath, n) {

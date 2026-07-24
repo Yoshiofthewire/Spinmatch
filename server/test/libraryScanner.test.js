@@ -10,7 +10,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const { openDb, setDbForTest } = await import('../src/lib/db.js');
 const configModule = await import('../src/config.js');
 
-// scanLibrary reads real tags via node-taglib-sharp; mock it so the test can use
+// runScanOnce reads real tags via node-taglib-sharp; mock it so the test can use
 // cheap placeholder files. Register the mock BEFORE importing the scanner, then
 // import the scanner with a cache-busting suffix (same technique as ingest.test.js).
 let counter = 0;
@@ -46,15 +46,15 @@ async function withMusicDir(fn) {
   }
 }
 
-test('scanLibrary indexes audio files with their tags and ignores non-audio', async () => {
+test('runScanOnce indexes audio files with their tags and ignores non-audio', async () => {
   await withMusicDir(async (dir, db) => {
     await fs.mkdir(path.join(dir, 'Artist', 'Album'), { recursive: true });
     await fs.writeFile(path.join(dir, 'Artist', 'Album', '01.mp3'), 'x');
     await fs.writeFile(path.join(dir, 'Artist', 'Album', 'cover.jpg'), 'x');
-    const { scanLibrary } = await freshScanner(async () => ({
+    const { runScanOnce } = await freshScanner(async () => ({
       artist: 'Artist', album: 'Album', title: 'Song One', /* other fields */ genre: null,
     }));
-    const summary = await scanLibrary();
+    const summary = await runScanOnce();
     assert.equal(summary.scanned, 1);
     assert.equal(summary.added, 1);
     const repo = await import('../src/services/libraryRepo.js');
@@ -68,10 +68,10 @@ test('a second scan with no changes re-reads no tags (all skipped)', async () =>
     await fs.writeFile(path.join(dir, 'track.mp3'), 'x');
     let reads = 0;
     const read = async () => { reads += 1; return { artist: 'A', album: 'B', title: 'T' }; };
-    const { scanLibrary } = await freshScanner(read);
-    await scanLibrary();
+    const { runScanOnce } = await freshScanner(read);
+    await runScanOnce();
     assert.equal(reads, 1);
-    await scanLibrary(); // unchanged file -> skipped, no re-read
+    await runScanOnce(); // unchanged file -> skipped, no re-read
     assert.equal(reads, 1);
   });
 });
@@ -80,12 +80,12 @@ test('a deleted file is marked removed on the next scan', async () => {
   await withMusicDir(async (dir, db) => {
     const p = path.join(dir, 'track.mp3');
     await fs.writeFile(p, 'x');
-    const { scanLibrary } = await freshScanner(async () => ({ artist: 'A', album: 'B', title: 'T' }));
-    await scanLibrary();
+    const { runScanOnce } = await freshScanner(async () => ({ artist: 'A', album: 'B', title: 'T' }));
+    await runScanOnce();
     const repo = await import('../src/services/libraryRepo.js');
     assert.equal(repo.getStats(db).totalTracks, 1);
     await fs.rm(p);
-    await scanLibrary();
+    await runScanOnce();
     assert.equal(repo.getStats(db).totalTracks, 0);
   });
 });
@@ -98,8 +98,8 @@ test('a file whose tags throw is skipped without aborting the scan', async () =>
       if (fp.endsWith('bad.mp3')) throw new Error('corrupt');
       return { artist: 'A', album: 'B', title: 'Good' };
     };
-    const { scanLibrary } = await freshScanner(read);
-    const summary = await scanLibrary();
+    const { runScanOnce } = await freshScanner(read);
+    const summary = await runScanOnce();
     assert.equal(summary.added, 1);
     const repo = await import('../src/services/libraryRepo.js');
     assert.equal(repo.getStats(db).totalTracks, 1);
@@ -110,7 +110,7 @@ test('a previously-indexed file whose tags later throw is kept, not removed', as
   await withMusicDir(async (dir, db) => {
     const p = path.join(dir, 'track.mp3');
     await fs.writeFile(p, 'x');
-    const { scanLibrary: firstScan } = await freshScanner(
+    const { runScanOnce: firstScan } = await freshScanner(
       async () => ({ artist: 'A', album: 'B', title: 'Keeper' }),
     );
     await firstScan();
@@ -122,7 +122,7 @@ test('a previously-indexed file whose tags later throw is kept, not removed', as
     const future = new Date(Date.now() + 1000);
     await fs.utimes(p, future, future);
 
-    const { scanLibrary: secondScan } = await freshScanner(
+    const { runScanOnce: secondScan } = await freshScanner(
       async () => { throw new Error('transient read error'); },
     );
     await secondScan();
