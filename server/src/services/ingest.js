@@ -7,6 +7,7 @@ import { getRecording, resolvePrimaryReleaseForGroup, getReleaseWithTracks } fro
 import * as tags from './tags.js';
 import { getFrontCoverImage } from './coverArt.js';
 import { rankCandidates } from './durationMatch.js';
+import * as tagMatch from './tagMatch.js';
 import * as organize from './organize.js';
 import { RateLimitedError, BadRequestError } from '../lib/httpErrors.js';
 
@@ -62,8 +63,11 @@ export async function scanIngestDir() {
 }
 
 async function identifyFile(filePath) {
+  // No API key (or no key obtainable — AcoustID's registration has been down):
+  // fall back to matching on the file's existing tags rather than punting the
+  // whole file to manual review.
   if (!config.acoustidApiKey) {
-    return { confirmed: null, reason: 'AcoustID is not configured — use "Find a match" to search manually' };
+    return tagMatch.identifyFileFromTags(filePath);
   }
 
   const { durationSeconds, fingerprint: fp } = await fingerprint(filePath);
@@ -205,11 +209,10 @@ function albumIsCoherent(perFile, tracks) {
   });
 }
 
-async function identifyAlbum(files) {
-  if (!config.acoustidApiKey) {
-    return { reason: 'AcoustID is not configured, so album tracks cannot be auto-matched' };
-  }
-
+// Per-file durations (plus any candidate recording MBIDs) and the release
+// groups worth checking the folder against. Either fingerprints every file, or
+// — without an AcoustID key — derives both from the files' own tags.
+async function albumCandidates(files) {
   const perFile = [];
   for (const filePath of files) {
     const { durationSeconds, fingerprint: fp } = await fingerprint(filePath);
@@ -231,6 +234,15 @@ async function identifyAlbum(files) {
     return { reason: 'no confident AcoustID matches for the album tracks' };
   }
 
+  return { perFile, releaseGroupMbids };
+}
+
+async function identifyAlbum(files) {
+  const { perFile, releaseGroupMbids, reason } = config.acoustidApiKey
+    ? await albumCandidates(files)
+    : await tagMatch.albumCandidatesFromTags(files);
+  if (reason) return { reason };
+
   // First release-group that resolves to a release whose tracklist coherently
   // explains the whole folder wins (all-or-nothing at the folder level).
   for (const rgMbid of releaseGroupMbids) {
@@ -240,7 +252,9 @@ async function identifyAlbum(files) {
     if (tracks.length !== files.length) continue;
     if (!albumIsCoherent(perFile, tracks)) continue;
     const coverImage = await getFrontCoverImage(rgMbid);
-    return { release, tracks, coverImage };
+    // `files` in perFile order: the tag-based path may reorder a folder by its
+    // track-number tags, and the caller pairs file[i] with track[i].
+    return { release, tracks, coverImage, files: perFile.map((f) => f.filePath) };
   }
   return { reason: 'no release coherently matched the whole folder' };
 }
@@ -261,13 +275,15 @@ async function processAlbumFolder(item, { dryRun }) {
     return { needsReview: [{ path: item.path, name: item.name, code: 'album_incoherent', reason: identified.reason }] };
   }
 
-  const { release, tracks, coverImage } = identified;
+  // identifyAlbum hands back the files in the order it matched them against the
+  // tracklist, which is not necessarily the filename order above.
+  const { release, tracks, coverImage, files: orderedFiles } = identified;
   const multiDisc = release.discCount > 1;
   const matched = [];
   const needsReview = [];
 
-  for (let i = 0; i < files.length; i += 1) {
-    const filePath = files[i];
+  for (let i = 0; i < orderedFiles.length; i += 1) {
+    const filePath = orderedFiles[i];
     const track = tracks[i];
     const name = path.basename(filePath);
     const discNumber = multiDisc ? track.discNumber : null;
@@ -352,8 +368,10 @@ export async function processIngest({ dryRun = false, onItem, signal } = {}) {
 // pick from AcoustID's near-misses when auto-matching failed.
 export async function findCandidatesForFile(filePath) {
   await assertInsideIngestDir(filePath);
+  // Without a key there are no fingerprint near-misses to offer, so seed the
+  // picker with what MusicBrainz returns for the file's own tags instead.
   if (!config.acoustidApiKey) {
-    return { candidates: [] };
+    return tagMatch.candidatesFromTags(filePath);
   }
 
   const { durationSeconds, fingerprint: fp } = await fingerprint(filePath);

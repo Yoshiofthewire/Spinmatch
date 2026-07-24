@@ -85,7 +85,7 @@ export default function IngestMatchPicker({ item, onResolved, onCancel }) {
         <p className="muted">
           {acoustidConfigured
             ? 'AcoustID found no other candidates for this file.'
-            : "AcoustID isn't configured — search MusicBrainz manually below."}
+            : "AcoustID isn't configured, and this file's own tags turned up nothing on MusicBrainz — search manually below."}
         </p>
       )}
       {candidates && candidates.length > 0 && (

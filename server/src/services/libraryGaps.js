@@ -3,20 +3,7 @@ import { verifyTrack } from './verifyTrack.js';
 import { getDb } from '../lib/db.js';
 import { listArtistTitles } from './libraryRepo.js';
 import { NotFoundError } from '../lib/httpErrors.js';
-
-// Fold away the differences that make an owned track look "missing" versus the
-// MusicBrainz tracklist: case, parenthetical/bracketed suffixes like
-// "(Remastered 2011)" or "[Live]", featured-artist tails, and punctuation.
-export function normalizeTitle(title) {
-  return String(title || '')
-    .toLowerCase()
-    .replace(/\([^)]*\)/g, ' ')
-    .replace(/\[[^\]]*\]/g, ' ')
-    .replace(/\b(feat|ft|featuring)\b.*$/i, ' ')
-    .replace(/[^\p{L}\p{N}]+/gu, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
+import { normalizeTitle } from '../lib/normalize.js';
 
 export async function detectAlbumGaps(releaseGroupMbid) {
   const releaseMbid = await resolvePrimaryReleaseForGroup(releaseGroupMbid);

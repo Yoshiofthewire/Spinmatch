@@ -29,6 +29,15 @@ test('readTags reads existing title/artist from a tagged fixture', async () => {
   });
 });
 
+// The tag-based ingest fallback duration-confirms its matches with this value,
+// so it has to come off a real file without fpcalc/Chromaprint involved.
+test('readTags reports the decoded duration', async () => {
+  await withCopiedFixture('tagged.mp3', async (file) => {
+    const tags = await readTags(file);
+    assert.ok(tags.durationMs > 0, `expected a positive duration, got ${tags.durationMs}`);
+  });
+});
+
 test('readTags reports empty fields on an untagged fixture', async () => {
   await withCopiedFixture('silence.mp3', async (file) => {
     const tags = await readTags(file);

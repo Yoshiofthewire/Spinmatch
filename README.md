@@ -78,15 +78,24 @@ free AcoustID API key at [acoustid.org/new-application](https://acoustid.org/new
 installs it automatically; for local/non-Docker use, install it via your package manager (e.g.
 `apt install chromaprint` / `brew install chromaprint`) or set `FPCALC_PATH` if it's elsewhere.
 
-Without `ACOUSTID_API_KEY`, loose files just land straight in "needs review" for manual resolution
-(see below); album folders can't be auto-matched at all without it.
+Without `ACOUSTID_API_KEY` (AcoustID's key registration has been down for a while, so you may not
+be able to get one), ingest falls back to matching on the tags the files already carry: it searches
+MusicBrainz for the file's artist/title and only accepts a hit whose title agrees and whose
+MusicBrainz length is within five seconds of the file's own — the same "confirm before touching
+anything" bar the fingerprint path applies, just without the fingerprint. Album folders work the
+same way, matched by their album/artist tags against a release group whose whole tracklist lines up
+by duration (track-number tags, when present, decide the running order rather than filenames).
+Files with no useful tags, or whose tags don't confirm, land in "needs review" for manual
+resolution (see below) — nothing is guessed at. No fingerprinting means `fpcalc` isn't needed
+either on this path.
 
 Anything that can't be confidently identified is left untouched in `INGEST_DIR` and listed on the
 Ingest page as "needs review" — nothing is ever deleted, and unmatched items are never moved
 anywhere without your review. For a loose file, you can resolve it manually right from the
-needs-review list: pick one of AcoustID's lower-confidence near-misses (if `ACOUSTID_API_KEY` is
-set), or search MusicBrainz by artist/title yourself, and Spinmatch tags and moves the file the
-same way an auto-confirmed match would be. Non-audio files are left untouched.
+needs-review list: pick one of the offered candidates — AcoustID's lower-confidence near-misses if
+`ACOUSTID_API_KEY` is set, otherwise whatever MusicBrainz returns for the file's own tags — or
+search MusicBrainz by artist/title yourself, and Spinmatch tags and moves the file the same way an
+auto-confirmed match would be. Non-audio files are left untouched.
 
 ### Library / Collection Manager
 

@@ -356,7 +356,10 @@ test('processIngest reports needsReview when duration/score confirmation fails',
   });
 });
 
-test('processIngest reports needsReview without calling fpcalc/AcoustID when ACOUSTID_API_KEY is unset', async (t) => {
+// Without a key, identification falls back to services/tagMatch.js (unit-tested
+// in tag-match.test.js); these tests cover the wiring: the fallback's verdict
+// drives the same tag/move/report pipeline, and fpcalc/AcoustID stay untouched.
+test('processIngest matches a loose file from its tags when ACOUSTID_API_KEY is unset', async (t) => {
   await withIngestDir(async (dir) => {
     await withoutAcoustidKey(async () => {
       await fs.writeFile(path.join(dir, 'unconfigured.mp3'), 'fake-audio');
@@ -369,25 +372,78 @@ test('processIngest reports needsReview without calling fpcalc/AcoustID when ACO
       t.mock.module('../src/services/acoustid.js', {
         exports: { lookup: async (...args) => { lookupCalls.push(args); return []; } },
       });
+      t.mock.module('../src/services/tagMatch.js', {
+        exports: {
+          identifyFileFromTags: async () => ({
+            confirmed: {
+              mbid: 'rec-tag', title: 'Tagged Title', lengthMs: 200000, artist: 'Tagged Artist',
+              releaseGroups: [{ mbid: 'rg-1', title: 'Tagged Album' }], date: '2019-01-01',
+            },
+            reason: null,
+          }),
+          albumCandidatesFromTags: async () => ({ reason: 'not exercised here' }),
+          candidatesFromTags: async () => ({ candidates: [] }),
+        },
+      });
+      t.mock.module('../src/services/tags.js', {
+        exports: {
+          readTags: async () => ({
+            artist: 'Tagged Artist', title: 'Tagged Title', album: null, trackNumber: null,
+            disc: null, year: null, genre: null, durationMs: 200000, hasCoverArt: false,
+          }),
+          writeMissingTags: async () => ({ filledFields: ['album'] }),
+        },
+      });
+      t.mock.module('../src/services/coverArt.js', { exports: { getFrontCoverImage: async () => null } });
+      t.mock.module('../src/services/organize.js', {
+        exports: {
+          moveIntoLibrary: async () => ({ movedTo: '/music/Tagged Artist/Tagged Album/Tagged Title.mp3', duplicate: false }),
+        },
+      });
 
       const processIngestFresh = await freshProcessIngest();
       const result = await processIngestFresh();
 
       assert.equal(fingerprintCalls.length, 0, 'fpcalc should never be invoked without a key');
       assert.equal(lookupCalls.length, 0, 'AcoustID should never be called without a key');
-      assert.equal(result.matched.length, 0);
-      assert.equal(result.needsReview.length, 1);
-      assert.match(result.needsReview[0].reason, /not configured/i);
-      assert.equal(result.needsReview[0].code, 'no_match');
+      assert.equal(result.needsReview.length, 0);
+      assert.equal(result.matched.length, 1);
+      assert.equal(result.matched[0].recordingMbid, 'rec-tag');
+      assert.equal(result.matched[0].movedTo, '/music/Tagged Artist/Tagged Album/Tagged Title.mp3');
     });
   });
 });
 
-test('an album folder reports needsReview without auto-matching when ACOUSTID_API_KEY is unset', async (t) => {
+test('a loose file the tag fallback cannot confirm still lands in needsReview', async (t) => {
+  await withIngestDir(async (dir) => {
+    await withoutAcoustidKey(async () => {
+      await fs.writeFile(path.join(dir, 'untagged.mp3'), 'fake-audio');
+
+      t.mock.module('../src/services/tagMatch.js', {
+        exports: {
+          identifyFileFromTags: async () => ({ confirmed: null, reason: 'no artist/title tags to match on' }),
+          albumCandidatesFromTags: async () => ({ reason: 'not exercised here' }),
+          candidatesFromTags: async () => ({ candidates: [] }),
+        },
+      });
+
+      const processIngestFresh = await freshProcessIngest();
+      const result = await processIngestFresh();
+
+      assert.equal(result.matched.length, 0);
+      assert.equal(result.needsReview.length, 1);
+      assert.equal(result.needsReview[0].code, 'no_match');
+      assert.match(result.needsReview[0].reason, /no artist\/title tags/i);
+    });
+  });
+});
+
+test('an album folder is matched from its tags when ACOUSTID_API_KEY is unset', async (t) => {
   await withIngestDir(async (dir) => {
     await withoutAcoustidKey(async () => {
       await fs.mkdir(path.join(dir, 'An Album'));
-      await fs.writeFile(path.join(dir, 'An Album', 'track1.flac'), 'fake-audio');
+      await fs.writeFile(path.join(dir, 'An Album', 'b-side.flac'), 'fake-audio');
+      await fs.writeFile(path.join(dir, 'An Album', 'a-side.flac'), 'fake-audio');
 
       const fingerprintCalls = [];
       t.mock.module('../src/services/fpcalc.js', {
@@ -396,15 +452,64 @@ test('an album folder reports needsReview without auto-matching when ACOUSTID_AP
       t.mock.module('../src/services/acoustid.js', {
         exports: { lookup: async () => { throw new Error('AcoustID should not be called without a key'); } },
       });
+      // Track-number tags put "b-side" first, ahead of filename order — the
+      // matched files must follow the tracklist, not the directory listing.
+      t.mock.module('../src/services/tagMatch.js', {
+        exports: {
+          identifyFileFromTags: async () => ({ confirmed: null, reason: 'not exercised here' }),
+          albumCandidatesFromTags: async (files) => ({
+            perFile: [
+              { filePath: files.find((f) => f.endsWith('b-side.flac')), durationMs: 180000, recMbids: [] },
+              { filePath: files.find((f) => f.endsWith('a-side.flac')), durationMs: 200000, recMbids: [] },
+            ],
+            releaseGroupMbids: ['rg-1'],
+          }),
+          candidatesFromTags: async () => ({ candidates: [] }),
+        },
+      });
+      t.mock.module('../src/services/musicbrainz.js', {
+        exports: {
+          getRecording: async () => { throw new Error('getRecording should not be needed on the tag path'); },
+          resolvePrimaryReleaseForGroup: async () => 'release-1',
+          getReleaseWithTracks: async () => ({
+            release: { mbid: 'release-1', title: 'An Album', artist: 'The Band', discCount: 1 },
+            tracks: [
+              { position: 1, discNumber: 1, recordingMbid: 'rec-1', title: 'Opener', lengthMs: 180000 },
+              { position: 2, discNumber: 1, recordingMbid: 'rec-2', title: 'Closer', lengthMs: 200000 },
+            ],
+          }),
+        },
+      });
+      t.mock.module('../src/services/tags.js', {
+        exports: {
+          readTags: async () => ({
+            artist: null, title: null, album: 'An Album', trackNumber: null,
+            disc: null, year: null, genre: null, durationMs: 180000, hasCoverArt: false,
+          }),
+          writeMissingTags: async () => ({ filledFields: ['title'] }),
+        },
+      });
+      t.mock.module('../src/services/coverArt.js', { exports: { getFrontCoverImage: async () => null } });
+      const moved = [];
+      t.mock.module('../src/services/organize.js', {
+        exports: {
+          moveIntoLibrary: async (srcPath, meta) => {
+            moved.push({ srcPath, meta });
+            return { movedTo: `/music/The Band/An Album/${meta.title}.flac`, duplicate: false };
+          },
+        },
+      });
 
       const processIngestFresh = await freshProcessIngest();
       const result = await processIngestFresh();
 
       assert.equal(fingerprintCalls.length, 0, 'fpcalc should never be invoked without a key');
-      assert.equal(result.matched.length, 0);
-      assert.equal(result.needsReview.length, 1);
-      assert.equal(result.needsReview[0].code, 'album_incoherent');
-      assert.match(result.needsReview[0].reason, /not configured/i);
+      assert.equal(result.needsReview.length, 0);
+      assert.equal(result.matched.length, 2);
+      assert.match(moved[0].srcPath, /b-side\.flac$/);
+      assert.equal(moved[0].meta.title, 'Opener');
+      assert.match(moved[1].srcPath, /a-side\.flac$/);
+      assert.equal(moved[1].meta.title, 'Closer');
     });
   });
 });
@@ -934,7 +1039,7 @@ test('findCandidatesForFile returns an empty list when AcoustID finds nothing', 
   });
 });
 
-test('findCandidatesForFile returns an empty list without calling fpcalc/AcoustID when ACOUSTID_API_KEY is unset', async (t) => {
+test('findCandidatesForFile falls back to tag-derived candidates when ACOUSTID_API_KEY is unset', async (t) => {
   await withIngestDir(async (dir) => {
     await withoutAcoustidKey(async () => {
       const filePath = path.join(dir, 'unconfigured.mp3');
@@ -947,11 +1052,21 @@ test('findCandidatesForFile returns an empty list without calling fpcalc/AcoustI
       t.mock.module('../src/services/acoustid.js', {
         exports: { lookup: async () => { throw new Error('AcoustID should not be called without a key'); } },
       });
+      t.mock.module('../src/services/tagMatch.js', {
+        exports: {
+          identifyFileFromTags: async () => ({ confirmed: null, reason: 'not exercised here' }),
+          albumCandidatesFromTags: async () => ({ reason: 'not exercised here' }),
+          candidatesFromTags: async () => ({
+            candidates: [{ recordingMbid: 'rec-tag', title: 'From Tags', artist: 'A', lengthMs: 200000, score: 0.99, releaseGroupTitle: 'An Album' }],
+          }),
+        },
+      });
 
       const { findCandidatesForFile } = await freshIngestExports();
       const result = await findCandidatesForFile(filePath);
 
-      assert.deepEqual(result.candidates, []);
+      assert.equal(result.candidates.length, 1);
+      assert.equal(result.candidates[0].recordingMbid, 'rec-tag');
       assert.equal(fingerprintCalls.length, 0, 'fpcalc should never be invoked without a key');
     });
   });

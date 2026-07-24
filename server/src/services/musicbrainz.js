@@ -45,21 +45,12 @@ function coverArtUrlForReleaseGroup(mbid) {
   return `/api/cover/release-group/${mbid}`;
 }
 
-export async function searchAll(query) {
-  const [artistRes, releaseGroupRes, recordingRes] = await Promise.all([
-    mbFetch('/artist', { query }),
-    mbFetch('/release-group', { query }),
-    mbFetch('/recording', { query }),
-  ]);
-
-  const artists = (artistRes.artists || []).map((a) => ({
-    mbid: a.id,
-    name: a.name,
-    disambiguation: a.disambiguation || null,
-    score: Number(a.score) || 0,
-  }));
-
-  const releaseGroups = (releaseGroupRes['release-groups'] || []).map((rg) => ({
+// The two search indexes below are also queried on their own (with a fielded
+// Lucene query) by the tag-based matcher, so they're exported individually as
+// well as through searchAll.
+export async function searchReleaseGroups(query) {
+  const res = await mbFetch('/release-group', { query });
+  return (res['release-groups'] || []).map((rg) => ({
     mbid: rg.id,
     title: rg.title,
     artist: (rg['artist-credit'] || []).map((c) => c.name).join(''),
@@ -67,14 +58,32 @@ export async function searchAll(query) {
     coverArtUrl: coverArtUrlForReleaseGroup(rg.id),
     score: Number(rg.score) || 0,
   }));
+}
 
-  const recordings = (recordingRes.recordings || []).map((r) => ({
+export async function searchRecordings(query) {
+  const res = await mbFetch('/recording', { query });
+  return (res.recordings || []).map((r) => ({
     mbid: r.id,
     title: r.title,
     artist: (r['artist-credit'] || []).map((c) => c.name).join(''),
     releaseGroupTitle: r.releases?.[0]?.['release-group']?.title || r.releases?.[0]?.title || null,
     lengthMs: r.length || null,
     score: Number(r.score) || 0,
+  }));
+}
+
+export async function searchAll(query) {
+  const [artistRes, releaseGroups, recordings] = await Promise.all([
+    mbFetch('/artist', { query }),
+    searchReleaseGroups(query),
+    searchRecordings(query),
+  ]);
+
+  const artists = (artistRes.artists || []).map((a) => ({
+    mbid: a.id,
+    name: a.name,
+    disambiguation: a.disambiguation || null,
+    score: Number(a.score) || 0,
   }));
 
   return { artists, releaseGroups, recordings };

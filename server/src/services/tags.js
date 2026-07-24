@@ -39,8 +39,11 @@ export function plannedFills(current, desired) {
 export async function readTags(filePath) {
   const file = File.createFromPath(filePath);
   try {
-    const { tag } = file;
+    const { tag, properties } = file;
     return {
+      // Decoded from the audio stream itself, so the tag-based matcher can
+      // duration-confirm a candidate without Chromaprint/fpcalc installed.
+      durationMs: properties?.durationMilliseconds || null,
       artist: readField(tag, 'artist'),
       title: readField(tag, 'title'),
       album: readField(tag, 'album'),
