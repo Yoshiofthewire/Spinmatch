@@ -94,18 +94,21 @@ current afterward by a background scan plus a filesystem watcher, so changes mad
 
 Album pages also get gap detection: given a MusicBrainz release group, Spinmatch compares its
 official tracklist against what's indexed from `MUSIC_DIR` and reports which tracks you already
-have versus which are missing, with a YouTube link for each gap.
+have versus which are missing, with a YouTube link for each gap. Matching is done by artist and
+track title (case-insensitive), so results depend on your files' tag hygiene — tag drift (e.g.
+"The Beatles" vs "Beatles", or a "(Remastered)" suffix on one side but not the other) can cause a
+track you already own to show up as missing.
 
 This feature needs no separate opt-in flag — it's enabled automatically as soon as `MUSIC_DIR` is
 configured, independent of the ingest feature above. The index itself lives at `LIBRARY_DB`
-(default `/data/library.db`; `/data/db/library.db` in the Docker/Unraid setups described below).
-As with `MUSIC_DIR`, this path **must be on a mounted volume** in Docker/Unraid — otherwise the
-index is rebuilt from scratch (harmless, just slower) every time the container is recreated. In
-Docker Compose, set `DB_HOST_DIR` to the host folder to bind-mount for it (default `./db`).
+(default `/data/db/library.db`). As with `MUSIC_DIR`, this path **must be on a mounted volume** in
+Docker/Unraid — otherwise the index is rebuilt from scratch (harmless, just slower) every time the
+container is recreated. In Docker Compose, set `DB_HOST_DIR` to the host folder to bind-mount for
+it (default `./db`).
 
-Node's built-in `node:sqlite` module is still experimental, so you'll see a one-time
-`ExperimentalWarning: SQLite is an experimental feature` on stderr at startup — this is expected
-and harmless.
+Node's built-in `node:sqlite` module is still experimental, so on some Node versions you may see a
+one-time `ExperimentalWarning: SQLite is an experimental feature` on stderr at startup (it did not
+fire on Node 24.16) — this is expected and harmless.
 
 ## Running locally
 
