@@ -82,6 +82,20 @@ test('scanIngestDir distinguishes loose files from album folders and ignores jun
   });
 });
 
+// The Docker image sets INGEST_DIR=/data/ingest unconditionally, so a user who
+// mounts nothing there has the feature enabled but the directory absent. Treat
+// that as "nothing to ingest" rather than surfacing an ENOENT 500 on the page.
+test('scanIngestDir reports no items when INGEST_DIR does not exist', async () => {
+  const original = configModule.config.ingest.ingestDir;
+  configModule.config.ingest.ingestDir = path.join(__dirname, '.tmp-ingest-does-not-exist');
+  try {
+    const { items } = await scanIngestDir();
+    assert.deepEqual(items, []);
+  } finally {
+    configModule.config.ingest.ingestDir = original;
+  }
+});
+
 test('processIngest tags a confirmed loose file, moves it into the library, and reports it matched', async (t) => {
   await withIngestDir(async (dir) => {
     await fs.writeFile(path.join(dir, 'track.mp3'), 'fake-audio');

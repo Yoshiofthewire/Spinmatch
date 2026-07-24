@@ -68,6 +68,12 @@ with no album land under `{Artist}/Singles/`, and multi-disc releases get disc-p
 names. If a file identical to one already in your library turns up, it's left in place rather than
 duplicated.
 
+The Docker image presets both variables to `/data/ingest` and `/data/music`, the paths
+`docker-compose.yml` and the Unraid template already mount, so under Docker the volume mapping is
+the whole configuration — there is nothing extra to set. Point a mount at whichever host folders
+you want and the page appears. (Set a variable to an empty string to deliberately turn the feature
+off.) Outside Docker the variables are unset by default, so the feature stays opt-in.
+
 Also setting `ACOUSTID_API_KEY` turns on *automatic* identification: each track is fingerprinted
 (via [Chromaprint](https://acoustid.org/chromaprint)/[AcoustID](https://acoustid.org/)) and
 confirmed against the MusicBrainz-recorded duration before being tagged and moved. Album folders

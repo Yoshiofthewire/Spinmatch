@@ -18,6 +18,14 @@ ENV NODE_ENV=production
 # The SQLite index (and the admin login stored alongside it) must live on a
 # mounted volume so it survives rebuilds; compose/unraid mount /data/db.
 ENV LIBRARY_DB=/data/db/library.db
+# The ingest drop-folder and music library are gated on these being set, and a
+# volume mount alone does not set them — Unraid's template, in particular, maps
+# the paths without exporting any variable, which left both pages permanently
+# hidden. Default them to the container paths that compose/unraid already mount
+# so the mount is the whole configuration. Absent mounts degrade quietly: the
+# library scan skips an unreadable tree and ingest reports an empty folder.
+ENV INGEST_DIR=/data/ingest
+ENV MUSIC_DIR=/data/music
 # yt-dlp is a Python app; the official standalone binary is a glibc-only
 # PyInstaller build and isn't reliable on Alpine's musl libc, so install it
 # via pip into the Python already available through apk instead.

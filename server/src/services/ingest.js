@@ -39,7 +39,17 @@ function isAudioFile(name) {
 
 export async function scanIngestDir() {
   const dir = config.ingest.ingestDir;
-  const entries = await fs.readdir(dir, { withFileTypes: true });
+  let entries;
+  try {
+    entries = await fs.readdir(dir, { withFileTypes: true });
+  } catch (err) {
+    // The Docker image sets INGEST_DIR unconditionally, so "enabled but the
+    // drop-folder was never mounted" is a normal state rather than a fault:
+    // report it as empty instead of failing the page. Only ENOENT — a
+    // permissions problem is a real misconfiguration and still surfaces.
+    if (err.code === 'ENOENT') return { items: [] };
+    throw err;
+  }
   const items = [];
 
   for (const entry of entries) {
