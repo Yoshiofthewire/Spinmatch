@@ -45,6 +45,11 @@ async function freshProcessIngest() {
   return mod.processIngest;
 }
 
+async function freshIngestExports() {
+  importCounter += 1;
+  return import(`../src/services/ingest.js?fresh=${importCounter}`);
+}
+
 test('scanIngestDir distinguishes loose files from album folders and ignores junk', async (t) => {
   await withIngestDir(async (dir) => {
     await fs.writeFile(path.join(dir, 'loose-track.mp3'), 'fake-audio');
@@ -798,5 +803,76 @@ test('a RateLimitedError mid-run stops processing and returns partial results pl
     assert.equal(result.matched.length, 0);
     assert.equal(result.needsReview.length, 0);
     assert.equal(result.error.code, 'RATE_LIMITED');
+  });
+});
+
+test('findCandidatesForFile returns every AcoustID candidate with recording details, sorted by score', async (t) => {
+  await withIngestDir(async (dir) => {
+    const filePath = path.join(dir, 'track.mp3');
+    await fs.writeFile(filePath, 'fake-audio');
+
+    t.mock.module('../src/services/fpcalc.js', {
+      exports: { fingerprint: async () => ({ durationSeconds: 200, fingerprint: 'AQAB...' }) },
+    });
+    t.mock.module('../src/services/acoustid.js', {
+      exports: {
+        lookup: async () => [
+          { recordingMbid: 'rec-hi', score: 0.4 },
+          { recordingMbid: 'rec-lo', score: 0.1 },
+        ],
+      },
+    });
+    t.mock.module('../src/services/musicbrainz.js', {
+      exports: {
+        resolvePrimaryReleaseForGroup: async () => null,
+        getReleaseWithTracks: async () => ({ release: {}, tracks: [] }),
+        getRecording: async (mbid) => ({
+          mbid,
+          title: mbid === 'rec-hi' ? 'High Score Track' : 'Low Score Track',
+          lengthMs: 200000,
+          artist: 'Some Artist',
+          releaseGroups: [{ mbid: 'rg-1', title: 'Some Album' }],
+          date: '2020-01-01',
+        }),
+      },
+    });
+
+    const { findCandidatesForFile } = await freshIngestExports();
+    const result = await findCandidatesForFile(filePath);
+
+    assert.equal(result.candidates.length, 2);
+    assert.equal(result.candidates[0].recordingMbid, 'rec-hi');
+    assert.equal(result.candidates[0].score, 0.4);
+    assert.equal(result.candidates[0].title, 'High Score Track');
+    assert.equal(result.candidates[0].releaseGroupTitle, 'Some Album');
+    assert.equal(result.candidates[1].recordingMbid, 'rec-lo');
+  });
+});
+
+test('findCandidatesForFile returns an empty list when AcoustID finds nothing', async (t) => {
+  await withIngestDir(async (dir) => {
+    const filePath = path.join(dir, 'unknown.mp3');
+    await fs.writeFile(filePath, 'fake-audio');
+
+    t.mock.module('../src/services/fpcalc.js', {
+      exports: { fingerprint: async () => ({ durationSeconds: 200, fingerprint: 'AQAB...' }) },
+    });
+    t.mock.module('../src/services/acoustid.js', { exports: { lookup: async () => [] } });
+
+    const { findCandidatesForFile } = await freshIngestExports();
+    const result = await findCandidatesForFile(filePath);
+
+    assert.deepEqual(result.candidates, []);
+  });
+});
+
+test('findCandidatesForFile rejects a path outside INGEST_DIR', async (t) => {
+  await withIngestDir(async (dir) => {
+    const { findCandidatesForFile } = await freshIngestExports();
+    const { BadRequestError } = await import('../src/lib/httpErrors.js');
+    await assert.rejects(
+      () => findCandidatesForFile('/etc/passwd'),
+      (err) => err instanceof BadRequestError
+    );
   });
 });

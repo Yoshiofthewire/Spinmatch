@@ -8,11 +8,22 @@ import * as tags from './tags.js';
 import { getFrontCoverImage } from './coverArt.js';
 import { rankCandidates } from './durationMatch.js';
 import * as organize from './organize.js';
-import { RateLimitedError } from '../lib/httpErrors.js';
+import { RateLimitedError, BadRequestError } from '../lib/httpErrors.js';
 
 const AUDIO_EXTENSIONS = new Set(['.mp3', '.flac', '.m4a', '.aac', '.ogg']);
 const SCORE_THRESHOLD = 0.5;
 const DURATION_TOLERANCE_MS = 5000;
+
+// Defense-in-depth: paths reaching this module from the manual-override
+// routes are client-supplied, so verify they resolve inside INGEST_DIR
+// before any fingerprint/tag/move work touches the filesystem.
+function assertInsideIngestDir(filePath) {
+  const resolved = path.resolve(filePath);
+  const root = path.resolve(config.ingest.ingestDir);
+  if (!resolved.startsWith(root + path.sep)) {
+    throw new BadRequestError(`Refusing to operate outside INGEST_DIR: ${filePath}`);
+  }
+}
 
 function isAudioFile(name) {
   return AUDIO_EXTENSIONS.has(path.extname(name).toLowerCase());
@@ -308,4 +319,26 @@ export async function processIngest({ dryRun = false, onItem } = {}) {
   }
 
   return { matched, needsReview, dryRun };
+}
+
+// Re-fingerprints filePath and re-runs the AcoustID lookup, this time keeping
+// every candidate (not just ones scoring above SCORE_THRESHOLD) so a human can
+// pick from AcoustID's near-misses when auto-matching failed.
+export async function findCandidatesForFile(filePath) {
+  assertInsideIngestDir(filePath);
+  const { durationSeconds, fingerprint: fp } = await fingerprint(filePath);
+  const acoustidCandidates = await lookup({ fingerprint: fp, durationSeconds });
+  const top = acoustidCandidates.slice(0, 10);
+  const recordings = await Promise.all(top.map((c) => getRecording(c.recordingMbid)));
+
+  const candidates = recordings.map((rec, i) => ({
+    recordingMbid: rec.mbid,
+    title: rec.title,
+    artist: rec.artist,
+    lengthMs: rec.lengthMs,
+    score: top[i].score,
+    releaseGroupTitle: rec.releaseGroups[0]?.title ?? null,
+  }));
+
+  return { candidates };
 }
