@@ -59,17 +59,6 @@ METUBE_URL=
 every request must identify itself with a real contact email in its `User-Agent` string, or
 MusicBrainz may block the app's IP.
 
-### Optional: sending videos to MeTube
-
-If you run a [MeTube](https://github.com/alexta69/metube) instance, set `METUBE_URL` to its base
-URL (e.g. `https://metube.example.com`) and a "Send to MeTube" button appears next to every
-YouTube result. Leave it blank to hide the button entirely.
-
-The request is sent directly from your browser to `{METUBE_URL}/add`, not proxied through this
-app's server — the same way MeTube's own bookmarklet works — so your browser's session/cookies
-for that origin are used, and your MeTube instance must allow cross-origin requests from wherever
-this app is hosted.
-
 ### Optional: local library ingest
 
 If you set `ACOUSTID_API_KEY`, `INGEST_DIR`, and `MUSIC_DIR` (see `.env.example`), an "Ingest"
