@@ -84,6 +84,29 @@ resolve it manually right from the needs-review list: pick one of AcoustID's low
 near-misses, or search MusicBrainz by artist/title yourself, and Spinmatch tags and moves the file
 the same way an auto-confirmed match would be.
 
+### Library / Collection Manager
+
+Whenever `MUSIC_DIR` is set (see above), Spinmatch also indexes it into a local SQLite database
+and turns on a "Your Library" page: browse the collection by artist and album, see aggregate
+stats (track/album/artist counts), and rescan on demand. The index is built at startup and kept
+current afterward by a background scan plus a filesystem watcher, so changes made outside the app
+(e.g. copying files in directly) are picked up without a restart.
+
+Album pages also get gap detection: given a MusicBrainz release group, Spinmatch compares its
+official tracklist against what's indexed from `MUSIC_DIR` and reports which tracks you already
+have versus which are missing, with a YouTube link for each gap.
+
+This feature needs no separate opt-in flag — it's enabled automatically as soon as `MUSIC_DIR` is
+configured, independent of the ingest feature above. The index itself lives at `LIBRARY_DB`
+(default `/data/library.db`; `/data/db/library.db` in the Docker/Unraid setups described below).
+As with `MUSIC_DIR`, this path **must be on a mounted volume** in Docker/Unraid — otherwise the
+index is rebuilt from scratch (harmless, just slower) every time the container is recreated. In
+Docker Compose, set `DB_HOST_DIR` to the host folder to bind-mount for it (default `./db`).
+
+Node's built-in `node:sqlite` module is still experimental, so you'll see a one-time
+`ExperimentalWarning: SQLite is an experimental feature` on stderr at startup — this is expected
+and harmless.
+
 ## Running locally
 
 ```
@@ -128,11 +151,14 @@ https://raw.githubusercontent.com/Yoshiofthewire/Spinmatch/main/unraid-template.
 ```
 
 This fills in the repository, port, paths, and environment variables from
-[`unraid-template.xml`](unraid-template.xml). At minimum, set **MB Contact Email**. The two
-mapped paths (**Ingest Directory** and **Music Directory**) correspond to `INGEST_DIR` and
-`MUSIC_DIR` in `.env.example` — point **Music Directory** at your existing music share, and set
-**AcoustID API Key** if you want the local library ingest feature described above. Leave
-**AcoustID API Key** blank to hide the Ingest page entirely.
+[`unraid-template.xml`](unraid-template.xml). At minimum, set **MB Contact Email**. The mapped
+paths (**Ingest Directory**, **Music Directory**, and **Library DB Directory**) correspond to
+`INGEST_DIR`, `MUSIC_DIR`, and the directory holding `LIBRARY_DB` in `.env.example` — point
+**Music Directory** at your existing music share, and set **AcoustID API Key** if you want the
+local library ingest feature described above. Leave **AcoustID API Key** blank to hide the Ingest
+page entirely. **Library DB Directory** should point at a persistent appdata path so the
+collection index survives container rebuilds; it's used automatically once **Music Directory** is
+set, no separate toggle needed.
 
 ## Tests
 

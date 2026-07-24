@@ -8,3 +8,4 @@ services:
     volumes:
       - ${INGEST_HOST_DIR:-./ingest}:/data/ingest
       - ${MUSIC_HOST_DIR:-./music}:/data/music
+      - ${DB_HOST_DIR:-./db}:/data/db
