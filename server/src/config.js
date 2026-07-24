@@ -26,7 +26,7 @@ export const config = {
     ingestDir: process.env.INGEST_DIR || null,
   },
   library: {
-    dbPath: process.env.LIBRARY_DB || '/data/library.db',
+    dbPath: process.env.LIBRARY_DB || '/data/db/library.db',
   },
 };
 

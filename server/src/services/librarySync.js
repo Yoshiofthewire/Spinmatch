@@ -20,12 +20,24 @@ export function startLibrarySync({ scan = scanLibrary, watch = true } = {}) {
   let watcher = null;
   let debounce = null;
   let stopped = false;
+  let scanning = false;
 
   const runScan = async () => {
+    // Coalesce overlapping scans: the interval timer and the watch debounce
+    // can both fire runScan around the same time. Since scanLibrary() builds
+    // its own `seen` set across async yields, two overlapping runs can race
+    // and cause a file created during run A to be wrongly markRemoved by run
+    // B. Skip a second scan entirely while one is already in flight rather
+    // than queue it -- the next scheduled/debounced scan will pick up
+    // whatever changed in the meantime.
+    if (scanning) return;
+    scanning = true;
     try {
       await scan();
     } catch (err) {
       console.warn(`librarySync: scan failed: ${err.message}`);
+    } finally {
+      scanning = false;
     }
   };
 
@@ -62,5 +74,8 @@ export function startLibrarySync({ scan = scanLibrary, watch = true } = {}) {
       if (debounce) clearTimeout(debounce);
       if (watcher) watcher.close();
     },
+    // Exposed only so tests can prove the concurrency guard above coalesces
+    // overlapping scans; not used by production callers.
+    _triggerScan: runScan,
   };
 }

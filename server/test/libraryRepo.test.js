@@ -54,6 +54,17 @@ test('hasRecording matches artist+title case-insensitively, ignoring removed row
   db.close();
 });
 
+test('a track with a NULL artist but a non-null album still counts toward total_albums', () => {
+  const db = seeded();
+  repo.upsertLocalTrack(db, { path: '/m/Unknown/Comp/01.mp3', artist: null, album: 'Comp', title: 'Mystery', durationMs: 1500, changeKey: '40:1' });
+  repo.recomputeStats(db);
+  const stats = repo.getStats(db);
+  assert.equal(stats.totalTracks, 4);
+  // 2 prior distinct albums (A/Album, B/Other) + this new one = 3.
+  assert.equal(stats.totalAlbums, 3);
+  db.close();
+});
+
 test('getChangeKeys returns path->key for live rows only', () => {
   const db = seeded();
   repo.markRemoved(db, new Set(['/m/A/Album/01.mp3']));

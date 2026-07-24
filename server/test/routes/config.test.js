@@ -74,7 +74,7 @@ test('libraryEnabled() is true when MUSIC_DIR is set', async () => {
   delete process.env.MUSIC_DIR;
 });
 
-test('config.library.dbPath defaults to /data/library.db', async () => {
+test('config.library.dbPath defaults to /data/db/library.db', async () => {
   const { config } = await import('../../src/config.js?variant=db-default');
-  assert.equal(config.library.dbPath, '/data/library.db');
+  assert.equal(config.library.dbPath, '/data/db/library.db');
 });

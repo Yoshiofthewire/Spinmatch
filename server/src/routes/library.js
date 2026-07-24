@@ -60,7 +60,7 @@ libraryRouter.post('/scan', sameOriginOnly, async (req, res, next) => {
   }
 });
 
-libraryRouter.get('/missing', async (req, res, next) => {
+libraryRouter.get('/missing', sameOriginOnly, async (req, res, next) => {
   try {
     const releaseGroup = req.query.releaseGroup ? String(req.query.releaseGroup) : '';
     if (!releaseGroup) throw new BadRequestError('releaseGroup is required');

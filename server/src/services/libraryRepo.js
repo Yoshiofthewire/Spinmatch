@@ -33,7 +33,7 @@ export function markRemoved(db, keepPaths) {
 export function recomputeStats(db) {
   const { c: totalTracks } = db.prepare('SELECT COUNT(*) c FROM local_tracks WHERE removed = 0').get();
   const { c: totalAlbums } = db.prepare(
-    "SELECT COUNT(DISTINCT artist || '\\u0000' || album) c FROM local_tracks WHERE removed = 0 AND album IS NOT NULL"
+    "SELECT COUNT(DISTINCT COALESCE(artist,'') || '\\u0000' || album) c FROM local_tracks WHERE removed = 0 AND album IS NOT NULL"
   ).get();
   const { c: totalArtists } = db.prepare(
     'SELECT COUNT(DISTINCT artist) c FROM local_tracks WHERE removed = 0 AND artist IS NOT NULL'
