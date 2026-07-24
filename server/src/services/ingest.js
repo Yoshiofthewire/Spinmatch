@@ -342,3 +342,12 @@ export async function findCandidatesForFile(filePath) {
 
   return { candidates };
 }
+
+// Manual-override counterpart to the automatic identify-then-finalize flow:
+// the recording is already chosen (by the user, via findCandidatesForFile's
+// near-misses or a text search), so just resolve it and finalize.
+export async function resolveLooseFileOverride({ filePath, name, recordingMbid, dryRun = false }) {
+  assertInsideIngestDir(filePath);
+  const confirmed = await getRecording(recordingMbid);
+  return finalizeLooseFile(filePath, name, confirmed, { dryRun });
+}

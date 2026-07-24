@@ -876,3 +876,57 @@ test('findCandidatesForFile rejects a path outside INGEST_DIR', async (t) => {
     );
   });
 });
+
+test('resolveLooseFileOverride tags and moves the file using the chosen recording', async (t) => {
+  await withIngestDir(async (dir) => {
+    const filePath = path.join(dir, 'track.mp3');
+    await fs.writeFile(filePath, 'fake-audio');
+
+    t.mock.module('../src/services/musicbrainz.js', {
+      exports: {
+        resolvePrimaryReleaseForGroup: async () => null,
+        getReleaseWithTracks: async () => ({ release: {}, tracks: [] }),
+        getRecording: async (mbid) => ({
+          mbid,
+          title: 'Chosen Title',
+          lengthMs: 200000,
+          artist: 'Chosen Artist',
+          releaseGroups: [{ mbid: 'rg-1', title: 'Chosen Album' }],
+          date: '2021-01-01',
+        }),
+      },
+    });
+    t.mock.module('../src/services/tags.js', {
+      exports: {
+        readTags: async () => ({
+          artist: null, title: null, album: null, trackNumber: null, disc: null, year: null, genre: null, hasCoverArt: false,
+        }),
+        writeMissingTags: async () => ({ filledFields: ['artist', 'title', 'album'] }),
+      },
+    });
+    t.mock.module('../src/services/coverArt.js', { exports: { getFrontCoverImage: async () => null } });
+    t.mock.module('../src/services/organize.js', {
+      exports: {
+        moveIntoLibrary: async () => ({ movedTo: '/music/Chosen Artist/Chosen Album/Chosen Title.mp3', duplicate: false }),
+      },
+    });
+
+    const { resolveLooseFileOverride } = await freshIngestExports();
+    const result = await resolveLooseFileOverride({ filePath, name: 'track.mp3', recordingMbid: 'rec-chosen', dryRun: false });
+
+    assert.equal(result.matched.recordingMbid, 'rec-chosen');
+    assert.equal(result.matched.title, 'Chosen Title');
+    assert.equal(result.matched.movedTo, '/music/Chosen Artist/Chosen Album/Chosen Title.mp3');
+  });
+});
+
+test('resolveLooseFileOverride rejects a path outside INGEST_DIR', async (t) => {
+  await withIngestDir(async () => {
+    const { resolveLooseFileOverride } = await freshIngestExports();
+    const { BadRequestError } = await import('../src/lib/httpErrors.js');
+    await assert.rejects(
+      () => resolveLooseFileOverride({ filePath: '/etc/passwd', name: 'x', recordingMbid: 'rec-1', dryRun: false }),
+      (err) => err instanceof BadRequestError
+    );
+  });
+});
