@@ -83,7 +83,7 @@ Ingest page as "needs review" — nothing is ever deleted, and unmatched items a
 anywhere without your review. For a loose file that AcoustID couldn't confidently match, you can
 resolve it manually right from the needs-review list: pick one of AcoustID's lower-confidence
 near-misses, or search MusicBrainz by artist/title yourself, and Spinmatch tags and moves the file
-the same way an auto-confirmed match would be.
+the same way an auto-confirmed match would be. Non-audio files are left untouched.
 
 ### Library / Collection Manager
 
