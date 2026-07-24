@@ -1,13 +1,16 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { get } from '../api/client.js';
+import { useConfig } from '../ConfigContext.jsx';
 import TrackList from '../components/TrackList.jsx';
 import BulkVerifyPanel from '../components/BulkVerifyPanel.jsx';
+import GapDetectionPanel from '../components/GapDetectionPanel.jsx';
 import EqualizerLoader from '../components/EqualizerLoader.jsx';
 import Breadcrumbs from '../components/Breadcrumbs.jsx';
 
 export default function AlbumPage() {
   const { mbid } = useParams();
+  const { libraryEnabled } = useConfig();
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
 
@@ -40,6 +43,10 @@ export default function AlbumPage() {
         releaseGroupMbid={mbid}
         trackCount={data.tracks.length}
       />
+
+      {libraryEnabled && (
+        <GapDetectionPanel releaseGroupMbid={mbid} albumTitle={data.release.title} />
+      )}
 
       <TrackList artist={data.release.artist} album={data.release.title} tracks={data.tracks} />
     </div>

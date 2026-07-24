@@ -574,3 +574,45 @@ a:hover {
   border: 1px solid var(--border);
   color: var(--muted);
 }
+
+/* ---------- Library page ---------- */
+
+.stats-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin: 0.5rem 0 1.25rem;
+  color: var(--muted);
+}
+
+.artist-list {
+  list-style: none;
+  margin: 1rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+/* ---------- Gap detection panel ---------- */
+
+.gap-panel {
+  margin: 1.25rem 0;
+  padding: 1.25rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.gap-panel-results {
+  margin-top: 0.85rem;
+}
+
+.missing-list {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
