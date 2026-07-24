@@ -531,3 +531,46 @@ a {
 a:hover {
   color: var(--lock);
 }
+
+/* ---------- Ingest match picker ---------- */
+
+.ingest-match-picker {
+  margin-top: 0.5rem;
+  padding: 1rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.ingest-candidate-list {
+  list-style: none;
+  margin: 0 0 0.85rem;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.ingest-candidate-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  font-size: 0.9rem;
+}
+
+.ingest-candidate-search {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.ingest-candidate-search input {
+  flex: 1;
+}
+
+.ingest-picker-cancel {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
