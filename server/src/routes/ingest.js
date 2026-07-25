@@ -3,6 +3,7 @@ import { ingestEnabled } from '../config.js';
 import { scanIngestDir, processIngest, findCandidatesForFile, resolveLooseFileOverride } from '../services/ingest.js';
 import { sameOriginOnly } from '../middleware/sameOriginOnly.js';
 import { NotFoundError, BadRequestError } from '../lib/httpErrors.js';
+import { assertMbid } from '../lib/mbid.js';
 
 export const ingestRouter = Router();
 
@@ -31,7 +32,7 @@ ingestRouter.get('/file/candidates', async (req, res, next) => {
   }
 });
 
-ingestRouter.post('/process', sameOriginOnly, async (req, res, next) => {
+ingestRouter.post('/process', async (req, res, next) => {
   try {
     const { dryRun = false } = req.body || {};
     const result = await processIngest({ dryRun: Boolean(dryRun) });
@@ -41,12 +42,11 @@ ingestRouter.post('/process', sameOriginOnly, async (req, res, next) => {
   }
 });
 
-ingestRouter.post('/file/resolve', sameOriginOnly, async (req, res, next) => {
+ingestRouter.post('/file/resolve', async (req, res, next) => {
   try {
     const { path: filePath, name, recordingMbid, dryRun = false } = req.body || {};
-    if (!filePath || !name || !recordingMbid) {
-      throw new BadRequestError('path, name, and recordingMbid are required');
-    }
+    if (!filePath || !name) throw new BadRequestError('path and name are required');
+    assertMbid(recordingMbid, 'recordingMbid');
     const result = await resolveLooseFileOverride({ filePath, name, recordingMbid, dryRun: Boolean(dryRun) });
     res.json(result);
   } catch (err) {

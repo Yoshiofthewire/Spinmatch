@@ -4,6 +4,7 @@ import ArtistPage from './pages/ArtistPage.jsx';
 import AlbumPage from './pages/AlbumPage.jsx';
 import HistoryPage from './pages/HistoryPage.jsx';
 import AboutPage from './pages/AboutPage.jsx';
+import AccountPage from './pages/AccountPage.jsx';
 import IngestPage from './pages/IngestPage.jsx';
 import LibraryPage from './pages/LibraryPage.jsx';
 import Logo from './components/Logo.jsx';
@@ -32,7 +33,10 @@ export default function App() {
           {libraryEnabled && <NavLink to="/library" className={navLinkClass}>Library</NavLink>}
           <NavLink to="/history" className={navLinkClass}>History</NavLink>
           <NavLink to="/about" className={navLinkClass}>About</NavLink>
-          <button type="button" className="nav-logout" onClick={logout} title={username ? `Signed in as ${username}` : undefined}>
+          <NavLink to="/account" className={navLinkClass}>
+            {username ? `Account (${username})` : 'Account'}
+          </NavLink>
+          <button type="button" className="nav-logout" onClick={logout}>
             Log out
           </button>
         </nav>
@@ -46,6 +50,7 @@ export default function App() {
           {libraryEnabled && <Route path="/library" element={<LibraryPage />} />}
           <Route path="/history" element={<HistoryPage />} />
           <Route path="/about" element={<AboutPage />} />
+          <Route path="/account" element={<AccountPage />} />
         </Routes>
       </main>
     </div>

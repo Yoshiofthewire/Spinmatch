@@ -10,7 +10,7 @@ let server;
 let baseUrl;
 
 test.before(async () => {
-  const app = createApp({ auth: false });
+  const app = createApp({ gate: (req, res, next) => next() });
   server = app.listen(0);
   await new Promise((resolve) => server.once('listening', resolve));
   baseUrl = `http://localhost:${server.address().port}`;
@@ -28,17 +28,17 @@ function mockMusicBrainz() {
 
 test('GET /api/artists/:mbid/albums returns studio albums for the artist', async () => {
   const pool = mockMusicBrainz();
-  pool.intercept({ path: '/ws/2/artist/route-artist-test?fmt=json' }).reply(200, {
-    id: 'route-artist-test',
+  pool.intercept({ path: '/ws/2/artist/c1c1c1c1-c1c1-4c1c-8c1c-c1c1c1c1c1c1?fmt=json' }).reply(200, {
+    id: 'c1c1c1c1-c1c1-4c1c-8c1c-c1c1c1c1c1c1',
     name: 'Route Test Artist',
   });
-  pool.intercept({ path: /\/ws\/2\/release-group\?.*artist=route-artist-test.*/ }).reply(200, {
+  pool.intercept({ path: /\/ws\/2\/release-group\?.*artist=c1c1c1c1-c1c1-4c1c-8c1c-c1c1c1c1c1c1.*/ }).reply(200, {
     'release-groups': [
-      { id: 'rg-a', title: 'Album A', 'primary-type': 'Album', 'secondary-types': [], 'first-release-date': '2001' },
+      { id: '1a1a1a1a-1a1a-4a1a-8a1a-1a1a1a1a1a1a', title: 'Album A', 'primary-type': 'Album', 'secondary-types': [], 'first-release-date': '2001' },
     ],
   });
 
-  const res = await fetch(`${baseUrl}/api/artists/route-artist-test/albums`);
+  const res = await fetch(`${baseUrl}/api/artists/c1c1c1c1-c1c1-4c1c-8c1c-c1c1c1c1c1c1/albums`);
   assert.equal(res.status, 200);
   const body = await res.json();
   assert.equal(body.artist.name, 'Route Test Artist');
@@ -48,8 +48,8 @@ test('GET /api/artists/:mbid/albums returns studio albums for the artist', async
 
 test('GET /api/artists/:mbid/albums returns 502 when MusicBrainz is unreachable', async () => {
   const pool = mockMusicBrainz();
-  pool.intercept({ path: '/ws/2/artist/route-artist-error?fmt=json' }).reply(503, {});
+  pool.intercept({ path: '/ws/2/artist/c2c2c2c2-c2c2-4c2c-8c2c-c2c2c2c2c2c2?fmt=json' }).reply(503, {});
 
-  const res = await fetch(`${baseUrl}/api/artists/route-artist-error/albums`);
+  const res = await fetch(`${baseUrl}/api/artists/c2c2c2c2-c2c2-4c2c-8c2c-c2c2c2c2c2c2/albums`);
   assert.equal(res.status, 502);
 });

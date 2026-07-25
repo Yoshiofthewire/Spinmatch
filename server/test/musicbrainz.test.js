@@ -10,6 +10,7 @@ const {
   resolvePrimaryReleaseForGroup,
   getReleaseWithTracks,
   getRecording,
+  creditString,
 } = await import('../src/services/musicbrainz.js');
 const { UpstreamUnavailableError } = await import('../src/lib/httpErrors.js');
 
@@ -23,12 +24,12 @@ function mockMusicBrainz() {
 test('searchAll shapes artists/release-groups/recordings from MusicBrainz responses', async () => {
   const pool = mockMusicBrainz();
   pool.intercept({ path: /\/ws\/2\/artist\?.*query=311-shape-test.*/ }).reply(200, {
-    artists: [{ id: 'artist-1', name: '311', disambiguation: 'US rock band', score: '100' }],
+    artists: [{ id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', name: '311', disambiguation: 'US rock band', score: '100' }],
   });
   pool.intercept({ path: /\/ws\/2\/release-group\?.*query=311-shape-test.*/ }).reply(200, {
     'release-groups': [
       {
-        id: 'rg-1',
+        id: '11111111-1111-4111-8111-111111111111',
         title: 'Music',
         'artist-credit': [{ name: '311' }],
         'first-release-date': '1993-02-09',
@@ -39,7 +40,7 @@ test('searchAll shapes artists/release-groups/recordings from MusicBrainz respon
   pool.intercept({ path: /\/ws\/2\/recording\?.*query=311-shape-test.*/ }).reply(200, {
     recordings: [
       {
-        id: 'rec-1',
+        id: '77777777-7777-4777-8777-777777777777',
         title: 'Down',
         'artist-credit': [{ name: '311' }],
         length: 202000,
@@ -52,11 +53,11 @@ test('searchAll shapes artists/release-groups/recordings from MusicBrainz respon
   const result = await searchAll('311-shape-test');
 
   assert.deepEqual(result.artists, [
-    { mbid: 'artist-1', name: '311', disambiguation: 'US rock band', score: 100 },
+    { mbid: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', name: '311', disambiguation: 'US rock band', score: 100 },
   ]);
-  assert.equal(result.releaseGroups[0].mbid, 'rg-1');
+  assert.equal(result.releaseGroups[0].mbid, '11111111-1111-4111-8111-111111111111');
   assert.equal(result.releaseGroups[0].artist, '311');
-  assert.equal(result.releaseGroups[0].coverArtUrl, '/api/cover/release-group/rg-1');
+  assert.equal(result.releaseGroups[0].coverArtUrl, '/api/cover/release-group/11111111-1111-4111-8111-111111111111');
   assert.equal(result.recordings[0].lengthMs, 202000);
   assert.equal(result.recordings[0].releaseGroupTitle, 'Music');
 });
@@ -137,8 +138,8 @@ test('getReleaseWithTracks flattens media/tracks into a single track list', asyn
       {
         position: 1,
         tracks: [
-          { position: 1, title: 'Welcome', length: 175054, recording: { id: 'rec-1', length: 175054 } },
-          { position: 2, title: 'Freak Out', length: 222816, recording: { id: 'rec-2', length: 222816 } },
+          { position: 1, title: 'Welcome', length: 175054, recording: { id: '77777777-7777-4777-8777-777777777777', length: 175054 } },
+          { position: 2, title: 'Freak Out', length: 222816, recording: { id: '88888888-8888-4888-8888-888888888888', length: 222816 } },
         ],
       },
     ],
@@ -213,4 +214,80 @@ test('getRecording flattens a MusicBrainz recording response', async () => {
     releaseGroups: [{ mbid: 'rg-mbid-1', title: 'Recording Test Album' }],
     date: '2001-05-01',
   });
+});
+
+// MusicBrainz models a credit as segments each carrying the text that follows
+// it, so joining on '' rendered "Simon & Garfunkel" as "SimonGarfunkel" — and
+// did the same to every collaboration, "feat." and "vs" in the library.
+test('creditString honours the joinphrase between credited artists', () => {
+  assert.equal(
+    creditString([{ name: 'Simon', joinphrase: ' & ' }, { name: 'Garfunkel' }]),
+    'Simon & Garfunkel',
+  );
+  assert.equal(
+    creditString([{ name: 'Grabbitz', joinphrase: ' feat. ' }, { name: 'REZZ' }]),
+    'Grabbitz feat. REZZ',
+  );
+  assert.equal(creditString([{ name: '311' }]), '311');
+});
+
+test('creditString is total over the shapes MusicBrainz can return', () => {
+  assert.equal(creditString(undefined), '');
+  assert.equal(creditString(null), '');
+  assert.equal(creditString([]), '');
+  assert.equal(creditString('not an array'), '');
+  assert.equal(creditString([{ name: 'Solo', joinphrase: '' }]), 'Solo');
+  // A trailing joinphrase on the last segment shouldn't leave dangling text.
+  assert.equal(creditString([{ name: 'A', joinphrase: ' & ' }]), 'A &');
+});
+
+// The per-track credit was being fetched (inc=artist-credits) and then thrown
+// away, leaving bulk repair to fall back on the release's own credit for every
+// track. On a compilation that meant writing "Various Artists" into the artist
+// tag of every file on the record.
+test('getReleaseWithTracks carries each track its own artist credit', async () => {
+  const pool = mockMusicBrainz();
+  pool.intercept({ path: '/ws/2/release/compilation-test?inc=recordings%2Bartist-credits&fmt=json' }).reply(200, {
+    id: 'compilation-test',
+    title: 'Now 47',
+    'artist-credit': [{ name: 'Various Artists' }],
+    media: [
+      {
+        position: 1,
+        tracks: [
+          {
+            position: 1,
+            title: 'Song One',
+            length: 1000,
+            'artist-credit': [{ name: 'Blur' }],
+            recording: { id: 'rec-a', length: 1000 },
+          },
+          {
+            // No track-level credit; the recording carries it instead.
+            position: 2,
+            title: 'Song Two',
+            length: 2000,
+            recording: {
+              id: 'rec-b',
+              length: 2000,
+              'artist-credit': [{ name: 'Pulp' }],
+            },
+          },
+          {
+            // Neither: the caller falls back to the release credit.
+            position: 3,
+            title: 'Song Three',
+            length: 3000,
+            recording: { id: 'rec-c', length: 3000 },
+          },
+        ],
+      },
+    ],
+  });
+
+  const { release, tracks } = await getReleaseWithTracks('compilation-test');
+  assert.equal(release.artist, 'Various Artists');
+  assert.equal(tracks[0].artist, 'Blur');
+  assert.equal(tracks[1].artist, 'Pulp', 'the recording credit is the fallback');
+  assert.equal(tracks[2].artist, null, 'nothing to claim, so the caller decides');
 });

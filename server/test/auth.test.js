@@ -51,7 +51,7 @@ test('verifyToken rejects tampered payloads', () => {
 test('verifyToken rejects expired tokens', () => {
   const secret = 'a'.repeat(64);
   const past = Date.now() - 1000;
-  const token = issueToken(secret, 'admin', past - 60_000, past - 30_000);
+  const token = issueToken(secret, 'admin', 0, past - 60_000, past - 30_000);
   assert.equal(verifyToken(secret, token), null);
 });
 
@@ -61,12 +61,15 @@ test('createAdmin/getAdmin/adminExists operate on a single admin row', async () 
   assert.equal(getAdmin(db), null);
 
   const hash = await hashPassword('pw12345678');
-  createAdmin(db, 'yoshi', hash);
+  assert.equal(createAdmin(db, 'yoshi', hash), true);
   assert.equal(adminExists(db), true);
   assert.equal(getAdmin(db).username, 'yoshi');
 
-  // A second admin is refused (single-row table).
-  assert.throws(() => createAdmin(db, 'other', hash));
+  // A second admin is refused (single-row table). Reported rather than thrown,
+  // because the caller has to await a password hash before getting here and a
+  // racing first-run request must produce "already configured", not a 500.
+  assert.equal(createAdmin(db, 'other', hash), false);
+  assert.equal(getAdmin(db).username, 'yoshi', 'the losing insert changed nothing');
   db.close();
 });
 

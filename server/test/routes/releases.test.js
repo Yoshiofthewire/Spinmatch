@@ -10,7 +10,7 @@ let server;
 let baseUrl;
 
 test.before(async () => {
-  const app = createApp({ auth: false });
+  const app = createApp({ gate: (req, res, next) => next() });
   server = app.listen(0);
   await new Promise((resolve) => server.once('listening', resolve));
   baseUrl = `http://localhost:${server.address().port}`;
@@ -28,7 +28,7 @@ function mockMusicBrainz() {
 
 test('GET /api/releases/:mbid/tracks returns the release and its tracks', async () => {
   const pool = mockMusicBrainz();
-  pool.intercept({ path: /\/ws\/2\/release\?.*release-group=route-release-group.*/ }).reply(200, {
+  pool.intercept({ path: /\/ws\/2\/release\?.*release-group=c4c4c4c4-c4c4-4c4c-8c4c-c4c4c4c4c4c4.*/ }).reply(200, {
     releases: [{ id: 'route-release-id', status: 'Official' }],
   });
   pool.intercept({ path: '/ws/2/release/route-release-id?inc=recordings%2Bartist-credits&fmt=json' }).reply(200, {
@@ -38,14 +38,14 @@ test('GET /api/releases/:mbid/tracks returns the release and its tracks', async 
     media: [
       {
         tracks: [
-          { position: 1, title: 'Track One', length: 180000, recording: { id: 'rec-1' } },
-          { position: 2, title: 'Track Two', length: 200000, recording: { id: 'rec-2' } },
+          { position: 1, title: 'Track One', length: 180000, recording: { id: '77777777-7777-4777-8777-777777777777' } },
+          { position: 2, title: 'Track Two', length: 200000, recording: { id: '88888888-8888-4888-8888-888888888888' } },
         ],
       },
     ],
   });
 
-  const res = await fetch(`${baseUrl}/api/releases/route-release-group/tracks`);
+  const res = await fetch(`${baseUrl}/api/releases/c4c4c4c4-c4c4-4c4c-8c4c-c4c4c4c4c4c4/tracks`);
   assert.equal(res.status, 200);
   const body = await res.json();
   assert.equal(body.release.title, 'Route Test Album');
@@ -55,11 +55,11 @@ test('GET /api/releases/:mbid/tracks returns the release and its tracks', async 
 
 test('GET /api/releases/:mbid/tracks returns 404 when the release group has no releases', async () => {
   const pool = mockMusicBrainz();
-  pool.intercept({ path: /\/ws\/2\/release\?.*release-group=route-release-group-empty.*/ }).reply(200, {
+  pool.intercept({ path: /\/ws\/2\/release\?.*release-group=c3c3c3c3-c3c3-4c3c-8c3c-c3c3c3c3c3c3.*/ }).reply(200, {
     releases: [],
   });
 
-  const res = await fetch(`${baseUrl}/api/releases/route-release-group-empty/tracks`);
+  const res = await fetch(`${baseUrl}/api/releases/c3c3c3c3-c3c3-4c3c-8c3c-c3c3c3c3c3c3/tracks`);
   assert.equal(res.status, 404);
   const body = await res.json();
   assert.equal(body.error.code, 'NOT_FOUND');

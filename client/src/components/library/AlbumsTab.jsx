@@ -2,9 +2,14 @@ import { useMemo, useState } from 'react';
 import Pagination from '../Pagination.jsx';
 import SortSelect from './SortSelect.jsx';
 import LocalCover from './LocalCover.jsx';
+import EqualizerLoader from '../EqualizerLoader.jsx';
+import { getLibraryAlbums } from '../../api/library.js';
+import { useServerList } from '../../lib/useServerList.js';
 import { usePagination } from '../../lib/usePagination.js';
 import { albumKey } from '../../lib/albumKey.js';
 import { formatLongDuration } from '../../lib/format.js';
+
+const PAGE_SIZE = 24;
 
 const SORTS = [
   ['artist', 'Artist'],
@@ -14,21 +19,32 @@ const SORTS = [
   ['added', 'Recently added'],
 ];
 
-export default function AlbumsTab({ albums, sort, onSortChange, onSelect, incompleteKeys }) {
-  const [query, setQuery] = useState('');
+export default function AlbumsTab({ sort, onSortChange, onSelect, incomplete, incompleteKeys }) {
   const [onlyIncomplete, setOnlyIncomplete] = useState(false);
 
-  const filtered = useMemo(() => {
-    const needle = query.trim().toLowerCase();
-    return albums.filter((a) => {
-      if (onlyIncomplete && !incompleteKeys.has(albumKey(a.artist, a.album))) return false;
-      if (!needle) return true;
-      return a.album.toLowerCase().includes(needle)
-        || String(a.artist ?? '').toLowerCase().includes(needle);
-    });
-  }, [albums, query, onlyIncomplete, incompleteKeys]);
+  // The normal view is server-paged. "Incomplete only" is served from the
+  // incomplete report the page already loaded instead: it's an inherently small
+  // list, and filtering a server page by it would only ever filter the 24 albums
+  // that happened to land on the current page.
+  const list = useServerList({
+    fetcher: ({ q, sort: s, limit, offset }) => getLibraryAlbums({ q, sort: s, limit, offset }),
+    sort,
+    pageSize: PAGE_SIZE,
+    enabled: !onlyIncomplete,
+  });
 
-  const { page, setPage, pageCount, pageItems } = usePagination(filtered, 24);
+  const incompleteAlbums = useMemo(
+    () => incomplete.filter((a) => a.reason === 'gaps'),
+    [incomplete],
+  );
+  const localPage = usePagination(incompleteAlbums, PAGE_SIZE);
+
+  const albums = onlyIncomplete ? localPage.pageItems : (list.data?.albums ?? []);
+  const total = onlyIncomplete ? incompleteAlbums.length : list.total;
+  const page = onlyIncomplete ? localPage.page : list.page;
+  const pageCount = onlyIncomplete ? localPage.pageCount : list.pageCount;
+  const setPage = onlyIncomplete ? localPage.setPage : list.setPage;
+  const loading = !onlyIncomplete && list.state === 'loading';
 
   return (
     <>
@@ -36,9 +52,10 @@ export default function AlbumsTab({ albums, sort, onSortChange, onSelect, incomp
         <input
           type="search"
           placeholder="Filter albums…"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          value={list.query}
+          onChange={(e) => list.setQuery(e.target.value)}
           aria-label="Filter albums"
+          disabled={onlyIncomplete}
         />
         <SortSelect value={sort} options={SORTS} onChange={onSortChange} />
         <label className="checkbox-label">
@@ -49,16 +66,23 @@ export default function AlbumsTab({ albums, sort, onSortChange, onSelect, incomp
           />
           Incomplete only
         </label>
-        <span className="muted">{filtered.length.toLocaleString()} shown</span>
+        <span className="muted">{total.toLocaleString()} shown</span>
       </div>
 
-      {filtered.length === 0 ? (
-        <p className="muted">No albums match that filter.</p>
+      {list.state === 'error' && !onlyIncomplete && (
+        <p className="banner banner-error">{list.error}</p>
+      )}
+      {loading && <EqualizerLoader label="Loading albums…" />}
+
+      {!loading && (albums.length === 0 ? (
+        <p className="muted">
+          {onlyIncomplete ? 'No albums have numbered gaps.' : 'No albums match that filter.'}
+        </p>
       ) : (
         <>
           <div className="album-grid">
-            {pageItems.map((a) => {
-              const incomplete = incompleteKeys.has(albumKey(a.artist, a.album));
+            {albums.map((a) => {
+              const isIncomplete = incompleteKeys.has(albumKey(a.artist, a.album));
               return (
                 <button
                   key={albumKey(a.artist, a.album)}
@@ -72,14 +96,14 @@ export default function AlbumsTab({ albums, sort, onSortChange, onSelect, incomp
                     {a.year ? `${a.year} · ` : ''}{a.trackCount} track{a.trackCount === 1 ? '' : 's'}
                     {a.totalDurationMs ? ` · ${formatLongDuration(a.totalDurationMs)}` : ''}
                   </span>
-                  {incomplete && <span className="badge-incomplete">incomplete</span>}
+                  {isIncomplete && <span className="badge-incomplete">incomplete</span>}
                 </button>
               );
             })}
           </div>
           <Pagination page={page} pageCount={pageCount} onChange={setPage} />
         </>
-      )}
+      ))}
     </>
   );
 }

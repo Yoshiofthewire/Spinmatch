@@ -90,6 +90,12 @@ between scheduled refreshes.
 
 ### Phase 2 — Discovery
 
+**Status: built.** Routes `GET /library/similar-artists`, `GET /library/recommendations` and
+`POST /library/reconstruct-playlist` (POST, not GET — a pasted playlist is a body, not a query
+string), with `components/library/DiscoveryPanel.jsx` and `PlaylistPanel.jsx` under a Discover tab.
+Item 4 below was re-derived from the collection itself, since `verified_tracks` was dropped in
+schema v3 as never read or written.
+
 3. **Artist Similarity** — "artists similar to ones in my collection," via MusicBrainz artist
    relationships.
 4. **Track-Based Recommendations** — suggestions derived from the user's verified tracks.
@@ -168,4 +174,9 @@ Docker:
 - [ ] File change detection works across filesystems (ext4, NTFS, macOS).
 - [ ] Large-library scans (10k+) complete without memory/CPU spikes.
 - [ ] All routes handle edge cases (empty library, malformed files).
-- [ ] Discovery surfaces meaningful suggestions, not random noise.
+- [x] Discovery surfaces meaningful suggestions, not random noise. Built against MusicBrainz's
+      artist-relationship graph rather than the planned `verified_tracks` table, which was dropped
+      as unused before Phase 2 began. Suggestions are ranked by how many of your artists lead to
+      them and carry that provenance to the UI, and anything already owned is filtered out — but
+      the graph records connections (shared members, collaborations), not sonic similarity, and the
+      UI says so rather than implying a recommender.

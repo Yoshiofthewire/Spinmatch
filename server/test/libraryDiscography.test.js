@@ -51,17 +51,17 @@ function dbWith(albums, artist = 'Band') {
   return db;
 }
 
-const RADIOHEAD = { mbid: 'artist-1', name: 'Band', score: 100 };
+const RADIOHEAD = { mbid: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', name: 'Band', score: 100 };
 
 test('missing albums are the MusicBrainz discography minus what is owned', async () => {
   const db = dbWith(['The Bends']);
   const { getArtistDiscography } = await freshDiscography({
     searchArtists: async () => [RADIOHEAD],
     browseReleaseGroupsByArtist: async () => ({
-      artist: { mbid: 'artist-1', name: 'Band' },
+      artist: { mbid: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', name: 'Band' },
       albums: [
-        { mbid: 'rg-1', title: 'The Bends', firstReleaseDate: '1995-03-13', coverArtUrl: '/c/1' },
-        { mbid: 'rg-2', title: 'Kid A', firstReleaseDate: '2000-10-02', coverArtUrl: '/c/2' },
+        { mbid: '11111111-1111-4111-8111-111111111111', title: 'The Bends', firstReleaseDate: '1995-03-13', coverArtUrl: '/c/1' },
+        { mbid: '44444444-4444-4444-8444-444444444444', title: 'Kid A', firstReleaseDate: '2000-10-02', coverArtUrl: '/c/2' },
       ],
     }),
   });
@@ -82,8 +82,8 @@ test('a parenthetical local edition still counts as owning the album', async () 
   const { getArtistDiscography } = await freshDiscography({
     searchArtists: async () => [RADIOHEAD],
     browseReleaseGroupsByArtist: async () => ({
-      artist: { mbid: 'artist-1', name: 'Band' },
-      albums: [{ mbid: 'rg-2', title: 'Kid A', firstReleaseDate: '2000-10-02', coverArtUrl: '/c/2' }],
+      artist: { mbid: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', name: 'Band' },
+      albums: [{ mbid: '44444444-4444-4444-8444-444444444444', title: 'Kid A', firstReleaseDate: '2000-10-02', coverArtUrl: '/c/2' }],
     }),
   });
 
@@ -140,8 +140,8 @@ test('a resolved artist id is cached so the next call skips the search', async (
       return [RADIOHEAD];
     },
     browseReleaseGroupsByArtist: async () => ({
-      artist: { mbid: 'artist-1', name: 'Band' },
-      albums: [{ mbid: 'rg-1', title: 'The Bends', firstReleaseDate: '1995', coverArtUrl: '/c/1' }],
+      artist: { mbid: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', name: 'Band' },
+      albums: [{ mbid: '11111111-1111-4111-8111-111111111111', title: 'The Bends', firstReleaseDate: '1995', coverArtUrl: '/c/1' }],
     }),
   });
 
@@ -200,14 +200,182 @@ test('albums on disk that MusicBrainz does not list are surfaced, not hidden', a
   const { getArtistDiscography } = await freshDiscography({
     searchArtists: async () => [RADIOHEAD],
     browseReleaseGroupsByArtist: async () => ({
-      artist: { mbid: 'artist-1', name: 'Band' },
-      albums: [{ mbid: 'rg-1', title: 'The Bends', firstReleaseDate: '1995', coverArtUrl: '/c/1' }],
+      artist: { mbid: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', name: 'Band' },
+      albums: [{ mbid: '11111111-1111-4111-8111-111111111111', title: 'The Bends', firstReleaseDate: '1995', coverArtUrl: '/c/1' }],
     }),
   });
 
   const result = await getArtistDiscography('Band', { db });
   assert.deepEqual(result.unmatchedLocal, ['Live At Glastonbury']);
   assert.deepEqual(result.missing.map((m) => m.title), ['The Bends']);
+  setDbForTest(null);
+  db.close();
+});
+
+// A wrong auto-accepted guess used to be permanent: positive results had no TTL,
+// the `confirmed` column was written but never read, and there was no way to
+// clear one without opening the database by hand.
+test('an unconfirmed guess is re-checked later, while a user-confirmed one is kept', async () => {
+  const db = openDb(':memory:');
+  repo.upsertLocalTrack(db, { path: '/m/A/Al/1.mp3', artist: 'Ambiguous', album: 'Al', title: 'T', durationMs: 1000, changeKey: '1:1' });
+  setDbForTest(db);
+
+  let searches = 0;
+  const mod = await freshDiscography({
+    searchArtists: async () => {
+      searches += 1;
+      return [{ mbid: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', name: 'Ambiguous', score: 100 }];
+    },
+  });
+
+  // First call resolves and remembers it as an unconfirmed guess.
+  assert.equal((await mod.resolveArtist('Ambiguous', { db })).mbArtistId, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+  assert.equal(searches, 1);
+  // Straight away, the cache answers.
+  await mod.resolveArtist('Ambiguous', { db });
+  assert.equal(searches, 1);
+
+  // Backdate the check past the re-verification window: an unconfirmed guess is
+  // looked up again rather than trusted forever.
+  db.prepare('UPDATE library_artist_links SET checked_at = 0').run();
+  await mod.resolveArtist('Ambiguous', { db });
+  assert.equal(searches, 2, 'a stale unconfirmed guess should be re-checked');
+
+  // A choice the user made explicitly is kept regardless of age.
+  mod.saveArtistLink(db, { artist: 'Ambiguous', mbArtistId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', confirmed: 1 });
+  db.prepare('UPDATE library_artist_links SET checked_at = 0').run();
+  const confirmed = await mod.resolveArtist('Ambiguous', { db });
+  assert.equal(confirmed.mbArtistId, 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb');
+  assert.equal(searches, 2, 'a confirmed choice should never be re-searched');
+
+  // And it can be forgotten on request.
+  assert.equal(mod.deleteArtistLink(db, 'Ambiguous'), true);
+  assert.equal(mod.getArtistLink(db, 'Ambiguous'), null);
+  db.close();
+});
+
+// --- Joined artist credits ---------------------------------------------------
+//
+// A quarter of a real 1000-artist library is rows like "Justice & Thundercat"
+// that resolve to nothing, stranding the artist they lead with. The fallback
+// recovers those, and the tests below pin the two guards that keep it from
+// inventing matches.
+
+// Seeds the joined-credit row plus, optionally, the primary artist as its own
+// separate row — which is the condition the fallback requires.
+function dbWithCredit({ credit, primary }) {
+  const db = openDb(':memory:');
+  repo.upsertLocalTrack(db, {
+    path: `/m/${credit}/A/01.mp3`, artist: credit, album: 'A', title: 'T1',
+    durationMs: 1000, changeKey: '1:1',
+  });
+  if (primary) {
+    repo.upsertLocalTrack(db, {
+      path: `/m/${primary}/B/01.mp3`, artist: primary, album: 'B', title: 'T2',
+      durationMs: 1000, changeKey: '2:1',
+    });
+  }
+  setDbForTest(db);
+  return db;
+}
+
+test('a joined credit resolves through its primary artist when that artist is owned', async () => {
+  const db = dbWithCredit({ credit: 'Nine Inch Nails / Stephen Morris', primary: 'Nine Inch Nails' });
+  const searched = [];
+  const { resolveArtist } = await freshDiscography({
+    searchArtists: async (q) => {
+      searched.push(q);
+      // The full credit string matches nothing, exactly as upstream behaves.
+      return q.includes('Stephen Morris')
+        ? []
+        : [{ mbid: 'nnnnnnnn-nnnn-4nnn-8nnn-nnnnnnnnnnnn', name: 'Nine Inch Nails', score: 100 }];
+    },
+  });
+
+  const result = await resolveArtist('Nine Inch Nails / Stephen Morris', { db });
+  assert.equal(result.mbArtistId, 'nnnnnnnn-nnnn-4nnn-8nnn-nnnnnnnnnnnn');
+  assert.equal(result.via, 'Nine Inch Nails', 'reports which artist it matched through');
+  assert.equal(searched.length, 2, 'the whole string is tried before the split');
+  setDbForTest(null);
+  db.close();
+});
+
+// The guard that matters. MusicBrainz has a real artist exactly named
+// "Florence" (a Dutch techno producer), so trusting a name match here would
+// link "Florence + The Machine" to the wrong act with full confidence.
+test('a joined credit is NOT resolved when the primary artist is not separately owned', async () => {
+  const db = dbWithCredit({ credit: 'Florence + The Machine', primary: null });
+  let searchedPrimary = false;
+  const { resolveArtist } = await freshDiscography({
+    searchArtists: async (q) => {
+      if (q.includes('Florence"')) searchedPrimary = true;
+      return [];
+    },
+  });
+
+  const result = await resolveArtist('Florence + The Machine', { db });
+  assert.equal(result.mbArtistId, null);
+  assert.equal(result.via, undefined);
+  assert.equal(searchedPrimary, false, 'the unowned segment is never even looked up');
+  setDbForTest(null);
+  db.close();
+});
+
+// Ordering is the other guard: a name that resolves whole must never be split,
+// because a library really can contain a separate artist named "She".
+test('a real band name that resolves whole is never split', async () => {
+  const db = dbWithCredit({ credit: 'She & Him', primary: 'She' });
+  const searched = [];
+  const { resolveArtist } = await freshDiscography({
+    searchArtists: async (q) => {
+      searched.push(q);
+      return [{ mbid: 'ssssssss-ssss-4sss-8sss-ssssssssssss', name: 'She & Him', score: 100 }];
+    },
+  });
+
+  const result = await resolveArtist('She & Him', { db });
+  assert.equal(result.mbArtistId, 'ssssssss-ssss-4sss-8sss-ssssssssssss');
+  assert.equal(result.via, undefined, 'matched whole, not through a split');
+  assert.equal(searched.length, 1, 'no fallback search happened');
+  setDbForTest(null);
+  db.close();
+});
+
+test('a credit resolution is remembered against the original string', async () => {
+  const db = dbWithCredit({ credit: 'Justice & Thundercat', primary: 'Justice' });
+  let calls = 0;
+  const { resolveArtist } = await freshDiscography({
+    searchArtists: async (q) => {
+      calls += 1;
+      return q.includes('Thundercat')
+        ? []
+        : [{ mbid: 'jjjjjjjj-jjjj-4jjj-8jjj-jjjjjjjjjjjj', name: 'Justice', score: 100 }];
+    },
+  });
+
+  await resolveArtist('Justice & Thundercat', { db });
+  const before = calls;
+  const again = await resolveArtist('Justice & Thundercat', { db });
+
+  assert.equal(calls, before, 'the second call makes no upstream request');
+  assert.equal(again.cached, true);
+  assert.equal(again.mbArtistId, 'jjjjjjjj-jjjj-4jjj-8jjj-jjjjjjjjjjjj');
+  setDbForTest(null);
+  db.close();
+});
+
+test('the fallback does not recurse past one level', async () => {
+  // The primary is resolved with the fallback disabled, so a pathological name
+  // can't drive an unbounded chain of splits and searches.
+  const db = dbWithCredit({ credit: 'Alpha feat. Beta', primary: 'Alpha' });
+  const searched = [];
+  const { resolveArtist } = await freshDiscography({
+    searchArtists: async (q) => { searched.push(q); return []; },
+  });
+
+  const result = await resolveArtist('Alpha feat. Beta', { db });
+  assert.equal(result.mbArtistId, null);
+  assert.equal(searched.length, 2, 'full string, then the primary — and no further');
   setDbForTest(null);
   db.close();
 });

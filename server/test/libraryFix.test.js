@@ -16,11 +16,11 @@ const { openDb, setDbForTest } = await import('../src/lib/db.js');
 const repo = await import('../src/services/libraryRepo.js');
 
 const RECORDING = {
-  mbid: 'rec-1',
+  mbid: '77777777-7777-4777-8777-777777777777',
   title: 'Idioteque',
   artist: 'Radiohead',
   lengthMs: 300_000,
-  releaseGroups: [{ mbid: 'rg-1', title: 'Kid A' }],
+  releaseGroups: [{ mbid: '11111111-1111-4111-8111-111111111111', title: 'Kid A' }],
   date: '2000-10-02',
 };
 
@@ -28,6 +28,9 @@ const RECORDING = {
 // "never moves the file" contracts can be asserted without a real audio file.
 let written;
 let counter = 0;
+// Every query candidatesFromTags sent upstream, so the path-derived fallback can
+// be asserted on what was actually searched for.
+let searched = [];
 
 async function freshFix({ current, recording = RECORDING, coverImage = null } = {}) {
   counter += 1;
@@ -37,12 +40,12 @@ async function freshFix({ current, recording = RECORDING, coverImage = null } = 
   mock.module('../src/services/musicbrainz.js', {
     namedExports: {
       getRecording: async () => recording,
-      resolvePrimaryReleaseForGroup: async () => 'release-1',
+      resolvePrimaryReleaseForGroup: async () => '55555555-5555-4555-8555-555555555555',
       getReleaseWithTracks: async () => ({
-        release: { mbid: 'release-1', title: 'Kid A', artist: 'Radiohead' },
-        tracks: [{ position: 7, discNumber: 1, recordingMbid: 'rec-1', title: 'Idioteque', lengthMs: 300_000 }],
+        release: { mbid: '55555555-5555-4555-8555-555555555555', title: 'Kid A', artist: 'Radiohead' },
+        tracks: [{ position: 7, discNumber: 1, recordingMbid: '77777777-7777-4777-8777-777777777777', title: 'Idioteque', lengthMs: 300_000 }],
       }),
-      searchRecordings: async () => [],
+      searchRecordings: async (query) => { searched.push(query); return []; },
       searchArtists: async () => [],
       searchReleaseGroups: async () => [],
       searchAll: async () => ({}),
@@ -77,15 +80,18 @@ async function freshFix({ current, recording = RECORDING, coverImage = null } = 
   return import(`../src/services/libraryFix.js?fresh=${counter}`);
 }
 
-function seedTrack(db, overrides = {}) {
-  const filePath = path.join(musicDir, 'track.mp3');
+function seedTrack(db, overrides = {}, relPath = 'track.mp3') {
+  const filePath = path.join(musicDir, relPath);
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, 'audio');
   repo.upsertLocalTrack(db, {
     path: filePath, artist: null, album: null, title: null,
     durationMs: 1000, changeKey: '5:1', ...overrides,
   });
   repo.recomputeStats(db);
-  return repo.listTracks(db, {}).tracks[0];
+  // getTrackById rather than listTracks: browse listings deliberately don't
+  // carry the absolute path, and this helper's callers assert on it.
+  return repo.getTrackById(db, repo.listTracks(db, {}).tracks[0].id);
 }
 
 test.after(() => {
@@ -103,7 +109,7 @@ test('a fix fills the empty tags and leaves the file where it is', async () => {
   const { applyFix } = await freshFix({
     current: { artist: null, title: null, album: null, trackNumber: null, disc: null, year: null },
   });
-  const result = await applyFix({ trackId: track.id, recordingMbid: 'rec-1' });
+  const result = await applyFix({ trackId: track.id, recordingMbid: '77777777-7777-4777-8777-777777777777' });
 
   assert.equal(written.filePath, track.path, 'the file is written in place, not moved');
   assert.equal(written.desired.artist, 'Radiohead');
@@ -124,7 +130,7 @@ test('tags the file already has are not overwritten', async () => {
   const { applyFix } = await freshFix({
     current: { artist: 'My Own Spelling', title: 'My Title', album: null, trackNumber: 3, disc: null, year: null },
   });
-  const result = await applyFix({ trackId: track.id, recordingMbid: 'rec-1' });
+  const result = await applyFix({ trackId: track.id, recordingMbid: '77777777-7777-4777-8777-777777777777' });
 
   assert.ok(!result.filledFields.includes('artist'), 'an existing artist tag is left alone');
   assert.ok(!result.filledFields.includes('title'));
@@ -141,7 +147,7 @@ test('the release tracklist is only fetched when the track number is missing', a
   const { applyFix } = await freshFix({
     current: { artist: 'Radiohead', title: null, album: null, trackNumber: 7, disc: null, year: null },
   });
-  await applyFix({ trackId: track.id, recordingMbid: 'rec-1' });
+  await applyFix({ trackId: track.id, recordingMbid: '77777777-7777-4777-8777-777777777777' });
 
   // No position was requested, so nothing was sent for trackNumber/disc.
   assert.equal(written.desired.trackNumber, null);
@@ -159,13 +165,54 @@ test('cover art is fetched only for a track that has none', async () => {
     current: { artist: null, title: null, album: null, trackNumber: null, disc: null, year: null },
     coverImage: { bytes: Buffer.from('img'), mimeType: 'image/jpeg' },
   });
-  await applyFix({ trackId: bare.id, recordingMbid: 'rec-1' });
+  await applyFix({ trackId: bare.id, recordingMbid: '77777777-7777-4777-8777-777777777777' });
   assert.ok(written.coverImage, 'art is embedded when the file has none');
 
   const arted = seedTrack(db, { hasCoverArt: 1 });
   written = null;
-  await applyFix({ trackId: arted.id, recordingMbid: 'rec-1' });
+  await applyFix({ trackId: arted.id, recordingMbid: '77777777-7777-4777-8777-777777777777' });
   assert.equal(written.coverImage, null, 'an already-arted file costs no cover lookup');
+  db.close();
+});
+
+// The Health tab's rows are files whose tags are missing, so searching
+// MusicBrainz for "this file's tags" finds nothing for exactly the files that
+// need repairing. getFixCandidates reads the path instead and hands it to
+// candidatesFromTags as a fallback — the precedence rules for that merge are
+// pinned in tag-match.test.js, where the tags mock reaches the module under test.
+test('getFixCandidates reads the tags implied by the file path', async () => {
+  const db = openDb(':memory:');
+  setDbForTest(db);
+  const track = seedTrack(db, {}, path.join('Radiohead', 'Kid A', '05 - Idioteque.mp3'));
+  searched = [];
+
+  const { getFixCandidates } = await freshFix({
+    current: { artist: null, title: null, album: null, trackNumber: null, disc: null, year: null },
+  });
+  const result = await getFixCandidates(track.id);
+
+  assert.equal(result.pathTags.artist, 'Radiohead');
+  assert.equal(result.pathTags.album, 'Kid A');
+  assert.equal(result.pathTags.title, 'Idioteque');
+  assert.equal(result.pathTags.trackNumber, 5);
+  assert.equal(searched.length, 1, 'the empty tags did not short-circuit the search');
+  db.close();
+});
+
+test('getFixCandidates commits to nothing for a file with no usable path', async () => {
+  const db = openDb(':memory:');
+  setDbForTest(db);
+  // Directly under MUSIC_DIR: no artist or album folder to read.
+  const track = seedTrack(db, {}, 'unknown.mp3');
+
+  const { getFixCandidates } = await freshFix({
+    current: { artist: null, title: null, album: null, trackNumber: null, disc: null, year: null },
+  });
+  const result = await getFixCandidates(track.id);
+
+  assert.equal(result.pathTags.artist, null);
+  assert.equal(result.pathTags.album, null);
+  assert.equal(result.pathTags.title, 'unknown');
   db.close();
 });
 
@@ -173,7 +220,7 @@ test('fixing an unknown track is a 404, not a crash', async () => {
   const db = openDb(':memory:');
   setDbForTest(db);
   const { applyFix } = await freshFix({ current: {} });
-  await assert.rejects(() => applyFix({ trackId: 99999, recordingMbid: 'rec-1' }), /not found/i);
+  await assert.rejects(() => applyFix({ trackId: 99999, recordingMbid: '77777777-7777-4777-8777-777777777777' }), /not found/i);
   db.close();
 });
 
@@ -186,12 +233,13 @@ test('a track whose row points outside MUSIC_DIR is refused', async () => {
     path: outside, artist: null, album: null, title: null,
     durationMs: 1000, changeKey: '5:1',
   });
-  const track = repo.listTracks(db, {}).tracks.find((t) => t.path === outside);
+  const track = repo.getTrackById(db, repo.listTracks(db, {}).tracks[0].id);
+  assert.equal(track.path, outside);
 
   const { applyFix } = await freshFix({ current: {} });
   await assert.rejects(
-    () => applyFix({ trackId: track.id, recordingMbid: 'rec-1' }),
-    /outside MUSIC_DIR|not readable/i,
+    () => applyFix({ trackId: track.id, recordingMbid: '77777777-7777-4777-8777-777777777777' }),
+    /outside the music folder|not readable/i,
   );
   fs.rmSync(outside, { force: true });
   db.close();

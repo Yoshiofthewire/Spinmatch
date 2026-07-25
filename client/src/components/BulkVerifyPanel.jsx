@@ -28,6 +28,10 @@ export default function BulkVerifyPanel({
   const [results, setResults] = useState([]);
   const [total, setTotal] = useState(trackCount);
   const [error, setError] = useState(null);
+  // Only the artist sweep populates these: which record is being worked on, and
+  // any whose tracklist couldn't be read.
+  const [currentAlbum, setCurrentAlbum] = useState(null);
+  const [skipped, setSkipped] = useState([]);
   const esRef = useRef(null);
   const doneRef = useRef(false);
 
@@ -36,7 +40,11 @@ export default function BulkVerifyPanel({
   useEffect(() => () => esRef.current?.close(), []);
 
   function logVerified(list) {
-    list.filter((r) => r.video).forEach((r) => addEntry({ track: r.title, artist, album, action: 'verified' }));
+    // The artist sweep spans many records, so each result carries its own album;
+    // the two album-scoped callers don't and fall back to the prop.
+    list.filter((r) => r.video).forEach((r) => addEntry({
+      track: r.title, artist, album: r.album ?? album, action: 'verified',
+    }));
   }
 
   // Fallback for environments without EventSource: one blocking request.
@@ -62,6 +70,8 @@ export default function BulkVerifyPanel({
     setError(null);
     setResults([]);
     setTotal(trackCount);
+    setCurrentAlbum(null);
+    setSkipped([]);
 
     if (typeof EventSource === 'undefined') {
       runBlocking();
@@ -73,9 +83,22 @@ export default function BulkVerifyPanel({
     const es = new EventSource(streamUrl);
     esRef.current = es;
 
-    // Only the release-group stream announces a total up front; the library
-    // stream's caller already knows how many tracks are missing.
-    es.addEventListener('album', (e) => setTotal(JSON.parse(e.data).total));
+    // Three shapes reach this handler. The release-group stream announces a
+    // track total up front. The library album stream sends nothing, because its
+    // caller already knows the count. The artist sweep sends one per record it
+    // starts on, with no total — walking every tracklist to compute one would
+    // cost as much again as the run — so it reports which album it is on
+    // instead, which is the honest progress signal at that scale.
+    es.addEventListener('album', (e) => {
+      const data = JSON.parse(e.data);
+      if (data.total != null) setTotal(data.total);
+      if (data.albumIndex != null) setCurrentAlbum(data);
+    });
+    // An album whose release can't be read is reported and stepped past rather
+    // than ending a run over twenty others.
+    es.addEventListener('album_error', (e) => {
+      setSkipped((prev) => [...prev, JSON.parse(e.data)]);
+    });
     es.addEventListener('result', (e) => {
       acc.push(JSON.parse(e.data));
       setResults([...acc]);
@@ -130,6 +153,9 @@ export default function BulkVerifyPanel({
             </div>
             <p className="muted" style={{ margin: 0 }}>
               Matched {results.length}{total ? ` of ${total}` : ''} tracks…
+              {currentAlbum && (
+                <> — album {currentAlbum.albumIndex} of {currentAlbum.albumCount}: {currentAlbum.title}</>
+              )}
             </p>
           </div>
         </div>
@@ -138,6 +164,13 @@ export default function BulkVerifyPanel({
       {error && (
         <p className={error.code === 'RATE_LIMITED' ? 'banner banner-rate-limited' : 'banner banner-error'}>
           {error.message}
+        </p>
+      )}
+
+      {skipped.length > 0 && (
+        <p className="muted">
+          Skipped {skipped.length} album{skipped.length === 1 ? '' : 's'} whose
+          tracklist couldn&apos;t be read: {skipped.map((s) => s.title).join(', ')}.
         </p>
       )}
 

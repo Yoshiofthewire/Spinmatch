@@ -1,5 +1,5 @@
 // client/src/api/library.js
-import { get, post } from './client.js';
+import { get, post, del } from './client.js';
 
 function qs(params) {
   const search = new URLSearchParams();
@@ -14,12 +14,12 @@ export function getLibraryStats() {
   return get('/library/stats');
 }
 
-export function getLibraryArtists({ sort } = {}) {
-  return get(`/library/artists${qs({ sort })}`);
+export function getLibraryArtists({ sort, q, limit, offset } = {}) {
+  return get(`/library/artists${qs({ sort, q, limit, offset })}`);
 }
 
-export function getLibraryAlbums({ artist, sort } = {}) {
-  return get(`/library/albums${qs({ artist, sort })}`);
+export function getLibraryAlbums({ artist, sort, q, limit, offset } = {}) {
+  return get(`/library/albums${qs({ artist, sort, q, limit, offset })}`);
 }
 
 export function getLibraryTracks({ artist, album, q, sort, limit, offset } = {}) {
@@ -64,6 +64,18 @@ export function applyFix({ trackId, recordingMbid }) {
   return post('/library/fix', { trackId, recordingMbid });
 }
 
+// What repairing a whole album's tags would write. Read-only — 'path' makes no
+// upstream call at all, 'musicbrainz' makes two for the album.
+export function previewBulkFix({ artist, album, source }) {
+  return post('/library/bulk-fix/preview', { artist, album, source });
+}
+
+// Applies a previewed repair. Only the track ids travel: the server re-derives
+// what to write, so the browser never dictates tag values.
+export function applyBulkFix({ artist, album, source, trackIds }) {
+  return post('/library/bulk-fix/apply', { artist, album, source, trackIds });
+}
+
 // Rescans only one artist's or album's folders. The library-wide scan is
 // scanLibrary() above.
 export function rescanLibraryPart({ artist, album }) {
@@ -88,8 +100,35 @@ export function linkArtist({ artist, mbArtistId }) {
   return post('/library/artist-link', { artist, mbArtistId });
 }
 
+// Forgets a remembered artist match so the next check resolves it again. Needed
+// because an automatic match that guessed wrong is otherwise permanent.
+export function unlinkArtist(artist) {
+  return del(`/library/artist-link${qs({ artist })}`);
+}
+
 // URL builders, not requests — these are used as <img src> / <audio src>, which
 // the browser fetches directly rather than going through client.js.
+// Discovery. The first two walk the 1-req/s MusicBrainz queue, so callers must
+// keep them behind an explicit action rather than firing them on mount.
+export function getSimilarArtists() {
+  return get('/library/similar-artists');
+}
+
+export function getRecommendations() {
+  return get('/library/recommendations');
+}
+
+// Offline: matched against the index, no upstream call.
+export function reconstructPlaylist(lines) {
+  return post('/library/reconstruct-playlist', { lines });
+}
+
+// SSE endpoint for the whole-artist sweep. A URL rather than a request because
+// BulkVerifyPanel drives it with EventSource.
+export function artistMissingStreamUrl(artist) {
+  return `/api/library/artist-missing/stream?artist=${encodeURIComponent(artist)}`;
+}
+
 export function coverUrl(trackId) {
   return `/api/library/cover/${trackId}`;
 }

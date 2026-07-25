@@ -1,12 +1,14 @@
 import { getDb } from '../lib/db.js';
 import { getTrackById } from './libraryRepo.js';
 import { candidatesFromTags } from './tagMatch.js';
+import { tagsFromPath } from './libraryPathTags.js';
 import { getRecording, resolvePrimaryReleaseForGroup, getReleaseWithTracks } from './musicbrainz.js';
 import { getFrontCoverImage } from './coverArt.js';
 import { writeMissingTags } from './tags.js';
 import { reindexFile } from './libraryScanner.js';
 import { assertReadableInsideMusicDir } from '../lib/paths.js';
 import { NotFoundError } from '../lib/httpErrors.js';
+import { assertMbid } from '../lib/mbid.js';
 
 // Repairing the tags of a file that is ALREADY in the library. Deliberately not
 // the ingest flow: ingest identifies unknown files and moves them into place,
@@ -26,10 +28,17 @@ async function trackOrThrow(trackId) {
 // from. Reuses the ingest picker's candidate source, which searches on whatever
 // tags the file does carry — the useful case being a file that has an artist and
 // title but no album, year, or number.
+//
+// The file's path is passed as a fallback because this is reached from the
+// Health tab, whose rows are by definition files with missing tags: searching
+// MusicBrainz for "the tags this file has" finds nothing when the tags are the
+// thing that's missing. Where the file sits on disk is the metadata those files
+// still carry, so it is what gets searched on instead.
 export async function getFixCandidates(trackId) {
   const { track, real } = await trackOrThrow(trackId);
-  const { candidates } = await candidatesFromTags(real);
-  return { track, candidates };
+  const fallback = tagsFromPath(real);
+  const { candidates } = await candidatesFromTags(real, { fallback });
+  return { track, candidates, pathTags: fallback };
 }
 
 // Where this recording sits on its release, so a missing track/disc number can
@@ -50,6 +59,7 @@ async function positionOnRelease(releaseGroupMbid, recordingMbid) {
 // the contract wanted here — a "fix" must never overwrite metadata the user
 // already has, only fill the holes the Health report flagged.
 export async function applyFix({ trackId, recordingMbid }) {
+  assertMbid(recordingMbid, 'recordingMbid');
   const { track, real } = await trackOrThrow(trackId);
   const recording = await getRecording(recordingMbid);
 

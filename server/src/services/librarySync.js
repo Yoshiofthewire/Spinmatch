@@ -44,7 +44,13 @@ export function startLibrarySync({ scan = scanLibrary, watch = true } = {}) {
   const scheduleNext = () => {
     if (stopped) return;
     let count = 0;
-    try { count = getStats(getDb()).totalTracks; } catch { count = 0; }
+    try {
+      count = getStats(getDb()).totalTracks;
+    } catch (err) {
+      // Falling back to the shortest interval is the safe choice, but silently
+      // is not: a database that can't be read is worth knowing about.
+      console.warn(`librarySync: could not read collection size, using the default interval: ${err.message}`);
+    }
     timer = setTimeout(async () => {
       await runScan();
       scheduleNext();

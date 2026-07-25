@@ -47,7 +47,7 @@ test.before(async () => {
   setDbForTest(db);
 
   const { createApp } = await import('../../src/app.js');
-  server = createApp({ auth: false }).listen(0);
+  server = createApp({ gate: (req, res, next) => next() }).listen(0);
   await new Promise((resolve) => server.once('listening', resolve));
   baseUrl = `http://localhost:${server.address().port}`;
 });
@@ -116,6 +116,35 @@ test('an indexed path outside MUSIC_DIR is refused', async () => {
   assert.equal(res.status, 400);
 });
 
+// Regression: the route used to be createReadStream(real).pipe(res), and pipe()
+// does not forward source errors — an unhandled 'error' on the ReadStream is an
+// uncaught exception that kills the process. A file that passes the containment
+// check and then fails to open (deleted mid-request, EACCES, or an I/O error on
+// the network mount a library usually lives on) has to be a failed request.
+test('a file that passes containment but cannot be opened fails the request, not the process', async (t) => {
+  const unreadable = path.join(musicDir, 'unreadable.mp3');
+  fs.writeFileSync(unreadable, BODY);
+  // realpath() still resolves; open() is what fails.
+  fs.chmodSync(unreadable, 0o000);
+  t.after(() => { fs.chmodSync(unreadable, 0o644); fs.rmSync(unreadable, { force: true }); });
+  if (fs.accessSync && (() => { try { fs.accessSync(unreadable, fs.constants.R_OK); return true; } catch { return false; } })()) {
+    t.skip('running as a user that ignores file modes (root)');
+    return;
+  }
+
+  const db = (await import('../../src/lib/db.js')).getDb();
+  repo.upsertLocalTrack(db, {
+    path: unreadable, artist: 'A', album: 'Al', title: 'unreadable.mp3',
+    durationMs: 1000, changeKey: '9:9', ext: 'mp3',
+  });
+  const id = db.prepare('SELECT id FROM local_tracks WHERE path = ?').get(unreadable).id;
+
+  const res = await fetch(`${baseUrl}/api/library/stream/${id}`);
+  assert.equal(res.status, 500);
+  // The process is still up to answer this, which is the whole point.
+  assert.equal((await fetch(`${baseUrl}/api/health`)).status, 200);
+});
+
 test('an unknown track id is a 404', async () => {
   const res = await fetch(`${baseUrl}/api/library/stream/999999`);
   assert.equal(res.status, 404);
@@ -159,4 +188,62 @@ test('the cover route serves a cover image sitting beside the audio', async () =
   assert.equal(res.status, 200);
   assert.equal(res.headers.get('content-type'), 'image/png');
   assert.equal(Buffer.from(await res.arrayBuffer()).length, png.length);
+});
+
+// The cover endpoint's ETag used to be set on the way out, and on the no-art
+// path that made it decorative: the comment promised "a re-visit is a 304", but
+// res.end() does no freshness checking — only res.send() does — so every repeat
+// request re-parsed the file and re-scanned its folder to rediscover that there
+// is still no cover. It is now set (and answered) from the indexed row before
+// anything touches the disk.
+test('a conditional cover request is answered 304 without reading the file', async () => {
+  const first = await fetch(`${baseUrl}/api/library/cover/${ids.ok}`);
+  assert.ok([200, 204].includes(first.status), `unexpected ${first.status}`);
+  const etag = first.headers.get('etag');
+  assert.ok(etag, 'the response must carry a validator to be revalidated against');
+
+  // Cache-Control is overridden because undici's fetch injects
+  // `cache-control: no-cache` on every request, and the `fresh` module (rightly)
+  // refuses to answer 304 to a client that asked for a non-cached response. A
+  // browser revalidating an expired entry sends no such header.
+  const second = await fetch(`${baseUrl}/api/library/cover/${ids.ok}`, {
+    headers: { 'If-None-Match': etag, 'Cache-Control': 'max-age=0' },
+  });
+  assert.equal(second.status, 304);
+  assert.equal(second.headers.get('etag'), etag);
+});
+
+test('a cover request with a stale validator is answered in full', async () => {
+  const res = await fetch(`${baseUrl}/api/library/cover/${ids.ok}`, {
+    headers: { 'If-None-Match': '"0-0-stale"', 'Cache-Control': 'max-age=0' },
+  });
+  assert.notEqual(res.status, 304);
+});
+
+// Every early exit from the SSE handlers used to `return res.end()` inside a try
+// whose `finally` also called res.end(), ending the response twice, and `send`
+// wrote to the response without checking whether it was still there.
+test('an invalid releaseGroup on the SSE stream emits one error event and ends cleanly', async () => {
+  const res = await fetch(`${baseUrl}/api/library/missing/stream?releaseGroup=not-a-uuid`, {
+    headers: { 'Sec-Fetch-Site': 'same-origin' },
+  });
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get('content-type'), /text\/event-stream/);
+
+  const body = await res.text();
+  assert.match(body, /event: error/);
+  assert.match(body, /a valid releaseGroup is required/);
+  assert.equal(body.match(/event: error/g).length, 1, 'exactly one error event');
+  assert.ok(!body.includes('event: done'), 'a rejected request must not also report done');
+});
+
+test('an artist-missing stream with no artist emits one error event and ends cleanly', async () => {
+  const res = await fetch(`${baseUrl}/api/library/artist-missing/stream`, {
+    headers: { 'Sec-Fetch-Site': 'same-origin' },
+  });
+  assert.equal(res.status, 200);
+  const body = await res.text();
+  assert.match(body, /an artist is required/);
+  assert.equal(body.match(/event: error/g).length, 1);
+  assert.ok(!body.includes('event: done'));
 });

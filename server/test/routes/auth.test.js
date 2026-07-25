@@ -41,7 +41,7 @@ test('protected routes return 401 SETUP_REQUIRED before setup', async () => {
 test('setup rejects a too-short password', async () => {
   const res = await fetch(`${baseUrl}/api/auth/setup`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'Sec-Fetch-Site': 'same-origin' },
     body: JSON.stringify({ username: 'yoshi', password: 'short' }),
   });
   assert.equal(res.status, 400);
@@ -50,7 +50,7 @@ test('setup rejects a too-short password', async () => {
 test('setup creates the admin and issues a session cookie', async () => {
   const res = await fetch(`${baseUrl}/api/auth/setup`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'Sec-Fetch-Site': 'same-origin' },
     body: JSON.stringify({ username: 'yoshi', password: 'hunter2hunter2' }),
   });
   assert.equal(res.status, 200);
@@ -73,7 +73,7 @@ test('status reports authenticated when the cookie is presented', async () => {
 test('setup is refused once an admin exists', async () => {
   const res = await fetch(`${baseUrl}/api/auth/setup`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'Sec-Fetch-Site': 'same-origin' },
     body: JSON.stringify({ username: 'other', password: 'hunter2hunter2' }),
   });
   assert.equal(res.status, 400);
@@ -94,7 +94,7 @@ test('protected route is 401 UNAUTHENTICATED without a cookie, passes with one',
 test('login rejects a wrong password with a generic error', async () => {
   const res = await fetch(`${baseUrl}/api/auth/login`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'Sec-Fetch-Site': 'same-origin' },
     body: JSON.stringify({ username: 'yoshi', password: 'nope' }),
   });
   assert.equal(res.status, 400);
@@ -104,7 +104,7 @@ test('login rejects a wrong password with a generic error', async () => {
 test('login succeeds with correct credentials and sets a fresh cookie', async () => {
   const res = await fetch(`${baseUrl}/api/auth/login`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'Sec-Fetch-Site': 'same-origin' },
     body: JSON.stringify({ username: 'yoshi', password: 'hunter2hunter2' }),
   });
   assert.equal(res.status, 200);
@@ -114,7 +114,7 @@ test('login succeeds with correct credentials and sets a fresh cookie', async ()
 test('logout clears the session cookie', async () => {
   const res = await fetch(`${baseUrl}/api/auth/logout`, {
     method: 'POST',
-    headers: { Cookie: cookie },
+    headers: { Cookie: cookie, 'Sec-Fetch-Site': 'same-origin' },
   });
   assert.equal(res.status, 200);
   assert.match(res.headers.get('set-cookie'), /spinmatch_session=;?.*Max-Age=0/);

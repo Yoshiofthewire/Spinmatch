@@ -3,6 +3,7 @@ import { verifyTrack } from '../services/verifyTrack.js';
 import { resolvePrimaryReleaseForGroup, getReleaseWithTracks } from '../services/musicbrainz.js';
 import { sameOriginOnly } from '../middleware/sameOriginOnly.js';
 import { BadRequestError, RateLimitedError, NotFoundError } from '../lib/httpErrors.js';
+import { requireMbidParam } from '../lib/mbid.js';
 
 export const verifyRouter = Router();
 
@@ -19,7 +20,7 @@ verifyRouter.post('/', async (req, res, next) => {
   }
 });
 
-verifyRouter.post('/album/:mbid', async (req, res, next) => {
+verifyRouter.post('/album/:mbid', requireMbidParam(), async (req, res, next) => {
   try {
     const releaseMbid = await resolvePrimaryReleaseForGroup(req.params.mbid);
     if (!releaseMbid) throw new NotFoundError('No release found for this release group');
@@ -66,7 +67,7 @@ verifyRouter.post('/album/:mbid', async (req, res, next) => {
 // shows incremental progress and no single HTTP request is held open for the
 // minutes a large album takes — which reverse proxies would otherwise time out.
 // GET so the browser's EventSource can consume it.
-verifyRouter.get('/album/:mbid/stream', sameOriginOnly, async (req, res) => {
+verifyRouter.get('/album/:mbid/stream', sameOriginOnly, requireMbidParam(), async (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');

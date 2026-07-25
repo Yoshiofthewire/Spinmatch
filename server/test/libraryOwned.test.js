@@ -21,11 +21,11 @@ test('an owned album is reported by id', () => {
   const db = dbWith([{ artist: 'Radiohead', album: 'Kid A', title: 'Idioteque' }]);
   const result = checkOwned({
     albums: [
-      { id: 'rg-1', artist: 'Radiohead', title: 'Kid A' },
-      { id: 'rg-2', artist: 'Radiohead', title: 'Amnesiac' },
+      { id: '11111111-1111-4111-8111-111111111111', artist: 'Radiohead', title: 'Kid A' },
+      { id: '44444444-4444-4444-8444-444444444444', artist: 'Radiohead', title: 'Amnesiac' },
     ],
   }, { db });
-  assert.deepEqual(result.albums, ['rg-1']);
+  assert.deepEqual(result.albums, ['11111111-1111-4111-8111-111111111111']);
   db.close();
 });
 
@@ -33,29 +33,29 @@ test('a parenthetical local edition still counts as owned', () => {
   // Same normalizeTitle folding the discography diff relies on: the edition
   // suffix on disk must not read as "you do not have this album".
   const db = dbWith([{ artist: 'Radiohead', album: 'Kid A (Deluxe Edition)', title: 'Idioteque' }]);
-  const result = checkOwned({ albums: [{ id: 'rg-1', artist: 'Radiohead', title: 'Kid A' }] }, { db });
-  assert.deepEqual(result.albums, ['rg-1']);
+  const result = checkOwned({ albums: [{ id: '11111111-1111-4111-8111-111111111111', artist: 'Radiohead', title: 'Kid A' }] }, { db });
+  assert.deepEqual(result.albums, ['11111111-1111-4111-8111-111111111111']);
   db.close();
 });
 
 test('recordings are matched separately from albums', () => {
   const db = dbWith([{ artist: 'Radiohead', album: 'Kid A', title: 'Idioteque' }]);
   const result = checkOwned({
-    albums: [{ id: 'rg-1', artist: 'Radiohead', title: 'Idioteque' }],
+    albums: [{ id: '11111111-1111-4111-8111-111111111111', artist: 'Radiohead', title: 'Idioteque' }],
     recordings: [
-      { id: 'rec-1', artist: 'Radiohead', title: 'Idioteque' },
-      { id: 'rec-2', artist: 'Radiohead', title: 'Creep' },
+      { id: '77777777-7777-4777-8777-777777777777', artist: 'Radiohead', title: 'Idioteque' },
+      { id: '88888888-8888-4888-8888-888888888888', artist: 'Radiohead', title: 'Creep' },
     ],
   }, { db });
   // "Idioteque" is a track, not an album, so it must not badge as an owned album.
   assert.deepEqual(result.albums, []);
-  assert.deepEqual(result.recordings, ['rec-1']);
+  assert.deepEqual(result.recordings, ['77777777-7777-4777-8777-777777777777']);
   db.close();
 });
 
 test('a different artist with the same album title is not owned', () => {
   const db = dbWith([{ artist: 'Radiohead', album: 'Kid A', title: 'Idioteque' }]);
-  const result = checkOwned({ albums: [{ id: 'rg-1', artist: 'Someone Else', title: 'Kid A' }] }, { db });
+  const result = checkOwned({ albums: [{ id: '11111111-1111-4111-8111-111111111111', artist: 'Someone Else', title: 'Kid A' }] }, { db });
   assert.deepEqual(result.albums, []);
   db.close();
 });

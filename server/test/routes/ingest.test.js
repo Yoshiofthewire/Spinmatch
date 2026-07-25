@@ -19,7 +19,7 @@ let server;
 let baseUrl;
 
 test.before(async () => {
-  const app = createApp({ auth: false });
+  const app = createApp({ gate: (req, res, next) => next() });
   server = app.listen(0);
   await new Promise((resolve) => server.once('listening', resolve));
   baseUrl = `http://localhost:${server.address().port}`;
@@ -45,7 +45,9 @@ test('GET /api/ingest/process-stream streams SSE and ends with a done event', as
   // depending on external tools to process a fixture file.
   await fs.rm(path.join(tmpDir, 'route-track.mp3'), { force: true });
 
-  const res = await fetch(`${baseUrl}/api/ingest/process-stream`);
+  const res = await fetch(`${baseUrl}/api/ingest/process-stream`, {
+    headers: { 'Sec-Fetch-Site': 'same-origin' },
+  });
   assert.equal(res.status, 200);
   assert.match(res.headers.get('content-type'), /text\/event-stream/);
   const body = await res.text();
@@ -65,7 +67,7 @@ test('GET /api/ingest/file/candidates rejects a path outside INGEST_DIR', async 
 test('POST /api/ingest/file/resolve requires path, name, and recordingMbid', async () => {
   const res = await fetch(`${baseUrl}/api/ingest/file/resolve`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'Sec-Fetch-Site': 'same-origin' },
     body: JSON.stringify({}),
   });
   assert.equal(res.status, 400);
@@ -75,7 +77,7 @@ test('POST /api/ingest/file/resolve rejects cross-site requests (CSRF guard)', a
   const res = await fetch(`${baseUrl}/api/ingest/file/resolve`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Sec-Fetch-Site': 'cross-site' },
-    body: JSON.stringify({ path: path.join(tmpDir, 'x.mp3'), name: 'x.mp3', recordingMbid: 'rec-1' }),
+    body: JSON.stringify({ path: path.join(tmpDir, 'x.mp3'), name: 'x.mp3', recordingMbid: '77777777-7777-4777-8777-777777777777' }),
   });
   assert.equal(res.status, 400);
 });
@@ -83,8 +85,8 @@ test('POST /api/ingest/file/resolve rejects cross-site requests (CSRF guard)', a
 test('POST /api/ingest/file/resolve rejects a path outside INGEST_DIR', async () => {
   const res = await fetch(`${baseUrl}/api/ingest/file/resolve`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ path: '/etc/passwd', name: 'passwd', recordingMbid: 'rec-1' }),
+    headers: { 'Content-Type': 'application/json', 'Sec-Fetch-Site': 'same-origin' },
+    body: JSON.stringify({ path: '/etc/passwd', name: 'passwd', recordingMbid: '77777777-7777-4777-8777-777777777777' }),
   });
   assert.equal(res.status, 400);
 });

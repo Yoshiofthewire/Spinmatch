@@ -248,7 +248,7 @@ test('rescanDirs refuses a directory outside MUSIC_DIR', async () => {
     const scanner = await freshScanner(async () => ({}));
     await assert.rejects(
       () => scanner.rescanDirs([path.join(dir, '..', 'elsewhere')]),
-      /outside MUSIC_DIR/i,
+      /outside the music folder/i,
     );
   });
 });

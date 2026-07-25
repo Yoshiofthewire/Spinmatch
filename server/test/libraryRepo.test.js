@@ -32,9 +32,9 @@ test('upsert on the same path updates rather than duplicates', () => {
   repo.upsertLocalTrack(db, { path: '/m/A/Album/01.mp3', artist: 'A', album: 'Album', title: 'One (remaster)', durationMs: 1100, changeKey: '11:2' });
   repo.recomputeStats(db);
   assert.equal(repo.getStats(db).totalTracks, 3);
-  const [t] = repo.listTracks(db, { artist: 'A', album: 'Album' })
-    .tracks.filter((r) => r.path.endsWith('01.mp3'));
-  assert.equal(t.title, 'One (remaster)');
+  const { tracks } = repo.listTracks(db, { artist: 'A', album: 'Album' });
+  assert.ok(tracks.some((r) => r.title === 'One (remaster)'));
+  assert.ok(!tracks.some((r) => r.title === 'One'), 'the old row was updated, not kept alongside');
   db.close();
 });
 
@@ -162,6 +162,24 @@ test('findDuplicateGroups returns every copy so they can be compared', () => {
   db.close();
 });
 
+// Regression: grouping used SQLite's LOWER() but re-queried the copies with
+// JavaScript's toLowerCase(). SQLite's built-in LOWER() folds ASCII only, so for
+// any non-ASCII artist or title the two disagreed and the group came back with
+// zero copies — the Duplicates tab rendered a header over an empty table.
+test('findDuplicateGroups finds the copies for non-ASCII artists and titles', () => {
+  const db = openDb(':memory:');
+  repo.upsertLocalTrack(db, { path: '/m/1.flac', artist: 'ÄRZTE', album: 'Al', title: 'Über', durationMs: 1000, changeKey: '1:1', ext: 'flac', sizeBytes: 900 });
+  repo.upsertLocalTrack(db, { path: '/m/2.mp3', artist: 'ärzte', album: 'Other', title: 'über', durationMs: 1000, changeKey: '2:1', ext: 'mp3', sizeBytes: 100 });
+
+  const groups = repo.findDuplicateGroups(db);
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].copies.length, 2, 'both copies must be listed, not zero');
+  assert.deepEqual(groups[0].copies.map((c) => c.ext).sort(), ['flac', 'mp3']);
+  // And the count on the Health tab has to agree with the view it links to.
+  assert.equal(repo.findHealthIssues(db).duplicateCount, 1);
+  db.close();
+});
+
 test('listHealthTracks returns the tracks behind a count and rejects unknown issues', () => {
   const db = openDb(':memory:');
   repo.upsertLocalTrack(db, { path: '/m/1.mp3', artist: 'A', album: 'Al', title: 'Has all', durationMs: 1000, changeKey: '1:1', trackNumber: 1 });
@@ -216,5 +234,68 @@ test('getChangeKeys returns path->key for live rows only', () => {
   const keys = repo.getChangeKeys(db);
   assert.equal(keys.get('/m/A/Album/01.mp3'), '10:1');
   assert.equal(keys.has('/m/B/Other/01.mp3'), false);
+  db.close();
+});
+
+// Artists and albums used to be returned whole so the browser could filter them.
+// For a real collection that's a multi-megabyte response on every page load.
+test('listArtists and listAlbums page and report the unpaged total', () => {
+  const db = openDb(':memory:');
+  for (let i = 0; i < 5; i += 1) {
+    repo.upsertLocalTrack(db, {
+      path: `/m/${i}.mp3`, artist: `Artist ${i}`, album: `Album ${i}`,
+      title: `T${i}`, durationMs: 1000, changeKey: `${i}:1`,
+    });
+  }
+
+  const artists = repo.listArtists(db, { limit: 2, offset: 0 });
+  assert.equal(artists.total, 5);
+  assert.equal(artists.artists.length, 2);
+  assert.equal(repo.listArtists(db, { limit: 2, offset: 4 }).artists.length, 1);
+
+  const albums = repo.listAlbums(db, { limit: 3, offset: 0 });
+  assert.equal(albums.total, 5);
+  assert.equal(albums.albums.length, 3);
+
+  // Server-side filtering, so search doesn't need the whole list either.
+  assert.equal(repo.listArtists(db, { q: 'Artist 3' }).total, 1);
+  assert.equal(repo.listAlbums(db, { q: 'Album 3' }).total, 1);
+  db.close();
+});
+
+// An unknown ?sort= must not reach the SQL, and must not produce ORDER BY
+// undefined either — it falls back to a named default.
+test('an unknown sort key falls back to the default ordering', () => {
+  const db = openDb(':memory:');
+  repo.upsertLocalTrack(db, { path: '/m/1.mp3', artist: 'B', album: 'Al', title: 'x', durationMs: 1, changeKey: '1:1' });
+  repo.upsertLocalTrack(db, { path: '/m/2.mp3', artist: 'A', album: 'Al', title: 'y', durationMs: 1, changeKey: '2:1' });
+  assert.deepEqual(
+    repo.listArtists(db, { sort: 'nonsense; DROP TABLE local_tracks' }).artists.map((a) => a.artist),
+    ['A', 'B'],
+  );
+  assert.equal(repo.listAlbums(db, { sort: 'nope' }).albums.length, 2);
+  assert.equal(repo.listTracks(db, { sort: 'nope' }).tracks.length, 2);
+  db.close();
+});
+
+// `removed = 1` is a tombstone so a file on a temporarily-unavailable volume
+// isn't forgotten and re-added as new. Nothing ever cleared them, so a churning
+// library kept paying for them in every scan and every COUNT.
+test('purgeRemoved deletes only long-gone tombstones', () => {
+  const db = openDb(':memory:');
+  repo.upsertLocalTrack(db, { path: '/m/gone.mp3', artist: 'A', album: 'Al', title: 'Gone', durationMs: 1, changeKey: '1:1' });
+  repo.upsertLocalTrack(db, { path: '/m/here.mp3', artist: 'A', album: 'Al', title: 'Here', durationMs: 1, changeKey: '2:1' });
+  repo.markRemoved(db, new Set(['/m/here.mp3']));
+
+  // Just removed: still a tombstone, still protected.
+  assert.equal(repo.purgeRemoved(db), 0);
+  assert.equal(db.prepare('SELECT COUNT(*) c FROM local_tracks').get().c, 2);
+
+  // Backdate it past the window.
+  db.prepare("UPDATE local_tracks SET updated_at = 0 WHERE path = '/m/gone.mp3'").run();
+  assert.equal(repo.purgeRemoved(db), 1);
+  assert.equal(db.prepare('SELECT COUNT(*) c FROM local_tracks').get().c, 1);
+  // A live row is never touched.
+  assert.equal(db.prepare('SELECT path FROM local_tracks').get().path, '/m/here.mp3');
   db.close();
 });

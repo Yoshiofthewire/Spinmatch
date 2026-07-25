@@ -11,7 +11,7 @@ let server;
 let baseUrl;
 
 test.before(async () => {
-  const app = createApp({ auth: false });
+  const app = createApp({ gate: (req, res, next) => next() });
   server = app.listen(0);
   await new Promise((resolve) => server.once('listening', resolve));
   baseUrl = `http://localhost:${server.address().port}`;
@@ -48,7 +48,7 @@ test('POST /api/verify returns 400 when required fields are missing', async () =
   mockMusicBrainzAgent();
   const res = await fetch(`${baseUrl}/api/verify`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'Sec-Fetch-Site': 'same-origin' },
     body: JSON.stringify({ artist: 'Only Artist' }),
   });
   assert.equal(res.status, 400);
@@ -62,7 +62,7 @@ test('POST /api/verify returns a confirmed match for a real-looking candidate', 
 
   const res = await fetch(`${baseUrl}/api/verify`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'Sec-Fetch-Site': 'same-origin' },
     body: JSON.stringify({
       artist: 'Verify Route Artist',
       title: 'Verify Route Song',
@@ -87,7 +87,7 @@ test('POST /api/verify surfaces a rate-limited message and 429 status', async (t
 
   const res = await fetch(`${baseUrl}/api/verify`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'Sec-Fetch-Site': 'same-origin' },
     body: JSON.stringify({
       artist: 'Rate Limited Artist',
       title: 'Rate Limited Song',
@@ -105,7 +105,7 @@ test('POST /api/verify/album/:mbid returns partial results plus a rate-limited e
   const agent = mockMusicBrainzAgent();
   const mb = agent.get('https://musicbrainz.org');
 
-  mb.intercept({ path: /\/ws\/2\/release\?.*release-group=bulk-album-test.*/ }).reply(200, {
+  mb.intercept({ path: /\/ws\/2\/release\?.*release-group=c5c5c5c5-c5c5-4c5c-8c5c-c5c5c5c5c5c5.*/ }).reply(200, {
     releases: [{ id: 'bulk-release-id', status: 'Official' }],
   });
   mb.intercept({ path: '/ws/2/release/bulk-release-id?inc=recordings%2Bartist-credits&fmt=json' }).reply(200, {
@@ -115,8 +115,8 @@ test('POST /api/verify/album/:mbid returns partial results plus a rate-limited e
     media: [
       {
         tracks: [
-          { position: 1, title: 'Bulk Track One', length: 180000, recording: { id: 'rec-1' } },
-          { position: 2, title: 'Bulk Track Two', length: 190000, recording: { id: 'rec-2' } },
+          { position: 1, title: 'Bulk Track One', length: 180000, recording: { id: '77777777-7777-4777-8777-777777777777' } },
+          { position: 2, title: 'Bulk Track Two', length: 190000, recording: { id: '88888888-8888-4888-8888-888888888888' } },
         ],
       },
     ],
@@ -133,7 +133,9 @@ test('POST /api/verify/album/:mbid returns partial results plus a rate-limited e
     }
   });
 
-  const res = await fetch(`${baseUrl}/api/verify/album/bulk-album-test`, { method: 'POST' });
+  const res = await fetch(`${baseUrl}/api/verify/album/c5c5c5c5-c5c5-4c5c-8c5c-c5c5c5c5c5c5`, {
+    method: 'POST', headers: { 'Sec-Fetch-Site': 'same-origin' },
+  });
   assert.equal(res.status, 200);
   const body = await res.json();
 
@@ -147,7 +149,7 @@ test('GET /api/verify/album/:mbid/stream emits an album header, a result per tra
   const agent = mockMusicBrainzAgent();
   const mb = agent.get('https://musicbrainz.org');
 
-  mb.intercept({ path: /\/ws\/2\/release\?.*release-group=stream-album.*/ }).reply(200, {
+  mb.intercept({ path: /\/ws\/2\/release\?.*release-group=c6c6c6c6-c6c6-4c6c-8c6c-c6c6c6c6c6c6.*/ }).reply(200, {
     releases: [{ id: 'stream-release', status: 'Official' }],
   });
   mb.intercept({ path: '/ws/2/release/stream-release?inc=recordings%2Bartist-credits&fmt=json' }).reply(200, {
@@ -170,7 +172,9 @@ test('GET /api/verify/album/:mbid/stream emits an album header, a result per tra
     else callback(null, ndjson([{ id: 'v2', title: 'Stream Two', duration: 190 }]), '');
   });
 
-  const res = await fetch(`${baseUrl}/api/verify/album/stream-album/stream`);
+  const res = await fetch(`${baseUrl}/api/verify/album/c6c6c6c6-c6c6-4c6c-8c6c-c6c6c6c6c6c6/stream`, {
+    headers: { 'Sec-Fetch-Site': 'same-origin' },
+  });
   assert.equal(res.status, 200);
   assert.match(res.headers.get('content-type'), /text\/event-stream/);
 

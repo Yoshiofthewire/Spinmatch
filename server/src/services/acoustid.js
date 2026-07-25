@@ -8,7 +8,8 @@ const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours — a fingerprint→record
 
 // AcoustID's documented limit is 3 requests/sec per API key.
 const rateLimiter = new RateLimiter(334);
-const cache = new TTLCache();
+// Keyed by audio fingerprint, so one entry per distinct file ever ingested.
+const cache = new TTLCache({ maxEntries: 5000 });
 
 export async function lookup({ fingerprint, durationSeconds }) {
   const cacheKey = `${Math.round(durationSeconds)}:${fingerprint}`;

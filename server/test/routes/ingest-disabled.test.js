@@ -12,7 +12,7 @@ let server;
 let baseUrl;
 
 test.before(async () => {
-  const app = createApp({ auth: false });
+  const app = createApp({ gate: (req, res, next) => next() });
   server = app.listen(0);
   await new Promise((resolve) => server.once('listening', resolve));
   baseUrl = `http://localhost:${server.address().port}`;
