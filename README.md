@@ -106,20 +106,88 @@ auto-confirmed match would be. Non-audio files are left untouched.
 ### Library / Collection Manager
 
 Whenever `MUSIC_DIR` is set (see above), Spinmatch also indexes it into a local SQLite database
-and turns on a "Your Library" page: browse the collection by artist and album, see aggregate
-stats (track/album/artist counts), and rescan on demand. The index is built at startup and kept
-current afterward by a background scan plus a filesystem watcher, so changes made outside the app
-(e.g. copying files in directly) are picked up without a restart. The scan runs in a worker
-thread — the per-file tag reads and database writes happen off the main event loop, so the app
-stays responsive even while indexing a large (100k+ track) collection.
+and turns on a "Your Library" page. The index records artist, album, title, duration, track and
+disc number, year, genre, format, file size, whether the file carries embedded cover art, and when
+the track was first seen. It is built at startup and kept current afterward by a background scan
+plus a filesystem watcher, so changes made outside the app (e.g. copying files in directly) are
+picked up without a restart. The scan runs in a worker thread — the per-file tag reads and database
+writes happen off the main event loop, so the app stays responsive even while indexing a large
+(100k+ track) collection.
 
-Album pages also get gap detection: given a MusicBrainz release group, Spinmatch compares its
-official tracklist against what's indexed from `MUSIC_DIR` and reports which tracks you already
-have versus which are missing, with a YouTube link for each gap. Matching is by artist and track
-title, normalized to fold away case, punctuation, featured-artist tails, and parenthetical
+The Library page has seven tabs:
+
+- **Overview** — track/album/artist counts, total playtime, total size on disk, and a format
+  breakdown, plus shortcuts into the reports below.
+- **Artists** — searchable and sortable by name, album count, track count, or playtime. Drill into
+  an artist for their albums.
+- **Albums** — cover-art grid sortable by artist, title, year, track count, or recently added, with
+  an "incomplete only" filter. Album art is read from the files themselves on demand, so nothing is
+  extracted to disk and only the covers on screen are ever read. Art embedded in the audio is used
+  first; failing that, a `cover`/`folder`/`front` image sitting in the album folder is served
+  instead, so libraries that keep art alongside the music still get covers.
+- **Tracks** — the whole collection in one sortable, searchable table. Paged on the server, so it
+  stays responsive at any library size.
+- **Incomplete** — albums that look unfinished, computed entirely from the index with no network
+  calls: numbered gaps (you have 1, 2, 4 of 4 — so 3 is missing), single files filed as whole
+  albums, and albums with no track numbers at all, where completeness can't be judged.
+- **Health** — tag hygiene: tracks missing an artist, album, title, track number, duration, or
+  cover art. Worth checking, because the matching below is done on artist and title — an empty
+  artist tag is invisible to it. Each count drills into the tracks behind it, and most offer a
+  **Fix tags** action: pick the right MusicBrainz recording (from the file's own tags, or by
+  searching) and Spinmatch fills in what's missing — artist, title, album, year, track and disc
+  number, and cover art. It only ever fills tags that are *empty*, never overwrites a value you
+  already have, and never moves or renames the file. A missing *duration* is the exception: that
+  means the audio stream itself couldn't be decoded, so it's a broken file rather than a tagging
+  problem, and no fix is offered.
+- **Duplicates** — the same artist and title indexed at more than one path, with every copy's
+  album, track number, length, format, size and full path side by side, and a play button for each
+  so they can be compared. Often legitimate — an album track that also appears on a compilation.
+  **Spinmatch never deletes files;** this view tells you what you have and leaves the decision to
+  you.
+
+Alongside the library-wide **Rescan library** button, artist and album pages have a **Rescan this
+artist/album** action that re-reads only those folders — useful right after fixing tags or dropping
+a file in, instead of waiting for a full pass. It walks the folders rather than just the files it
+already knows about, so newly added tracks are picked up too.
+
+Two MusicBrainz-backed checks sit on top of the offline reports. Both run only when you press the
+button, so a slow or unreachable MusicBrainz never blocks the page:
+
+- **Missing albums** (artist view) — diffs the artist's studio discography against what you own and
+  shows the missing records with cover art and year. Each one links straight into the existing
+  release-group page, where you can verify the tracks against YouTube and hand them to MeTube.
+  Resolving an artist name to MusicBrainz is a fuzzy search, so when the match is ambiguous
+  Spinmatch asks you to pick rather than guessing; the choice is remembered.
+- **Check tracklist** (album view) — compares one album against its official tracklist. This catches
+  what the track-number check can't: an album numbered 1..10 with no gaps that actually has 12
+  tracks. Each missing track gets the usual "Find on YouTube" button, and **Find all missing on
+  YouTube** does the whole gap in one pass — the same streaming, one-at-a-time matching the
+  release-group page uses, but scoped to the tracks you don't already own, so nothing you have is
+  looked up. Results come with the usual copy-link and Send to MeTube actions.
+
+Search results and artist pages are also library-aware: an album or song you already have is
+badged **In your library**. That check is pure local SQL with no upstream call, and matches the same
+way gap detection does, so "Kid A (Deluxe Edition)" on disk still counts as owning "Kid A". An
+artist page therefore doubles as a coverage view — their whole studio discography with the ones you
+own marked.
+
+Album pages reached from search still have the original gap detection. Matching is by artist and
+track title, normalized to fold away case, punctuation, featured-artist tails, and parenthetical
 suffixes like "(Remastered 2011)" or "[Live]" — so a remaster you own isn't reported as missing.
 Larger tag drift (e.g. "The Beatles" vs "Beatles") can still cause a track you own to show up as
-missing, so results depend on your files' tag hygiene.
+missing, so results depend on your files' tag hygiene — see the Health tab.
+
+There's also a small **preview player**: press play on any track to stream it from disk, with
+seeking, and next/previous across the list you started from. It's deliberately a preview — a way to
+confirm a file is what its tags claim — not a music server. There's no queue management,
+transcoding, or playback outside the Library page; point Navidrome or Jellyfin at `MUSIC_DIR` if you
+want that.
+
+**Upgrading:** the first scan after updating re-reads tags for every file once, to fill in the
+columns added above. On a large collection that takes a few minutes; it happens in the background
+and only once. The date a track was first added to your library is preserved. A later upgrade also
+drops an unused `verified_tracks` table left over from an early schema; no data you can see is
+affected.
 
 This feature needs no separate opt-in flag — it's enabled automatically as soon as `MUSIC_DIR` is
 configured, independent of the ingest feature above. The index itself lives at `LIBRARY_DB`

@@ -47,5 +47,102 @@ test('GET /api/library/tracks filters by album', async () => {
 test('GET /api/library/artists lists artists with counts', async () => {
   const res = await fetch(`${baseUrl}/api/library/artists`);
   const body = await res.json();
-  assert.deepEqual(body.artists, [{ artist: 'A', trackCount: 2 }]);
+  assert.deepEqual(body.artists, [{
+    artist: 'A', trackCount: 2, albumCount: 1, totalDurationMs: 3000,
+  }]);
+});
+
+test('GET /api/library/tracks reports the total alongside the page', async () => {
+  const res = await fetch(`${baseUrl}/api/library/tracks?limit=1`);
+  const body = await res.json();
+  assert.equal(body.tracks.length, 1);
+  assert.equal(body.total, 2);
+  assert.equal(body.limit, 1);
+});
+
+test('GET /api/library/tracks searches across title, artist and album', async () => {
+  const res = await fetch(`${baseUrl}/api/library/tracks?q=Two`);
+  const body = await res.json();
+  assert.equal(body.total, 1);
+  assert.equal(body.tracks[0].title, 'Two');
+});
+
+test('an unknown sort key falls back to the default instead of erroring', async () => {
+  const res = await fetch(`${baseUrl}/api/library/tracks?sort=' OR 1=1--`);
+  assert.equal(res.status, 200);
+  assert.equal((await res.json()).total, 2);
+});
+
+test('GET /api/library/health-tracks returns the tracks behind a count', async () => {
+  const res = await fetch(`${baseUrl}/api/library/health-tracks?issue=missingTrackNumber`);
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.total, 2, 'neither seeded track has a number');
+  assert.ok(body.tracks[0].path);
+});
+
+test('GET /api/library/health-tracks rejects an issue key it does not know', async () => {
+  // The key selects a SQL predicate, so an unknown one must be refused rather
+  // than falling through to an unfiltered query.
+  const res = await fetch(`${baseUrl}/api/library/health-tracks?issue=1=1`);
+  assert.equal(res.status, 400);
+});
+
+test('GET /api/library/duplicates returns each copy of a duplicated title', async () => {
+  const res = await fetch(`${baseUrl}/api/library/duplicates`);
+  assert.equal(res.status, 200);
+  // The two seeded tracks have different titles, so there is nothing to report.
+  assert.deepEqual((await res.json()).groups, []);
+});
+
+test('POST /api/library/owned reports which results are already in the library', async () => {
+  const res = await fetch(`${baseUrl}/api/library/owned`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Origin: baseUrl },
+    body: JSON.stringify({
+      albums: [
+        { id: 'rg-have', artist: 'A', title: 'Al' },
+        { id: 'rg-want', artist: 'A', title: 'Nope' },
+      ],
+    }),
+  });
+  assert.equal(res.status, 200);
+  assert.deepEqual((await res.json()).albums, ['rg-have']);
+});
+
+test('POST /api/library/owned caps how many items one request can ask about', async () => {
+  const albums = Array.from({ length: 501 }, (_, i) => ({ id: `x${i}`, artist: 'A', title: 'Al' }));
+  const res = await fetch(`${baseUrl}/api/library/owned`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Origin: baseUrl },
+    body: JSON.stringify({ albums }),
+  });
+  assert.equal(res.status, 400);
+});
+
+test('POST /api/library/rescan requires an artist or album', async () => {
+  const res = await fetch(`${baseUrl}/api/library/rescan`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Origin: baseUrl },
+    body: JSON.stringify({}),
+  });
+  assert.equal(res.status, 400);
+});
+
+test('POST /api/library/rescan 404s when nothing indexed matches', async () => {
+  const res = await fetch(`${baseUrl}/api/library/rescan`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Origin: baseUrl },
+    body: JSON.stringify({ artist: 'Nobody' }),
+  });
+  assert.equal(res.status, 404);
+});
+
+test('POST /api/library/fix requires both a track and a recording', async () => {
+  const res = await fetch(`${baseUrl}/api/library/fix`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Origin: baseUrl },
+    body: JSON.stringify({ trackId: 1 }),
+  });
+  assert.equal(res.status, 400);
 });

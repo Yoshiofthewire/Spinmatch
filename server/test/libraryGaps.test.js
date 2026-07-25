@@ -78,3 +78,63 @@ test('an owned track counts even when its title has a (Remastered) suffix the tr
   setDbForTest(null);
   db.close();
 });
+
+test('onMissing streams each missing track as it is verified', async () => {
+  const db = openDb(':memory:');
+  repo.upsertLocalTrack(db, { path: '/m/Band/Rec/01.mp3', artist: 'Band', album: 'Rec', title: 'Kept', durationMs: 180000, changeKey: '1:1' });
+  repo.recomputeStats(db);
+  setDbForTest(db);
+
+  const mb = {
+    resolvePrimaryReleaseForGroup: async () => 'release-1',
+    getReleaseWithTracks: async () => ({
+      release: { title: 'Rec', artist: 'Band' },
+      tracks: [
+        { position: 1, title: 'Kept', lengthMs: 180000 },
+        { position: 2, title: 'Gone', lengthMs: 200000 },
+        { position: 3, title: 'Also Gone', lengthMs: 210000 },
+      ],
+    }),
+  };
+  const verify = async ({ title }) => ({ status: 'confirmed', video: { url: `yt:${title}` }, deltaSeconds: 0 });
+  const { detectAlbumGaps } = await freshGaps(mb, verify);
+
+  const streamed = [];
+  const result = await detectAlbumGaps('rg-1', { onMissing: (entry) => streamed.push(entry) });
+
+  // Only the tracks you don't own, and streamed in the same order they land in
+  // the final result — the streaming route relies on both.
+  assert.deepEqual(streamed.map((s) => s.title), ['Gone', 'Also Gone']);
+  assert.deepEqual(result.missing.map((m) => m.title), ['Gone', 'Also Gone']);
+  assert.equal(streamed[0].video.url, 'yt:Gone');
+  setDbForTest(null);
+  db.close();
+});
+
+test('an aborted signal stops the run partway instead of finishing every lookup', async () => {
+  const db = openDb(':memory:');
+  repo.recomputeStats(db);
+  setDbForTest(db);
+
+  const mb = {
+    resolvePrimaryReleaseForGroup: async () => 'release-1',
+    getReleaseWithTracks: async () => ({
+      release: { title: 'Rec', artist: 'Band' },
+      tracks: [1, 2, 3, 4, 5].map((n) => ({ position: n, title: `T${n}`, lengthMs: 1000 })),
+    }),
+  };
+  const ac = new AbortController();
+  let calls = 0;
+  const verify = async ({ title }) => {
+    calls += 1;
+    if (calls === 2) ac.abort(); // client disconnects mid-run
+    return { status: 'confirmed', video: { url: `yt:${title}` }, deltaSeconds: 0 };
+  };
+  const { detectAlbumGaps } = await freshGaps(mb, verify);
+
+  const result = await detectAlbumGaps('rg-1', { signal: ac.signal });
+  assert.equal(calls, 2, 'no further yt-dlp lookups after the abort');
+  assert.equal(result.missing.length, 2);
+  setDbForTest(null);
+  db.close();
+});

@@ -30,3 +30,6 @@ data/
 .vscode/
 .idea/
 coverage/
+
+# Scratch output from browser-automation tooling (snapshots, screenshots, logs)
+.playwright-mcp/

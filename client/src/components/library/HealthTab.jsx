@@ -1,0 +1,175 @@
+import { useEffect, useState } from 'react';
+import Pagination from '../Pagination.jsx';
+import EqualizerLoader from '../EqualizerLoader.jsx';
+import FixTrackPanel from './FixTrackPanel.jsx';
+import { getHealthTracks } from '../../api/library.js';
+
+const PAGE_SIZE = 50;
+
+// `fixable` is what separates a tagging problem from a file problem: a missing
+// duration means the audio stream itself couldn't be decoded, which no amount of
+// tag writing repairs, so that tile doesn't pretend to offer a fix.
+const ISSUES = [
+  ['missingArtist', 'No artist tag', true],
+  ['missingAlbum', 'No album tag', true],
+  ['missingTitle', 'No title tag', true],
+  ['missingTrackNumber', 'No track number', true],
+  ['missingDuration', 'No duration', false],
+  ['noCoverArt', 'No embedded cover art', true],
+];
+
+function IssueTracks({ issue, fixable, onFixed }) {
+  const [data, setData] = useState(null);
+  const [error, setError] = useState(null);
+  const [page, setPage] = useState(1);
+  const [fixing, setFixing] = useState(null); // track being fixed
+  const [fixed, setFixed] = useState({}); // trackId -> filled field list
+
+  useEffect(() => { setPage(1); }, [issue]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setData(null);
+    setError(null);
+    getHealthTracks({ issue, limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE })
+      .then((result) => { if (!cancelled) setData(result); })
+      .catch((err) => { if (!cancelled) setError(err.message); });
+    return () => { cancelled = true; };
+  }, [issue, page]);
+
+  function handleFixed(result) {
+    setFixed((prev) => ({ ...prev, [fixing.id]: result.filledFields }));
+    setFixing(null);
+    onFixed();
+  }
+
+  if (error) return <p className="banner banner-error">{error}</p>;
+  if (!data) return <EqualizerLoader label="Loading tracks…" />;
+  if (data.total === 0) return <p className="muted">Nothing to report here.</p>;
+
+  return (
+    <>
+      <table className="library-table">
+        <thead>
+          <tr>
+            <th>Artist</th><th>Title</th><th>Album</th><th>#</th>
+            {fixable && <th aria-label="Fix" />}
+          </tr>
+        </thead>
+        <tbody>
+          {data.tracks.map((track) => (
+            <tr key={track.id}>
+              <td>{track.artist ?? <span className="muted">—</span>}</td>
+              <td>
+                {track.title ?? <span className="muted">—</span>}
+                {/* The path is the only identifier an untagged file has, so it
+                    has to be visible for the row to mean anything. */}
+                {!track.title && <span className="muted mono fix-path">{track.path}</span>}
+              </td>
+              <td>{track.album ?? <span className="muted">—</span>}</td>
+              <td className="mono">{track.trackNumber ?? '—'}</td>
+              {fixable && (
+                <td>
+                  {fixed[track.id] ? (
+                    <span className="badge badge-confirmed">
+                      {fixed[track.id].length ? `Filled ${fixed[track.id].join(', ')}` : 'No changes needed'}
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setFixing(fixing?.id === track.id ? null : track)}
+                    >
+                      {fixing?.id === track.id ? 'Close' : 'Fix tags'}
+                    </button>
+                  )}
+                </td>
+              )}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      {fixing && (
+        <FixTrackPanel
+          key={fixing.id}
+          track={fixing}
+          onFixed={handleFixed}
+          onCancel={() => setFixing(null)}
+        />
+      )}
+
+      <Pagination
+        page={page}
+        pageCount={Math.max(Math.ceil(data.total / PAGE_SIZE), 1)}
+        onChange={setPage}
+      />
+    </>
+  );
+}
+
+// Tag hygiene. Worth its own view because these are the same problems that make
+// gap and discography detection produce false positives: matching is done on
+// artist and title, so an empty artist tag is invisible to both. Each count
+// drills into the tracks behind it so it can be acted on, not just read.
+export default function HealthTab({ health, totalTracks, duplicateCount, onFixed, onGoTo }) {
+  const [issue, setIssue] = useState(null);
+  const active = ISSUES.find(([key]) => key === issue);
+
+  return (
+    <>
+      <div className="stat-tiles">
+        {ISSUES.map(([key, label]) => (
+          <button
+            key={key}
+            type="button"
+            className={`stat-tile stat-tile-button${issue === key ? ' stat-tile-active' : ''}`}
+            onClick={() => setIssue(issue === key ? null : key)}
+            disabled={health[key] === 0}
+          >
+            <span className="stat-value">{health[key].toLocaleString()}</span>
+            <span className="stat-label">{label}</span>
+            {totalTracks > 0 && (
+              <span className="muted stat-hint">
+                {((health[key] / totalTracks) * 100).toFixed(1)}% of tracks
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      {!active && (
+        <p className="muted">
+          Pick a category to see the tracks behind it. Most can be repaired in place —
+          Spinmatch fills only the tags that are empty and never overwrites what you have.
+        </p>
+      )}
+
+      {active && (
+        <>
+          <h3>{active[1]}</h3>
+          {active[2] ? (
+            <p className="muted">
+              Matching a track fills its empty tags from MusicBrainz and re-indexes it.
+              The file is never moved or renamed, and existing tags are left alone.
+            </p>
+          ) : (
+            <p className="muted">
+              A missing duration means the audio stream itself couldn&apos;t be read, so
+              this isn&apos;t a tagging problem — the file is likely truncated or corrupt.
+            </p>
+          )}
+          <IssueTracks issue={active[0]} fixable={active[2]} onFixed={onFixed} />
+        </>
+      )}
+
+      {duplicateCount > 0 && (
+        <div className="overview-actions">
+          <button type="button" className="chip-button" onClick={() => onGoTo('duplicates')}>
+            {duplicateCount.toLocaleString()} possible duplicate
+            {duplicateCount === 1 ? '' : 's'} — see the Duplicates tab
+          </button>
+        </div>
+      )}
+    </>
+  );
+}

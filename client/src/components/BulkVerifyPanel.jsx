@@ -5,7 +5,25 @@ import EqualizerLoader from './EqualizerLoader.jsx';
 import CopyButton from './CopyButton.jsx';
 import { addEntry } from '../lib/history.js';
 
-export default function BulkVerifyPanel({ artist, album, releaseGroupMbid, trackCount }) {
+// The YouTube-matching run for a list of tracks, streamed one result at a time.
+//
+// The endpoints are props because two callers want the same panel over different
+// track sets: the release-group page verifies the whole official tracklist, and
+// the library album view verifies only the tracks you don't already own. Both
+// speak the same event protocol, so the streaming/progress/rate-limit handling
+// below is written once. Defaults keep the release-group behaviour.
+export default function BulkVerifyPanel({
+  artist,
+  album,
+  releaseGroupMbid,
+  trackCount,
+  streamUrl = `/api/verify/album/${releaseGroupMbid}/stream`,
+  // Must resolve to {results, error?}. A function rather than a path because the
+  // two callers' non-streaming endpoints differ in method and response shape.
+  runBlockingRequest = () => post(`/verify/album/${releaseGroupMbid}`, {}),
+  prompt,
+  actionLabel = 'Find all on YouTube',
+}) {
   const [state, setState] = useState('idle'); // idle | running | done | error
   const [results, setResults] = useState([]);
   const [total, setTotal] = useState(trackCount);
@@ -24,7 +42,7 @@ export default function BulkVerifyPanel({ artist, album, releaseGroupMbid, track
   // Fallback for environments without EventSource: one blocking request.
   async function runBlocking() {
     try {
-      const result = await post(`/verify/album/${releaseGroupMbid}`, {});
+      const result = await runBlockingRequest();
       setResults(result.results);
       if (result.error) {
         setError(result.error);
@@ -52,9 +70,11 @@ export default function BulkVerifyPanel({ artist, album, releaseGroupMbid, track
 
     doneRef.current = false;
     const acc = [];
-    const es = new EventSource(`/api/verify/album/${releaseGroupMbid}/stream`);
+    const es = new EventSource(streamUrl);
     esRef.current = es;
 
+    // Only the release-group stream announces a total up front; the library
+    // stream's caller already knows how many tracks are missing.
     es.addEventListener('album', (e) => setTotal(JSON.parse(e.data).total));
     es.addEventListener('result', (e) => {
       acc.push(JSON.parse(e.data));
@@ -94,10 +114,10 @@ export default function BulkVerifyPanel({ artist, album, releaseGroupMbid, track
       {state === 'idle' && (
         <div className="bulk-verify-prompt">
           <p className="muted">
-            Finding all {trackCount} tracks on YouTube checks them one at a time to avoid
-            rate limits, so this may take a while.
+            {prompt ?? `Finding all ${trackCount} tracks on YouTube checks them one at a time
+              to avoid rate limits, so this may take a while.`}
           </p>
-          <button onClick={handleClick}>Find all on YouTube</button>
+          <button onClick={handleClick}>{actionLabel}</button>
         </div>
       )}
 

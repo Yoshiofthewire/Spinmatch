@@ -325,6 +325,10 @@ button:disabled {
   padding: 0;
   background: none;
   border: none;
+  /* The global button rule sets near-black text for the signal-filled default
+     button; these cards drop that background, so they need the body colour back
+     or the album title renders almost invisibly against the dark surface. */
+  color: var(--text);
   text-align: left;
   transition: transform 0.15s ease;
 }
@@ -680,4 +684,466 @@ a:hover {
 .nav-logout:hover:not(:disabled) {
   background: var(--surface-hover);
   color: var(--text);
+}
+
+/* ---------- Library ---------- */
+
+.library-page {
+  padding-bottom: 1rem;
+}
+
+/* Leaves room for the fixed player bar so the last table row isn't hidden. */
+.library-page-playing {
+  padding-bottom: 6rem;
+}
+
+.library-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.library-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.library-tab {
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  padding: 0.6rem 0.9rem;
+  font-family: var(--font-display);
+  font-size: 0.85rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.library-tab:hover:not(:disabled) {
+  background: transparent;
+  color: var(--text);
+}
+
+.library-tab-active {
+  color: var(--text);
+  border-bottom-color: var(--signal);
+}
+
+.library-scan {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding-bottom: 0.5rem;
+}
+
+.library-back {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+}
+
+/* ---------- Library toolbar (search + sort) ---------- */
+
+.library-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1.25rem;
+}
+
+/* The "N shown" count must never be the thing that gets clipped. */
+.library-toolbar > .muted {
+  white-space: nowrap;
+}
+
+.library-toolbar input[type="search"] {
+  /* Shrinkable, and no grow: the input taking all the slack pushed the result
+     count off the right edge. */
+  flex: 0 1 260px;
+  min-width: 140px;
+  padding: 0.55rem 0.85rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-alt);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 0.95rem;
+}
+
+.library-toolbar input[type="search"]:focus-visible {
+  border-color: var(--lock);
+}
+
+.sort-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.9rem;
+}
+
+.sort-select select {
+  padding: 0.5rem 0.6rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-alt);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 0.9rem;
+}
+
+.checkbox-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+/* ---------- Stat tiles ---------- */
+
+.stat-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.stat-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 1rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.stat-value {
+  font-family: var(--font-display);
+  font-size: 1.6rem;
+  font-weight: 600;
+  line-height: 1.1;
+}
+
+.stat-label {
+  color: var(--muted);
+  font-size: 0.8rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.stat-hint {
+  font-size: 0.75rem;
+}
+
+.format-breakdown {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin: 0 0 1.5rem;
+}
+
+.format-chip {
+  padding: 0.3rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+}
+
+.format-chip strong {
+  color: var(--text);
+}
+
+.overview-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.chip-button {
+  padding: 0.45rem 0.9rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.85rem;
+}
+
+.chip-button-active {
+  border-color: var(--signal);
+  color: var(--signal);
+}
+
+/* ---------- Library tables ---------- */
+
+.library-table td {
+  vertical-align: middle;
+}
+
+.link-button {
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--text);
+  font-family: inherit;
+  font-size: inherit;
+  text-align: left;
+  text-decoration: underline;
+  text-decoration-color: var(--border);
+  text-underline-offset: 3px;
+}
+
+.link-button:hover:not(:disabled) {
+  background: none;
+  color: var(--signal);
+  text-decoration-color: var(--signal);
+}
+
+.play-button {
+  width: 1.9rem;
+  height: 1.9rem;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 0.7rem;
+  line-height: 1;
+}
+
+.play-button:hover:not(:disabled) {
+  border-color: var(--lock);
+  background: var(--surface-hover);
+  color: var(--lock);
+}
+
+/* A track position the album is missing — present as a row, absent as a file. */
+.track-row-missing td {
+  color: var(--muted);
+  background: repeating-linear-gradient(
+    45deg,
+    transparent,
+    transparent 6px,
+    rgba(240, 180, 41, 0.05) 6px,
+    rgba(240, 180, 41, 0.05) 12px
+  );
+}
+
+.badge-incomplete {
+  align-self: flex-start;
+  padding: 0.1rem 0.45rem;
+  border-radius: 4px;
+  background: rgba(240, 180, 41, 0.15);
+  color: var(--amber);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+}
+
+.album-card-meta {
+  font-size: 0.8rem;
+}
+
+/* ---------- Artist / album detail ---------- */
+
+.album-detail-header {
+  display: flex;
+  gap: 1.5rem;
+  align-items: flex-start;
+  margin-bottom: 1.75rem;
+}
+
+.album-detail-header .cover-art {
+  width: 180px;
+  height: 180px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+}
+
+.album-detail-header h2,
+.album-detail-header p {
+  margin: 0 0 0.35rem;
+}
+
+.album-disc h3 {
+  font-size: 1rem;
+  color: var(--muted);
+}
+
+.candidate-list {
+  list-style: none;
+  margin: 0.75rem 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.unmatched-local {
+  margin-top: 1.25rem;
+}
+
+.unmatched-local ul {
+  margin: 0.5rem 0 0 1.25rem;
+  padding: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+/* ---------- Preview player ---------- */
+
+.player-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1.25rem;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  box-shadow: 0 -8px 24px -12px rgba(0, 0, 0, 0.6);
+}
+
+.player-bar button {
+  flex-shrink: 0;
+  padding: 0.4rem 0.7rem;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 0.85rem;
+}
+
+.player-bar button:hover:not(:disabled) {
+  border-color: var(--lock);
+  color: var(--lock);
+}
+
+.player-meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 0 1 260px;
+}
+
+.player-meta span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.player-title {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.player-seek {
+  flex: 1 1 120px;
+  min-width: 80px;
+  accent-color: var(--lock);
+}
+
+.player-time {
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.player-error {
+  color: var(--signal);
+  font-size: 0.85rem;
+}
+
+@media (max-width: 640px) {
+  .player-meta { flex-basis: 120px; }
+  .player-time { display: none; }
+  .album-detail-header { flex-direction: column; }
+  .album-detail-header .cover-art { width: 140px; height: 140px; }
+}
+
+/* ---------- Library: health drill-down, duplicates, rescan ---------- */
+
+/* The Health tiles double as filters, so they need the affordances a plain tile
+   doesn't: a pointer, a hover state, and a disabled look when the count is 0. */
+.stat-tile-button {
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: var(--text);
+  transition: border-color 120ms ease;
+}
+
+.stat-tile-button:hover:not(:disabled) {
+  border-color: var(--signal);
+}
+
+.stat-tile-button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.stat-tile-active {
+  border-color: var(--signal);
+}
+
+.stat-tile-active .stat-value {
+  color: var(--signal);
+}
+
+/* A file with no title tag has nothing else to identify it, so the path is shown
+   instead — on its own line, since paths are long. */
+.fix-path {
+  display: block;
+  font-size: 0.72rem;
+  word-break: break-all;
+}
+
+.badge-owned {
+  background: rgba(47, 217, 196, 0.15);
+  color: var(--lock);
+}
+
+.duplicate-group {
+  margin-bottom: 2rem;
+}
+
+.duplicate-group h3 {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+/* Paths are the whole point of this table — allow them to wrap rather than
+   forcing the table wide enough to push the other columns off screen. */
+.duplicate-path {
+  font-size: 0.72rem;
+  word-break: break-all;
+  max-width: 28rem;
+}
+
+.rescan-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.rescan-control .link-button {
+  color: var(--signal);
 }
