@@ -63,6 +63,57 @@ test('runScanOnce indexes audio files with their tags and ignores non-audio', as
   });
 });
 
+test('runScanOnce persists the full tag set, not just artist/album/title', async () => {
+  await withMusicDir(async (dir, db) => {
+    await fs.writeFile(path.join(dir, 'song.flac'), 'xxxxx');
+    const { runScanOnce } = await freshScanner(async () => ({
+      artist: 'A', album: 'Al', title: 'T', durationMs: 245000,
+      trackNumber: 4, disc: 2, year: 1999, genre: 'Rock', hasCoverArt: true,
+    }));
+    await runScanOnce();
+
+    const repo = await import('../src/services/libraryRepo.js');
+    const [track] = repo.listTracks(db, {}).tracks;
+    assert.equal(track.durationMs, 245000);
+    assert.equal(track.trackNumber, 4);
+    assert.equal(track.disc, 2);
+    assert.equal(track.year, 1999);
+    assert.equal(track.genre, 'Rock');
+    assert.equal(track.hasCoverArt, 1);
+    assert.equal(track.ext, 'flac');
+    assert.equal(track.sizeBytes, 5);
+    // Aggregate totals depend on duration/size actually landing in the rows.
+    assert.equal(repo.getStats(db).totalDurationMs, 245000);
+    assert.equal(repo.getStats(db).totalBytes, 5);
+  });
+});
+
+test('added_at records first indexing and survives a later re-tag', async () => {
+  await withMusicDir(async (dir, db) => {
+    const p = path.join(dir, 'track.mp3');
+    await fs.writeFile(p, 'x');
+    const { runScanOnce: first } = await freshScanner(
+      async () => ({ artist: 'A', album: 'B', title: 'T' }),
+    );
+    await first();
+    const repo = await import('../src/services/libraryRepo.js');
+    const original = repo.listTracks(db, {}).tracks[0].addedAt;
+    assert.ok(original > 0);
+
+    // Change the file so the next scan re-reads and re-upserts it.
+    const future = new Date(Date.now() + 2000);
+    await fs.utimes(p, future, future);
+    const { runScanOnce: second } = await freshScanner(
+      async () => ({ artist: 'A', album: 'B', title: 'T retagged' }),
+    );
+    await second();
+
+    const row = repo.listTracks(db, {}).tracks[0];
+    assert.equal(row.title, 'T retagged');
+    assert.equal(row.addedAt, original, 'added_at must not move on re-scan');
+  });
+});
+
 test('a second scan with no changes re-reads no tags (all skipped)', async () => {
   await withMusicDir(async (dir, db) => {
     await fs.writeFile(path.join(dir, 'track.mp3'), 'x');
@@ -128,5 +179,76 @@ test('a previously-indexed file whose tags later throw is kept, not removed', as
     await secondScan();
     assert.equal(repo.getStats(db).totalTracks, 1);
     assert.equal(repo.hasRecording(db, { artist: 'A', title: 'Keeper' }), true);
+  });
+});
+
+test('rescanDirs updates one album without touching the rest of the library', async () => {
+  // The real hazard: runScanOnce reconciles removals against the WHOLE library,
+  // so reusing that logic for a subset would mark every other track removed.
+  await withMusicDir(async (dir, db) => {
+    const repo = await import('../src/services/libraryRepo.js');
+    const one = path.join(dir, 'Artist', 'One');
+    const two = path.join(dir, 'Artist', 'Two');
+    await fs.mkdir(one, { recursive: true });
+    await fs.mkdir(two, { recursive: true });
+    await fs.writeFile(path.join(one, '01.mp3'), 'x');
+    await fs.writeFile(path.join(two, '01.mp3'), 'x');
+
+    const scanner = await freshScanner(async (filePath) => ({
+      artist: 'Artist',
+      album: filePath.includes(`${path.sep}One${path.sep}`) ? 'One' : 'Two',
+      title: 'Song',
+      durationMs: 1000,
+    }));
+    await scanner.runScanOnce();
+    assert.equal(repo.getStats(db).totalTracks, 2);
+
+    // A file appears in One after the full scan; rescanning just that folder
+    // should pick it up and leave Two alone.
+    await fs.writeFile(path.join(one, '02.mp3'), 'x');
+    const summary = await scanner.rescanDirs([one]);
+    assert.equal(summary.added, 1);
+    assert.equal(summary.removed, 0);
+    assert.equal(repo.getStats(db).totalTracks, 3);
+    assert.equal(repo.listTrackPaths(db, { album: 'Two' }).length, 1, 'Two is untouched');
+  });
+});
+
+test('rescanDirs marks a deleted file removed, but only within its scope', async () => {
+  await withMusicDir(async (dir, db) => {
+    const repo = await import('../src/services/libraryRepo.js');
+    const one = path.join(dir, 'Artist', 'One');
+    const two = path.join(dir, 'Artist', 'Two');
+    await fs.mkdir(one, { recursive: true });
+    await fs.mkdir(two, { recursive: true });
+    await fs.writeFile(path.join(one, '01.mp3'), 'x');
+    await fs.writeFile(path.join(two, '01.mp3'), 'x');
+
+    const scanner = await freshScanner(async (filePath) => ({
+      artist: 'Artist',
+      album: filePath.includes(`${path.sep}One${path.sep}`) ? 'One' : 'Two',
+      title: 'Song',
+      durationMs: 1000,
+    }));
+    await scanner.runScanOnce();
+
+    // Delete a file from BOTH folders but rescan only One: One's row goes, and
+    // Two's stays, because it wasn't in scope.
+    await fs.rm(path.join(one, '01.mp3'));
+    await fs.rm(path.join(two, '01.mp3'));
+    const summary = await scanner.rescanDirs([one]);
+    assert.equal(summary.removed, 1);
+    assert.equal(repo.listTrackPaths(db, { album: 'One' }).length, 0);
+    assert.equal(repo.listTrackPaths(db, { album: 'Two' }).length, 1, 'out of scope, so still indexed');
+  });
+});
+
+test('rescanDirs refuses a directory outside MUSIC_DIR', async () => {
+  await withMusicDir(async (dir) => {
+    const scanner = await freshScanner(async () => ({}));
+    await assert.rejects(
+      () => scanner.rescanDirs([path.join(dir, '..', 'elsewhere')]),
+      /outside MUSIC_DIR/i,
+    );
   });
 });

@@ -5,15 +5,15 @@ process.env.MB_CONTACT_EMAIL = 'test@example.com';
 
 const { openDb } = await import('../src/lib/db.js');
 
-test('openDb creates the three collection tables', () => {
+test('openDb creates the collection tables', () => {
   const db = openDb(':memory:');
   const names = db
     .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
     .all()
     .map((r) => r.name);
   assert.ok(names.includes('local_tracks'), 'local_tracks exists');
-  assert.ok(names.includes('verified_tracks'), 'verified_tracks exists');
   assert.ok(names.includes('collection_stats'), 'collection_stats exists');
+  assert.ok(!names.includes('verified_tracks'), 'verified_tracks is gone');
   db.close();
 });
 

@@ -7,6 +7,9 @@ import { usePagination } from '../lib/usePagination.js';
 function statusLabel(status) {
   if (status === 'confirmed') return 'Confirmed';
   if (status === 'unverified') return 'Unverified (closest match)';
+  // MusicBrainz has no length for the track, so there's nothing to confirm a
+  // YouTube match against and no lookup was attempted.
+  if (status === 'no_length') return 'No length on MusicBrainz';
   return 'No results';
 }
 

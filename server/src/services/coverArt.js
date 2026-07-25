@@ -1,3 +1,5 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import { TTLCache } from '../lib/cache.js';
 
 const CACHE_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
@@ -46,4 +48,44 @@ export async function getFrontCoverImage(releaseGroupMbid) {
 
   imageCache.set(releaseGroupMbid, result, CACHE_TTL_MS);
   return result;
+}
+
+// Art stored beside the audio instead of embedded in it, which is how a lot of
+// libraries (and most rippers) do it. Checked in this order, matched
+// case-insensitively against the directory listing so "Cover.JPG" is found too.
+const SIDECAR_BASENAMES = ['cover', 'folder', 'front', 'album', 'albumart'];
+const SIDECAR_TYPES = {
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.png': 'image/png',
+  '.webp': 'image/webp',
+  '.gif': 'image/gif',
+};
+
+// Returns {bytes, mimeType} for the album-folder cover image, or null. Not
+// cached: this is served with a long Cache-Control, and the files are local.
+export async function readSidecarCover(dir) {
+  let entries;
+  try {
+    entries = await fs.readdir(dir, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+  const images = entries
+    .filter((e) => e.isFile() && SIDECAR_TYPES[path.extname(e.name).toLowerCase()])
+    .map((e) => e.name);
+
+  const preferred = SIDECAR_BASENAMES
+    .map((base) => images.find((name) => path.basename(name, path.extname(name)).toLowerCase() === base))
+    .find(Boolean);
+  if (!preferred) return null;
+
+  try {
+    return {
+      bytes: await fs.readFile(path.join(dir, preferred)),
+      mimeType: SIDECAR_TYPES[path.extname(preferred).toLowerCase()],
+    };
+  } catch {
+    return null;
+  }
 }

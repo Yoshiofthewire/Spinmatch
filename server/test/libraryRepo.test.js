@@ -18,10 +18,12 @@ function seeded() {
 
 test('stats reflect distinct artists and albums', () => {
   const db = seeded();
-  assert.deepEqual(repo.getStats(db), {
-    totalTracks: 3, totalAlbums: 2, totalArtists: 2, lastScanAt: repo.getStats(db).lastScanAt,
-  });
-  assert.ok(repo.getStats(db).lastScanAt > 0);
+  const stats = repo.getStats(db);
+  assert.equal(stats.totalTracks, 3);
+  assert.equal(stats.totalAlbums, 2);
+  assert.equal(stats.totalArtists, 2);
+  assert.equal(stats.totalDurationMs, 6000);
+  assert.ok(stats.lastScanAt > 0);
   db.close();
 });
 
@@ -30,7 +32,8 @@ test('upsert on the same path updates rather than duplicates', () => {
   repo.upsertLocalTrack(db, { path: '/m/A/Album/01.mp3', artist: 'A', album: 'Album', title: 'One (remaster)', durationMs: 1100, changeKey: '11:2' });
   repo.recomputeStats(db);
   assert.equal(repo.getStats(db).totalTracks, 3);
-  const [t] = repo.listTracks(db, { artist: 'A', album: 'Album' }).filter((r) => r.path.endsWith('01.mp3'));
+  const [t] = repo.listTracks(db, { artist: 'A', album: 'Album' })
+    .tracks.filter((r) => r.path.endsWith('01.mp3'));
   assert.equal(t.title, 'One (remaster)');
   db.close();
 });
@@ -62,6 +65,148 @@ test('a track with a NULL artist but a non-null album still counts toward total_
   assert.equal(stats.totalTracks, 4);
   // 2 prior distinct albums (A/Album, B/Other) + this new one = 3.
   assert.equal(stats.totalAlbums, 3);
+  db.close();
+});
+
+test('findIncompleteAlbums reports numbered holes in an album', () => {
+  const db = openDb(':memory:');
+  // Tracks 1, 2, 4 of a 4-track album: 3 is missing.
+  for (const [n, title] of [[1, 'One'], [2, 'Two'], [4, 'Four']]) {
+    repo.upsertLocalTrack(db, {
+      path: `/m/A/Al/0${n}.mp3`, artist: 'A', album: 'Al', title,
+      durationMs: 1000, changeKey: `${n}:1`, trackNumber: n,
+    });
+  }
+  const [album] = repo.findIncompleteAlbums(db);
+  assert.equal(album.reason, 'gaps');
+  assert.deepEqual(album.missingPositions, [3]);
+  db.close();
+});
+
+test('findIncompleteAlbums flags a complete album as fine', () => {
+  const db = openDb(':memory:');
+  for (const n of [1, 2, 3]) {
+    repo.upsertLocalTrack(db, {
+      path: `/m/A/Al/0${n}.mp3`, artist: 'A', album: 'Al', title: `T${n}`,
+      durationMs: 1000, changeKey: `${n}:1`, trackNumber: n,
+    });
+  }
+  assert.deepEqual(repo.findIncompleteAlbums(db), []);
+  db.close();
+});
+
+test('findIncompleteAlbums separates unnumbered albums from real gaps', () => {
+  const db = openDb(':memory:');
+  repo.upsertLocalTrack(db, {
+    path: '/m/A/Untagged/x.mp3', artist: 'A', album: 'Untagged', title: 'X',
+    durationMs: 1000, changeKey: '1:1', trackNumber: null,
+  });
+  repo.upsertLocalTrack(db, {
+    path: '/m/B/Gappy/02.mp3', artist: 'B', album: 'Gappy', title: 'Two',
+    durationMs: 1000, changeKey: '2:1', trackNumber: 2,
+  });
+  const found = repo.findIncompleteAlbums(db);
+  // Real gaps rank ahead of the unknowable ones.
+  assert.equal(found[0].reason, 'gaps');
+  assert.deepEqual(found[0].missingPositions, [1]);
+  assert.equal(found[1].reason, 'unnumbered');
+  db.close();
+});
+
+test('albums of the same name by different artists are not merged', () => {
+  const db = openDb(':memory:');
+  repo.upsertLocalTrack(db, {
+    path: '/m/A/Greatest/01.mp3', artist: 'A', album: 'Greatest Hits', title: 'A1',
+    durationMs: 1000, changeKey: '1:1', trackNumber: 1,
+  });
+  repo.upsertLocalTrack(db, {
+    path: '/m/B/Greatest/02.mp3', artist: 'B', album: 'Greatest Hits', title: 'B2',
+    durationMs: 1000, changeKey: '2:1', trackNumber: 2,
+  });
+  // B is missing #1; A is a single-track album. If the two were grouped
+  // together as one "Greatest Hits" they'd look complete ({1,2}).
+  const found = repo.findIncompleteAlbums(db);
+  assert.equal(found.length, 2);
+  const b = found.find((f) => f.artist === 'B');
+  assert.deepEqual(b.missingPositions, [1]);
+  db.close();
+});
+
+test('findHealthIssues counts missing tags and duplicate recordings', () => {
+  const db = openDb(':memory:');
+  repo.upsertLocalTrack(db, { path: '/m/1.mp3', artist: 'A', album: 'Al', title: 'Dup', durationMs: 1000, changeKey: '1:1' });
+  repo.upsertLocalTrack(db, { path: '/m/2.mp3', artist: 'a', album: 'Other', title: 'dup', durationMs: 1000, changeKey: '2:1' });
+  repo.upsertLocalTrack(db, { path: '/m/3.mp3', artist: null, album: null, title: 'Orphan', durationMs: null, changeKey: '3:1' });
+  const health = repo.findHealthIssues(db);
+  assert.equal(health.missingArtist, 1);
+  assert.equal(health.missingAlbum, 1);
+  assert.equal(health.missingDuration, 1);
+  assert.equal(health.missingTrackNumber, 3);
+  // Case-insensitive grouping catches "A/Dup" vs "a/dup".
+  assert.equal(health.duplicateCount, 1);
+  db.close();
+});
+
+test('findDuplicateGroups returns every copy so they can be compared', () => {
+  const db = openDb(':memory:');
+  repo.upsertLocalTrack(db, { path: '/m/1.flac', artist: 'A', album: 'Al', title: 'Dup', durationMs: 1000, changeKey: '1:1', ext: 'flac', sizeBytes: 900 });
+  repo.upsertLocalTrack(db, { path: '/m/2.mp3', artist: 'a', album: 'Other', title: 'dup', durationMs: 1000, changeKey: '2:1', ext: 'mp3', sizeBytes: 100 });
+  repo.upsertLocalTrack(db, { path: '/m/3.mp3', artist: 'A', album: 'Al', title: 'Unique', durationMs: 1000, changeKey: '3:1' });
+
+  const groups = repo.findDuplicateGroups(db);
+  assert.equal(groups.length, 1, 'only the duplicated title is a group');
+  assert.equal(groups[0].copies.length, 2);
+  // The formats and sizes are the point: they're how you tell which copy to keep.
+  assert.deepEqual(groups[0].copies.map((c) => c.ext).sort(), ['flac', 'mp3']);
+  assert.ok(groups[0].copies.every((c) => c.path));
+  db.close();
+});
+
+test('listHealthTracks returns the tracks behind a count and rejects unknown issues', () => {
+  const db = openDb(':memory:');
+  repo.upsertLocalTrack(db, { path: '/m/1.mp3', artist: 'A', album: 'Al', title: 'Has all', durationMs: 1000, changeKey: '1:1', trackNumber: 1 });
+  repo.upsertLocalTrack(db, { path: '/m/2.mp3', artist: null, album: 'Al', title: 'No artist', durationMs: 1000, changeKey: '2:1', trackNumber: 2 });
+
+  const result = repo.listHealthTracks(db, { issue: 'missingArtist' });
+  assert.equal(result.total, 1);
+  assert.equal(result.tracks[0].title, 'No artist');
+  assert.ok(result.tracks[0].path, 'the path is needed to identify an untagged file');
+
+  // An unknown key must not fall through to unfiltered SQL.
+  assert.deepEqual(repo.listHealthTracks(db, { issue: 'artist IS NULL' }), { tracks: [], total: 0 });
+  assert.equal(repo.isHealthIssue('missingArtist'), true);
+  assert.equal(repo.isHealthIssue('nope'), false);
+  db.close();
+});
+
+test('listTrackPaths scopes to one album', () => {
+  const db = openDb(':memory:');
+  repo.upsertLocalTrack(db, { path: '/m/A/One/01.mp3', artist: 'A', album: 'One', title: 'a', durationMs: 1, changeKey: '1:1' });
+  repo.upsertLocalTrack(db, { path: '/m/A/Two/01.mp3', artist: 'A', album: 'Two', title: 'b', durationMs: 1, changeKey: '2:1' });
+
+  assert.deepEqual(repo.listTrackPaths(db, { artist: 'A', album: 'One' }), ['/m/A/One/01.mp3']);
+  assert.equal(repo.listTrackPaths(db, { artist: 'A' }).length, 2);
+  db.close();
+});
+
+test('listTracks pages and reports the unpaged total', () => {
+  const db = seeded();
+  const page = repo.listTracks(db, { limit: 2, offset: 0, sort: 'title' });
+  assert.equal(page.tracks.length, 2);
+  assert.equal(page.total, 3);
+  const rest = repo.listTracks(db, { limit: 2, offset: 2, sort: 'title' });
+  assert.equal(rest.tracks.length, 1);
+});
+
+test('a search for a literal % is not treated as a wildcard', () => {
+  const db = openDb(':memory:');
+  repo.upsertLocalTrack(db, { path: '/m/1.mp3', artist: 'A', album: 'Al', title: '50% Off', durationMs: 1, changeKey: '1:1' });
+  repo.upsertLocalTrack(db, { path: '/m/2.mp3', artist: 'A', album: 'Al', title: 'Nothing', durationMs: 1, changeKey: '2:1' });
+  assert.equal(repo.listTracks(db, { q: '50%' }).total, 1);
+  // Escaped, so this matches only the title that literally contains "%".
+  // Treated as a wildcard it would have matched both rows.
+  assert.equal(repo.listTracks(db, { q: '%' }).total, 1);
+  assert.equal(repo.listTracks(db, { q: '_' }).total, 0);
   db.close();
 });
 

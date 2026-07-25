@@ -1,9 +1,13 @@
 import { useNavigate } from 'react-router-dom';
 import CoverArt from './CoverArt.jsx';
 import Pagination from './Pagination.jsx';
+import OwnedBadge from './OwnedBadge.jsx';
 import { usePagination } from '../lib/usePagination.js';
 
-export default function AlbumGrid({ albums }) {
+// ownedMbids: release-group ids already in the local library, badged so an
+// artist's discography shows at a glance what's already on disk. Optional — the
+// grid works unchanged without it.
+export default function AlbumGrid({ albums, ownedMbids }) {
   const navigate = useNavigate();
   const { page, setPage, pageCount, pageItems } = usePagination(albums, 20);
 
@@ -17,6 +21,7 @@ export default function AlbumGrid({ albums }) {
             <CoverArt src={album.coverArtUrl} alt={album.title} />
             <span className="album-title">{album.title}</span>
             {album.firstReleaseDate && <span className="muted">{album.firstReleaseDate.slice(0, 4)}</span>}
+            <OwnedBadge owned={Boolean(ownedMbids?.has(album.mbid))} label="In your library" />
           </button>
         ))}
       </div>

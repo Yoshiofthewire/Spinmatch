@@ -72,19 +72,26 @@ export async function searchRecordings(query) {
   }));
 }
 
-export async function searchAll(query) {
-  const [artistRes, releaseGroups, recordings] = await Promise.all([
-    mbFetch('/artist', { query }),
-    searchReleaseGroups(query),
-    searchRecordings(query),
-  ]);
-
-  const artists = (artistRes.artists || []).map((a) => ({
+// The artist index on its own. Callers that only need to resolve a name to an
+// artist id use this rather than searchAll: it's one upstream request instead of
+// three (which matters against a 1 req/s limit), and a failure in the unrelated
+// release-group or recording index can't take the resolution down with it.
+export async function searchArtists(query) {
+  const res = await mbFetch('/artist', { query });
+  return (res.artists || []).map((a) => ({
     mbid: a.id,
     name: a.name,
     disambiguation: a.disambiguation || null,
     score: Number(a.score) || 0,
   }));
+}
+
+export async function searchAll(query) {
+  const [artists, releaseGroups, recordings] = await Promise.all([
+    searchArtists(query),
+    searchReleaseGroups(query),
+    searchRecordings(query),
+  ]);
 
   return { artists, releaseGroups, recordings };
 }

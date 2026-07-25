@@ -58,6 +58,24 @@ export async function readTags(filePath) {
   }
 }
 
+// Reads the embedded front cover out of a file so the library can show album
+// art without keeping a second copy on disk. Returns {bytes, mimeType} or null.
+// Prefers an explicit FrontCover picture, falling back to the first one.
+export async function readCoverArt(filePath) {
+  const file = File.createFromPath(filePath);
+  try {
+    const pictures = file.tag.pictures || [];
+    if (!pictures.length) return null;
+    const picture = pictures.find((p) => p.type === PictureType.FrontCover) || pictures[0];
+    return {
+      bytes: Buffer.from(picture.data.toByteArray()),
+      mimeType: picture.mimeType || 'image/jpeg',
+    };
+  } finally {
+    file.dispose();
+  }
+}
+
 export async function writeMissingTags(filePath, desired, { coverImage } = {}) {
   const file = File.createFromPath(filePath);
   const filledFields = [];

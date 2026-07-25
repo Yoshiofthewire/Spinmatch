@@ -3,7 +3,7 @@ import { createReadStream } from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { config } from '../config.js';
-import { BadRequestError } from '../lib/httpErrors.js';
+import { assertInsideMusicDir } from '../lib/paths.js';
 
 const UNSAFE_CHARS = /[/\\:*?"<>|\x00-\x1f]/g;
 const MAX_SEGMENT_LENGTH = 200;
@@ -83,20 +83,12 @@ async function resolveCollision(srcPath, destPath) {
   return candidate;
 }
 
-// Defense-in-depth: sanitizeSegment already strips path separators and
-// neutralizes "."/".." segments, so this should never actually fire through
-// the normal API — but it's a cheap, correct guard against any future change
-// to sanitization logic letting a MusicBrainz-sourced value escape MUSIC_DIR.
-function assertInsideMusicDir(destPath) {
-  const resolvedDest = path.resolve(destPath);
-  const resolvedRoot = path.resolve(config.ingest.musicDir);
-  if (!resolvedDest.startsWith(resolvedRoot + path.sep)) {
-    throw new BadRequestError(`Refusing to write outside MUSIC_DIR: ${destPath}`);
-  }
-}
-
 export async function moveIntoLibrary(srcPath, meta, ext) {
   const initialDest = targetPathFor(meta, ext);
+  // Defense-in-depth: sanitizeSegment already strips path separators and
+  // neutralizes "."/".." segments, so this should never actually fire through
+  // the normal API — but it's a cheap, correct guard against any future change
+  // to sanitization logic letting a MusicBrainz-sourced value escape MUSIC_DIR.
   assertInsideMusicDir(initialDest);
 
   const dest = await resolveCollision(srcPath, initialDest);

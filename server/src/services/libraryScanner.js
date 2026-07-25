@@ -5,8 +5,9 @@ import { config } from '../config.js';
 import { readTags } from './tags.js';
 import { getDb, withTransaction } from '../lib/db.js';
 import {
-  upsertLocalTrack, getChangeKeys, markRemoved, recomputeStats,
+  upsertLocalTrack, getChangeKeys, markRemoved, markRemovedByPath, recomputeStats,
 } from './libraryRepo.js';
+import { assertInsideMusicDir } from '../lib/paths.js';
 
 const AUDIO_EXTENSIONS = new Set(['.mp3', '.flac', '.m4a', '.aac', '.ogg']);
 // Write in batches so the SQLite write lock is released periodically (letting a
@@ -37,6 +38,32 @@ async function* walk(dir) {
       yield full;
     }
   }
+}
+
+// The single place a file on disk becomes a local_tracks row. Shared by the full
+// scan and the targeted rescan below so the two can never disagree about how a
+// file is indexed.
+export function rowFor(filePath, stat, meta) {
+  const ext = path.extname(filePath);
+  return {
+    path: filePath,
+    artist: meta.artist ?? null,
+    album: meta.album ?? path.basename(path.dirname(filePath)),
+    title: meta.title ?? path.basename(filePath, ext),
+    // taglib reports fractional milliseconds for some formats; round so the
+    // INTEGER column and the summed totals stay whole numbers.
+    durationMs: meta.durationMs == null ? null : Math.round(meta.durationMs),
+    trackNumber: meta.trackNumber ?? null,
+    disc: meta.disc ?? null,
+    year: meta.year ?? null,
+    genre: meta.genre ?? null,
+    hasCoverArt: meta.hasCoverArt ? 1 : 0,
+    // From the stat the caller already took, so this costs nothing extra.
+    ext: ext.replace(/^\./, '').toLowerCase() || null,
+    sizeBytes: stat.size,
+    mtimeMs: Math.trunc(stat.mtimeMs),
+    changeKey: changeKeyFor(stat),
+  };
 }
 
 // Shared across every caller (the interval timer, the fs-watch debounce, and
@@ -127,14 +154,7 @@ export async function runScanOnce() {
     }
 
     if (!known.has(filePath)) added += 1; else updated += 1;
-    toUpsert.push({
-      path: filePath,
-      artist: meta.artist ?? null,
-      album: meta.album ?? path.basename(path.dirname(filePath)),
-      title: meta.title ?? path.basename(filePath, path.extname(filePath)),
-      durationMs: null,
-      changeKey,
-    });
+    toUpsert.push(rowFor(filePath, stat, meta));
   }
 
   // Phase 2 (chunked transactions): batch the upserts so each commit is one
@@ -154,4 +174,83 @@ export async function runScanOnce() {
 
   const removed = known.size - [...known.keys()].filter((p) => seen.has(p)).length;
   return { scanned, added, updated, removed };
+}
+
+// Re-reads one file's tags and updates its row. Used after the fix flow writes
+// tags, so the index reflects the new values without waiting for a full scan.
+// Runs on the main thread: it's a single tag read, the same cost the ingest
+// flow already pays per file.
+export async function reindexFile(filePath) {
+  assertInsideMusicDir(filePath);
+  const db = getDb();
+  let stat;
+  try {
+    stat = await fs.stat(filePath);
+  } catch {
+    // The file went away between the tag write and here. Marking it removed is
+    // the honest outcome; a full scan would reach the same conclusion.
+    withTransaction(db, () => {
+      markRemovedByPath(db, filePath);
+      recomputeStats(db);
+    });
+    return { indexed: false };
+  }
+  const meta = await readTags(filePath);
+  withTransaction(db, () => {
+    upsertLocalTrack(db, rowFor(filePath, stat, meta));
+    recomputeStats(db);
+  });
+  return { indexed: true };
+}
+
+// Rescans just the given directories instead of all of MUSIC_DIR. Unlike
+// runScanOnce this must NOT call markRemoved(), which reconciles against the
+// whole library and would wipe every track outside these directories — removals
+// are resolved per known path within the subtree instead.
+export async function rescanDirs(dirs) {
+  const db = getDb();
+  const roots = dirs.map((dir) => {
+    assertInsideMusicDir(dir);
+    return path.resolve(dir);
+  });
+  const inScope = (p) => roots.some((root) => p === root || p.startsWith(root + path.sep));
+
+  const known = getChangeKeys(db);
+  const knownInScope = [...known.keys()].filter(inScope);
+  const seen = new Set();
+  const toUpsert = [];
+  let added = 0;
+  let updated = 0;
+
+  for (const root of roots) {
+    for await (const filePath of walk(root)) {
+      seen.add(filePath);
+      let stat;
+      try {
+        stat = await fs.stat(filePath);
+      } catch {
+        continue;
+      }
+      if (known.get(filePath) === changeKeyFor(stat)) continue;
+      let meta;
+      try {
+        meta = await readTags(filePath);
+      } catch (err) {
+        console.warn(`libraryScanner: skipping unreadable file ${filePath}: ${err.message}`);
+        seen.add(filePath);
+        continue;
+      }
+      if (!known.has(filePath)) added += 1; else updated += 1;
+      toUpsert.push(rowFor(filePath, stat, meta));
+    }
+  }
+
+  const gone = knownInScope.filter((p) => !seen.has(p));
+  withTransaction(db, () => {
+    for (const row of toUpsert) upsertLocalTrack(db, row);
+    for (const p of gone) markRemovedByPath(db, p);
+    recomputeStats(db);
+  });
+
+  return { scanned: seen.size, added, updated, removed: gone.length };
 }

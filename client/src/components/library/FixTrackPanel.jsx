@@ -1,11 +1,14 @@
 import { useEffect, useState } from 'react';
-import { get, post } from '../api/client.js';
-import { useConfig } from '../ConfigContext.jsx';
-import EqualizerLoader from './EqualizerLoader.jsx';
-import CandidateRow from './CandidateRow.jsx';
+import { get } from '../../api/client.js';
+import EqualizerLoader from '../EqualizerLoader.jsx';
+import CandidateRow from '../CandidateRow.jsx';
+import { getFixCandidates, applyFix } from '../../api/library.js';
 
-export default function IngestMatchPicker({ item, onResolved, onCancel }) {
-  const { acoustidConfigured } = useConfig();
+// Repairs the tags of a file already in the library. The ingest counterpart of
+// this (IngestMatchPicker) tags AND moves the file; here the file is already
+// where it belongs, so applying a match only writes tags — and only the ones
+// that are currently empty, so an existing value is never overwritten.
+export default function FixTrackPanel({ track, onFixed, onCancel }) {
   const [candidates, setCandidates] = useState(null);
   const [loadError, setLoadError] = useState(null);
   const [query, setQuery] = useState('');
@@ -18,17 +21,11 @@ export default function IngestMatchPicker({ item, onResolved, onCancel }) {
     let cancelled = false;
     setCandidates(null);
     setLoadError(null);
-    get(`/ingest/file/candidates?path=${encodeURIComponent(item.path)}`)
-      .then((data) => {
-        if (!cancelled) setCandidates(data.candidates);
-      })
-      .catch((err) => {
-        if (!cancelled) setLoadError(err);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [item.path]);
+    getFixCandidates(track.id)
+      .then((data) => { if (!cancelled) setCandidates(data.candidates); })
+      .catch((err) => { if (!cancelled) setLoadError(err); });
+    return () => { cancelled = true; };
+  }, [track.id]);
 
   async function handleSearch(e) {
     e.preventDefault();
@@ -49,13 +46,7 @@ export default function IngestMatchPicker({ item, onResolved, onCancel }) {
     setApplyingMbid(recordingMbid);
     setApplyError(null);
     try {
-      const result = await post('/ingest/file/resolve', {
-        path: item.path,
-        name: item.name,
-        recordingMbid,
-        dryRun: false,
-      });
-      onResolved(result);
+      onFixed(await applyFix({ trackId: track.id, recordingMbid }));
     } catch (err) {
       setApplyError(err);
       setApplyingMbid(null);
@@ -64,13 +55,14 @@ export default function IngestMatchPicker({ item, onResolved, onCancel }) {
 
   return (
     <div className="ingest-match-picker">
+      <p className="muted mono fix-path">{track.path}</p>
+
       {loadError && <p className="banner banner-error">{loadError.message}</p>}
-      {candidates === null && !loadError && <EqualizerLoader label="Looking for near-misses…" />}
+      {candidates === null && !loadError && <EqualizerLoader label="Searching MusicBrainz…" />}
       {candidates && candidates.length === 0 && (
         <p className="muted">
-          {acoustidConfigured
-            ? 'AcoustID found no other candidates for this file.'
-            : "AcoustID isn't configured, and this file's own tags turned up nothing on MusicBrainz — search manually below."}
+          MusicBrainz found nothing for this file&apos;s existing tags — which is expected
+          when the tags are what&apos;s missing. Search for it below.
         </p>
       )}
       {candidates && candidates.length > 0 && (
