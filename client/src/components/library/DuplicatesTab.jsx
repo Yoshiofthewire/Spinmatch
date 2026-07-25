@@ -62,13 +62,13 @@ export default function DuplicatesTab({ onPlay }) {
               {group.copies.map((copy) => (
                 <tr key={copy.id}>
                   <td>
+                    {/* The album no longer tells two copies apart — they share it — and neither
+                        does the format when a folder was simply copied twice. The path does. */}
                     <button
                       type="button"
                       className="play-button"
                       onClick={() => onPlay(copy, group.copies)}
-                      // The album no longer tells two copies apart — they share
-                      // it — so the format does.
-                      aria-label={`Play ${copy.title} from ${group.album ?? 'unknown album'} (${copy.ext ?? 'unknown format'})`}
+                      aria-label={`Play ${copy.title} — ${copy.path}`}
                     >
                       ▶
                     </button>

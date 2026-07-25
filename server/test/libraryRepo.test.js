@@ -195,6 +195,24 @@ test('a song on two different albums is not a duplicate', () => {
   db.close();
 });
 
+// The mixed case the two tests above miss between them: a real duplicate pair
+// and a cross-album copy of the same song in one library. The pair groups; the
+// third copy must not be swept in with it. Grouping and gathering used to run
+// off two different keys here, so this is the shape that breaks first.
+test('a copy on another album stays out of an otherwise real duplicate group', () => {
+  const db = openDb(':memory:');
+  repo.upsertLocalTrack(db, { path: '/m/1.flac', artist: 'A', album: 'Al', title: 'Dup', durationMs: 1000, changeKey: '1:1', ext: 'flac' });
+  repo.upsertLocalTrack(db, { path: '/m/2.mp3', artist: 'A', album: 'Al', title: 'Dup', durationMs: 1000, changeKey: '2:1', ext: 'mp3' });
+  repo.upsertLocalTrack(db, { path: '/m/3.mp3', artist: 'A', album: 'Other', title: 'Dup', durationMs: 1000, changeKey: '3:1', ext: 'mp3' });
+
+  const groups = repo.findDuplicateGroups(db);
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].album, 'Al');
+  assert.deepEqual(groups[0].copies.map((c) => c.path).sort(), ['/m/1.flac', '/m/2.mp3']);
+  assert.equal(repo.findHealthIssues(db).duplicateCount, 1);
+  db.close();
+});
+
 // A null album folds to the empty string, so album-less tracks share one bucket
 // rather than each becoming a group of one. Rare in a scanned library —
 // libraryScanner substitutes the containing directory name for a missing album
