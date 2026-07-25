@@ -9,9 +9,10 @@ const repo = await import('../../src/services/libraryRepo.js');
 
 let server;
 let baseUrl;
+let db;
 
 test.before(async () => {
-  const db = openDb(':memory:');
+  db = openDb(':memory:');
   repo.upsertLocalTrack(db, { path: '/m/A/Al/01.mp3', artist: 'A', album: 'Al', title: 'One', durationMs: 1000, changeKey: '1:1' });
   repo.upsertLocalTrack(db, { path: '/m/A/Al/02.mp3', artist: 'A', album: 'Al', title: 'Two', durationMs: 2000, changeKey: '2:1' });
   repo.recomputeStats(db);
@@ -89,10 +90,37 @@ test('GET /api/library/health-tracks rejects an issue key it does not know', asy
 });
 
 test('GET /api/library/duplicates returns each copy of a duplicated title', async () => {
-  const res = await fetch(`${baseUrl}/api/library/duplicates`);
-  assert.equal(res.status, 200);
+  const empty = await fetch(`${baseUrl}/api/library/duplicates`);
+  assert.equal(empty.status, 200);
   // The two seeded tracks have different titles, so there is nothing to report.
-  assert.deepEqual((await res.json()).groups, []);
+  assert.deepEqual((await empty.json()).groups, []);
+
+  // A second file of the same track from the same release — the case this view
+  // exists for. Marked removed again at the end, because the ~35 other tests in
+  // this file assert against the shared fixture's exact counts.
+  repo.upsertLocalTrack(db, { path: '/m/A/Al/01.flac', artist: 'A', album: 'Al', title: 'One', durationMs: 1000, changeKey: '3:1', ext: 'flac' });
+  try {
+    const res = await fetch(`${baseUrl}/api/library/duplicates`);
+    assert.equal(res.status, 200);
+    const { groups } = await res.json();
+    assert.equal(groups.length, 1);
+    assert.equal(groups[0].artist, 'A');
+    assert.equal(groups[0].album, 'Al');
+    assert.equal(groups[0].title, 'One');
+    assert.deepEqual(
+      groups[0].copies.map((c) => c.path).sort(),
+      ['/m/A/Al/01.flac', '/m/A/Al/01.mp3'],
+    );
+  } finally {
+    repo.markRemovedByPath(db, '/m/A/Al/01.flac');
+  }
+
+  // The cleanup above is what keeps the shared fixture intact for the rest of
+  // this file. Prove it here rather than relying on a later test to notice:
+  // node:test runs these in declaration order, and every test that asserts an
+  // exact track count is declared above this one.
+  const afterCleanup = await fetch(`${baseUrl}/api/library/duplicates`);
+  assert.deepEqual((await afterCleanup.json()).groups, []);
 });
 
 test('POST /api/library/owned reports which results are already in the library', async () => {
