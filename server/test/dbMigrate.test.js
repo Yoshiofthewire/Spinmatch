@@ -108,7 +108,7 @@ test('a fresh database is created at the current version with no migration work'
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'spinmatch-fresh-'));
   const db = openDb(path.join(dir, 'library.db'));
   const version = db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get();
-  assert.equal(version.value, '3');
+  assert.equal(version.value, '5');
   db.close();
   fs.rmSync(dir, { recursive: true, force: true });
 });
@@ -125,7 +125,7 @@ test('the unused verified_tracks table is dropped on upgrade', () => {
   });
 });
 
-test('upgrading from v2 to v3 does not trigger another full re-tag', () => {
+test('upgrading past v2 does not trigger another full re-tag', () => {
   // The v2 step clears change_key to force one re-read of every file. A later
   // version bump must not re-run it, or every upgrade costs a full rescan.
   withV1Db((dbPath) => {
@@ -138,8 +138,41 @@ test('upgrading from v2 to v3 does not trigger another full re-tag', () => {
     assert.equal(second.prepare('SELECT change_key FROM local_tracks').get().change_key, '10:1');
     assert.equal(
       second.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value,
-      '3',
+      '5',
     );
+    second.close();
+  });
+});
+
+// v5 introduces verified_links and library_similar_cache. Both are created by
+// SCHEMA, which runs before migrate(), so the point of these is that an
+// *upgraded* install ends up with them too — not just a fresh one.
+test('upgrading to v5 creates the cache tables', () => {
+  withV1Db((dbPath) => {
+    const db = openDb(dbPath);
+    const names = db
+      .prepare("SELECT name FROM sqlite_master WHERE type='table'")
+      .all()
+      .map((r) => r.name);
+    assert.ok(names.includes('verified_links'), 'verified_links exists after upgrade');
+    assert.ok(names.includes('library_similar_cache'), 'library_similar_cache exists after upgrade');
+    db.close();
+  });
+});
+
+test('re-opening a v5 database leaves remembered links alone', () => {
+  withV1Db((dbPath) => {
+    const first = openDb(dbPath);
+    first.prepare(
+      'INSERT INTO verified_links (recording_mbid, video_id, checked_at) VALUES (?, ?, ?)'
+    ).run('77777777-7777-4777-8777-777777777777', 'abc123', Date.now());
+    first.close();
+
+    // A cache that got wiped on every restart would be no better than the
+    // in-memory one it exists to outlast.
+    const second = openDb(dbPath);
+    const row = second.prepare('SELECT video_id FROM verified_links').get();
+    assert.equal(row.video_id, 'abc123');
     second.close();
   });
 });

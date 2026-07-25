@@ -17,7 +17,7 @@ test.before(async () => {
   repo.recomputeStats(db);
   setDbForTest(db);
   const { createApp } = await import('../../src/app.js');
-  server = createApp({ auth: false }).listen(0);
+  server = createApp({ gate: (req, res, next) => next() }).listen(0);
   await new Promise((resolve) => server.once('listening', resolve));
   baseUrl = `http://localhost:${server.address().port}`;
 });
@@ -101,13 +101,13 @@ test('POST /api/library/owned reports which results are already in the library',
     headers: { 'Content-Type': 'application/json', Origin: baseUrl },
     body: JSON.stringify({
       albums: [
-        { id: 'rg-have', artist: 'A', title: 'Al' },
-        { id: 'rg-want', artist: 'A', title: 'Nope' },
+        { id: '22222222-2222-4222-8222-222222222222', artist: 'A', title: 'Al' },
+        { id: '33333333-3333-4333-8333-333333333333', artist: 'A', title: 'Nope' },
       ],
     }),
   });
   assert.equal(res.status, 200);
-  assert.deepEqual((await res.json()).albums, ['rg-have']);
+  assert.deepEqual((await res.json()).albums, ['22222222-2222-4222-8222-222222222222']);
 });
 
 test('POST /api/library/owned caps how many items one request can ask about', async () => {
@@ -145,4 +145,211 @@ test('POST /api/library/fix requires both a track and a recording', async () => 
     body: JSON.stringify({ trackId: 1 }),
   });
   assert.equal(res.status, 400);
+});
+
+test('GET /api/library/artists pages and reports the total', async () => {
+  const res = await fetch(`${baseUrl}/api/library/artists?limit=1&offset=0`);
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.limit, 1);
+  assert.equal(typeof body.total, 'number');
+  assert.ok(Array.isArray(body.artists));
+});
+
+test('GET /api/library/albums pages and reports the total', async () => {
+  const res = await fetch(`${baseUrl}/api/library/albums?limit=1`);
+  const body = await res.json();
+  assert.equal(body.limit, 1);
+  assert.equal(body.total, 1);
+  assert.equal(body.albums.length, 1);
+});
+
+// A limit above the cap is clamped rather than honoured, so one request can't ask
+// for the whole table.
+test('an oversized ?limit is clamped', async () => {
+  const body = await (await fetch(`${baseUrl}/api/library/tracks?limit=100000`)).json();
+  assert.equal(body.limit, 200);
+});
+
+test('DELETE /api/library/artist-link forgets a remembered match', async () => {
+  const { getDb } = await import('../../src/lib/db.js');
+  const { saveArtistLink, getArtistLink } = await import('../../src/services/libraryDiscography.js');
+  saveArtistLink(getDb(), { artist: 'A', mbArtistId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' });
+  assert.ok(getArtistLink(getDb(), 'A'));
+
+  const res = await fetch(`${baseUrl}/api/library/artist-link?artist=A`, {
+    method: 'DELETE',
+    headers: { 'Sec-Fetch-Site': 'same-origin' },
+  });
+  assert.equal(res.status, 200);
+  assert.equal((await res.json()).cleared, true);
+  assert.equal(getArtistLink(getDb(), 'A'), null);
+});
+
+test('POST /api/library/fix rejects a recordingMbid that is not a UUID', async () => {
+  const res = await fetch(`${baseUrl}/api/library/fix`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Sec-Fetch-Site': 'same-origin' },
+    body: JSON.stringify({ trackId: 1, recordingMbid: '../artist/evil' }),
+  });
+  assert.equal(res.status, 400);
+});
+
+test('POST /api/library/bulk-fix/preview requires an album', async () => {
+  const res = await fetch(`${baseUrl}/api/library/bulk-fix/preview`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Sec-Fetch-Site': 'same-origin' },
+    body: JSON.stringify({ artist: 'A' }),
+  });
+  assert.equal(res.status, 400);
+});
+
+test('POST /api/library/bulk-fix/preview rejects an unknown source', async () => {
+  const res = await fetch(`${baseUrl}/api/library/bulk-fix/preview`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Sec-Fetch-Site': 'same-origin' },
+    body: JSON.stringify({ artist: 'A', album: 'Al', source: 'wherever' }),
+  });
+  assert.equal(res.status, 400);
+});
+
+// This suite's MUSIC_DIR does not exist on disk, which is what an unmounted
+// music volume looks like. That has to read as a clear 400 rather than escaping
+// as a raw ENOENT 500 from the containment guard.
+test('POST /api/library/bulk-fix/preview reports an unreadable MUSIC_DIR', async () => {
+  const res = await fetch(`${baseUrl}/api/library/bulk-fix/preview`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Sec-Fetch-Site': 'same-origin' },
+    body: JSON.stringify({ artist: 'A', album: 'Al', source: 'path' }),
+  });
+  assert.equal(res.status, 400);
+});
+
+test('POST /api/library/bulk-fix/apply requires a non-empty trackIds array', async () => {
+  const res = await fetch(`${baseUrl}/api/library/bulk-fix/apply`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Sec-Fetch-Site': 'same-origin' },
+    body: JSON.stringify({ artist: 'A', album: 'Al', trackIds: [] }),
+  });
+  assert.equal(res.status, 400);
+});
+
+test('POST /api/library/bulk-fix/apply refuses a request over the cap', async () => {
+  const { MAX_BULK_FIX } = await import('../../src/services/libraryBulkFix.js');
+  const res = await fetch(`${baseUrl}/api/library/bulk-fix/apply`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Sec-Fetch-Site': 'same-origin' },
+    body: JSON.stringify({
+      artist: 'A',
+      album: 'Al',
+      trackIds: Array.from({ length: MAX_BULK_FIX + 1 }, (_, i) => i + 1),
+    }),
+  });
+  assert.equal(res.status, 400);
+});
+
+// Every non-GET /api request goes through sameOriginOnly, so a cross-site POST
+// can't reach the tag writer even with a valid session cookie.
+test('POST /api/library/bulk-fix/apply is refused cross-site', async () => {
+  const res = await fetch(`${baseUrl}/api/library/bulk-fix/apply`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Sec-Fetch-Site': 'cross-site' },
+    body: JSON.stringify({ artist: 'A', album: 'Al', trackIds: [1] }),
+  });
+  assert.equal(res.status, 400);
+  assert.match((await res.json()).error.message, /cross-site/i);
+});
+
+test('POST /api/library/reconstruct-playlist requires a non-empty lines array', async () => {
+  const res = await fetch(`${baseUrl}/api/library/reconstruct-playlist`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Sec-Fetch-Site': 'same-origin' },
+    body: JSON.stringify({ lines: [] }),
+  });
+  assert.equal(res.status, 400);
+});
+
+test('POST /api/library/reconstruct-playlist caps how many lines one request may carry', async () => {
+  const res = await fetch(`${baseUrl}/api/library/reconstruct-playlist`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Sec-Fetch-Site': 'same-origin' },
+    body: JSON.stringify({ lines: Array.from({ length: 501 }, (_, i) => `Track ${i}`) }),
+  });
+  assert.equal(res.status, 400);
+});
+
+// Offline, so this answers from the index with no upstream call — which is what
+// makes it usable when MusicBrainz isn't.
+test('POST /api/library/reconstruct-playlist matches against the library', async () => {
+  const res = await fetch(`${baseUrl}/api/library/reconstruct-playlist`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Sec-Fetch-Site': 'same-origin' },
+    body: JSON.stringify({ lines: ['A - One', 'Nobody - Nothing'] }),
+  });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.found.length, 1);
+  assert.equal(body.found[0].track.title, 'One');
+  assert.equal(body.missing.length, 1);
+});
+
+// --- Paging bounds -----------------------------------------------------------
+//
+// `Math.min(Number(limit) || default, MAX_PAGE_SIZE)` reads as a cap and is not
+// one: -1 is truthy so it survived the `||`, Math.min then chose it as the
+// smaller value, and SQLite treats a negative LIMIT as "no upper bound". Every
+// list endpoint would return its entire table for `?limit=-1`, which is exactly
+// what MAX_PAGE_SIZE exists to prevent.
+
+test('a negative limit falls back to the default instead of returning everything', async () => {
+  const res = await fetch(`${baseUrl}/api/library/tracks?limit=-1`);
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.limit, 100, 'the endpoint default, not the caller-supplied -1');
+  assert.ok(body.limit > 0);
+});
+
+test('zero, NaN and garbage limits also fall back rather than unbounding the query', async () => {
+  for (const limit of ['0', 'abc', '-0.5', '', 'Infinity', '-Infinity']) {
+    const res = await fetch(`${baseUrl}/api/library/tracks?limit=${encodeURIComponent(limit)}`);
+    const body = await res.json();
+    assert.ok(body.limit > 0 && body.limit <= 200, `limit=${limit} produced ${body.limit}`);
+  }
+});
+
+test('a limit over the cap is still clamped to the cap', async () => {
+  const body = await (await fetch(`${baseUrl}/api/library/tracks?limit=100000`)).json();
+  assert.equal(body.limit, 200);
+});
+
+test('a negative offset is floored at zero', async () => {
+  const body = await (await fetch(`${baseUrl}/api/library/tracks?offset=-5`)).json();
+  assert.equal(body.offset, 0);
+});
+
+// --- Path disclosure ---------------------------------------------------------
+//
+// paths.js refuses to name the server's directory layout in an error message
+// because it "isn't the client's business" — and then every row of every browse
+// listing carried the absolute path anyway. The rule now holds where the volume
+// actually is; the repair and health flows, whose whole job is identifying a
+// file on disk, still get it.
+
+test('browse listings do not carry absolute filesystem paths', async () => {
+  const tracks = (await (await fetch(`${baseUrl}/api/library/tracks`)).json()).tracks;
+  assert.ok(tracks.length > 0);
+  for (const t of tracks) {
+    assert.equal(t.path, undefined, 'the tracks list should not disclose the server layout');
+  }
+
+  const albumTracks = (await (await fetch(`${baseUrl}/api/library/album-tracks?artist=A&album=Al`)).json()).tracks;
+  assert.ok(albumTracks.length > 0);
+  for (const t of albumTracks) assert.equal(t.path, undefined);
+});
+
+test('the health report still carries paths, because that is how you find the file', async () => {
+  const res = await fetch(`${baseUrl}/api/library/health-tracks?issue=missingTrackNumber`);
+  const body = await res.json();
+  assert.ok(body.tracks.length > 0);
+  assert.ok(body.tracks[0].path, 'a file with no tags is only identifiable by its path');
 });

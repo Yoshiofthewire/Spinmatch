@@ -2,7 +2,10 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import EqualizerLoader from '../EqualizerLoader.jsx';
 import CoverArt from '../CoverArt.jsx';
-import { getArtistDiscography, linkArtist } from '../../api/library.js';
+import BulkVerifyPanel from '../BulkVerifyPanel.jsx';
+import {
+  getArtistDiscography, linkArtist, unlinkArtist, artistMissingStreamUrl,
+} from '../../api/library.js';
 
 // The MusicBrainz-backed half of missing detection. Deliberately opt-in: it runs
 // on a button press, not on mount, so a slow or unreachable upstream never
@@ -27,6 +30,14 @@ export default function DiscographyPanel({ artist }) {
 
   async function choose(mbArtistId) {
     await linkArtist({ artist, mbArtistId });
+    await load();
+  }
+
+  // The match is remembered, including one the app picked automatically. If it
+  // picked wrong, the discography below is wrong and nothing else would ever
+  // revisit it — so offer a way to forget it and look again.
+  async function forgetMatch() {
+    await unlinkArtist(artist);
     await load();
   }
 
@@ -84,8 +95,23 @@ export default function DiscographyPanel({ artist }) {
 
       {state === 'ready' && !data.unresolved && (
         <>
+          {/* A joined credit like "Nine Inch Nails / Stephen Morris" only
+              resolves through its lead artist. Saying so matters: without it the
+              panel shows a discography that plainly belongs to a different name
+              than the one you clicked, which reads as a bug rather than a match. */}
+          {data.via && (
+            <p className="muted">
+              Matched through <strong>{data.via}</strong> — “{artist}” is a joined
+              credit, so its discography is that artist&apos;s.
+            </p>
+          )}
+
           <p className="muted">
             You own {data.owned.length} of {data.owned.length + data.missing.length} studio albums.
+            {' '}
+            <button type="button" className="link-button" onClick={forgetMatch}>
+              Wrong artist?
+            </button>
           </p>
 
           {data.missing.length === 0 ? (
@@ -105,6 +131,30 @@ export default function DiscographyPanel({ artist }) {
                 </button>
               ))}
             </div>
+          )}
+
+          {/* One action for the whole discography gap, the same panel the album
+              view uses for one record. Opt-in on a press: this is a rate-limited
+              lookup per track across every missing album, so it is minutes of
+              work and must never start on its own. The track total isn't known
+              up front — see the sweep's 'album' events — so the panel reports
+              which record it's on instead. */}
+          {data.missing.length > 0 && (
+            <BulkVerifyPanel
+              artist={artist}
+              trackCount={0}
+              streamUrl={artistMissingStreamUrl(artist)}
+              // There is no non-streaming fallback at this scale: a sweep can run
+              // for many minutes, which no single request should be held open
+              // for. Better to say so than to hang and time out.
+              runBlockingRequest={() => {
+                throw new Error('This needs a browser that supports EventSource.');
+              }}
+              prompt={`Finding every track from all ${data.missing.length} missing albums
+                checks them one at a time to avoid rate limits, so this will take a while.
+                Results already found are remembered, so it can be stopped and resumed.`}
+              actionLabel="Find every missing track on YouTube"
+            />
           )}
 
           {data.unmatchedLocal?.length > 0 && (

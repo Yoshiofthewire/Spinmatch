@@ -22,6 +22,10 @@ export function get(path) {
   return request(path);
 }
 
+export function del(path) {
+  return request(path, { method: 'DELETE' });
+}
+
 export function post(path, body) {
   return request(path, {
     method: 'POST',

@@ -17,7 +17,7 @@ export default function ArtistDetail({ artist, onSelectAlbum, incompleteKeys, on
   useEffect(() => {
     let cancelled = false;
     setState('loading');
-    getLibraryAlbums({ artist, sort: 'year' })
+    getLibraryAlbums({ artist, sort: 'year', limit: 200 })
       .then((result) => {
         if (cancelled) return;
         setAlbums(result.albums);

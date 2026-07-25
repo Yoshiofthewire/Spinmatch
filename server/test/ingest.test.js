@@ -104,7 +104,7 @@ test('processIngest tags a confirmed loose file, moves it into the library, and 
       exports: { fingerprint: async () => ({ durationSeconds: 200, fingerprint: 'AQAB...' }) },
     });
     t.mock.module('../src/services/acoustid.js', {
-      exports: { lookup: async () => [{ recordingMbid: 'rec-1', score: 0.9 }] },
+      exports: { lookup: async () => [{ recordingMbid: '77777777-7777-4777-8777-777777777777', score: 0.9 }] },
     });
     t.mock.module('../src/services/musicbrainz.js', {
       exports: {
@@ -113,8 +113,8 @@ test('processIngest tags a confirmed loose file, moves it into the library, and 
         resolvePrimaryReleaseForGroup: async () => null,
         getReleaseWithTracks: async () => ({ release: {}, tracks: [] }),
         getRecording: async () => ({
-          mbid: 'rec-1', title: 'Track Title', lengthMs: 200000, artist: 'Track Artist',
-          releaseGroups: [{ mbid: 'rg-1', title: 'Track Album' }], date: '2020-01-01',
+          mbid: '77777777-7777-4777-8777-777777777777', title: 'Track Title', lengthMs: 200000, artist: 'Track Artist',
+          releaseGroups: [{ mbid: '11111111-1111-4111-8111-111111111111', title: 'Track Album' }], date: '2020-01-01',
         }),
       },
     });
@@ -142,7 +142,7 @@ test('processIngest tags a confirmed loose file, moves it into the library, and 
     const processIngestFresh = await freshProcessIngest();
     const result = await processIngestFresh();
     assert.equal(result.matched.length, 1);
-    assert.equal(result.matched[0].recordingMbid, 'rec-1');
+    assert.equal(result.matched[0].recordingMbid, '77777777-7777-4777-8777-777777777777');
     assert.equal(result.matched[0].movedTo, '/music/Track Artist/Track Album/Track Title.mp3');
     assert.equal(result.needsReview.length, 0);
     assert.equal(moveArgs.meta.album, 'Track Album');
@@ -213,7 +213,7 @@ test('a confirmed loose file whose move fails is reported as tagged-but-not-move
       exports: { fingerprint: async () => ({ durationSeconds: 200, fingerprint: 'AQAB...' }) },
     });
     t.mock.module('../src/services/acoustid.js', {
-      exports: { lookup: async () => [{ recordingMbid: 'rec-1', score: 0.9 }] },
+      exports: { lookup: async () => [{ recordingMbid: '77777777-7777-4777-8777-777777777777', score: 0.9 }] },
     });
     t.mock.module('../src/services/musicbrainz.js', {
       exports: {
@@ -222,8 +222,8 @@ test('a confirmed loose file whose move fails is reported as tagged-but-not-move
         resolvePrimaryReleaseForGroup: async () => null,
         getReleaseWithTracks: async () => ({ release: {}, tracks: [] }),
         getRecording: async () => ({
-          mbid: 'rec-1', title: 'T', lengthMs: 200000, artist: 'A',
-          releaseGroups: [{ mbid: 'rg-1', title: 'Alb' }], date: '2020-01-01',
+          mbid: '77777777-7777-4777-8777-777777777777', title: 'T', lengthMs: 200000, artist: 'A',
+          releaseGroups: [{ mbid: '11111111-1111-4111-8111-111111111111', title: 'Alb' }], date: '2020-01-01',
         }),
       },
     });
@@ -265,7 +265,7 @@ test('a byte-identical duplicate is left in place and reported as needsReview', 
       exports: { fingerprint: async () => ({ durationSeconds: 200, fingerprint: 'AQAB...' }) },
     });
     t.mock.module('../src/services/acoustid.js', {
-      exports: { lookup: async () => [{ recordingMbid: 'rec-1', score: 0.9 }] },
+      exports: { lookup: async () => [{ recordingMbid: '77777777-7777-4777-8777-777777777777', score: 0.9 }] },
     });
     t.mock.module('../src/services/musicbrainz.js', {
       exports: {
@@ -274,8 +274,8 @@ test('a byte-identical duplicate is left in place and reported as needsReview', 
         resolvePrimaryReleaseForGroup: async () => null,
         getReleaseWithTracks: async () => ({ release: {}, tracks: [] }),
         getRecording: async () => ({
-          mbid: 'rec-1', title: 'T', lengthMs: 200000, artist: 'A',
-          releaseGroups: [{ mbid: 'rg-1', title: 'Alb' }], date: '2020-01-01',
+          mbid: '77777777-7777-4777-8777-777777777777', title: 'T', lengthMs: 200000, artist: 'A',
+          releaseGroups: [{ mbid: '11111111-1111-4111-8111-111111111111', title: 'Alb' }], date: '2020-01-01',
         }),
       },
     });
@@ -348,7 +348,7 @@ test('processIngest reports needsReview when duration/score confirmation fails',
       exports: { fingerprint: async () => ({ durationSeconds: 100, fingerprint: 'AQAB...' }) },
     });
     t.mock.module('../src/services/acoustid.js', {
-      exports: { lookup: async () => [{ recordingMbid: 'rec-2', score: 0.9 }] },
+      exports: { lookup: async () => [{ recordingMbid: '88888888-8888-4888-8888-888888888888', score: 0.9 }] },
     });
     t.mock.module('../src/services/musicbrainz.js', {
       exports: {
@@ -357,7 +357,7 @@ test('processIngest reports needsReview when duration/score confirmation fails',
         resolvePrimaryReleaseForGroup: async () => null,
         getReleaseWithTracks: async () => ({ release: {}, tracks: [] }),
         getRecording: async () => ({
-          mbid: 'rec-2', title: 'Wrong Length Track', lengthMs: 400000, artist: 'A', releaseGroups: [], date: null,
+          mbid: '88888888-8888-4888-8888-888888888888', title: 'Wrong Length Track', lengthMs: 400000, artist: 'A', releaseGroups: [], date: null,
         }),
       },
     });
@@ -391,7 +391,7 @@ test('processIngest matches a loose file from its tags when ACOUSTID_API_KEY is 
           identifyFileFromTags: async () => ({
             confirmed: {
               mbid: 'rec-tag', title: 'Tagged Title', lengthMs: 200000, artist: 'Tagged Artist',
-              releaseGroups: [{ mbid: 'rg-1', title: 'Tagged Album' }], date: '2019-01-01',
+              releaseGroups: [{ mbid: '11111111-1111-4111-8111-111111111111', title: 'Tagged Album' }], date: '2019-01-01',
             },
             reason: null,
           }),
@@ -476,7 +476,7 @@ test('an album folder is matched from its tags when ACOUSTID_API_KEY is unset', 
               { filePath: files.find((f) => f.endsWith('b-side.flac')), durationMs: 180000, recMbids: [] },
               { filePath: files.find((f) => f.endsWith('a-side.flac')), durationMs: 200000, recMbids: [] },
             ],
-            releaseGroupMbids: ['rg-1'],
+            releaseGroupMbids: ['11111111-1111-4111-8111-111111111111'],
           }),
           candidatesFromTags: async () => ({ candidates: [] }),
         },
@@ -484,12 +484,12 @@ test('an album folder is matched from its tags when ACOUSTID_API_KEY is unset', 
       t.mock.module('../src/services/musicbrainz.js', {
         exports: {
           getRecording: async () => { throw new Error('getRecording should not be needed on the tag path'); },
-          resolvePrimaryReleaseForGroup: async () => 'release-1',
+          resolvePrimaryReleaseForGroup: async () => '55555555-5555-4555-8555-555555555555',
           getReleaseWithTracks: async () => ({
-            release: { mbid: 'release-1', title: 'An Album', artist: 'The Band', discCount: 1 },
+            release: { mbid: '55555555-5555-4555-8555-555555555555', title: 'An Album', artist: 'The Band', discCount: 1 },
             tracks: [
-              { position: 1, discNumber: 1, recordingMbid: 'rec-1', title: 'Opener', lengthMs: 180000 },
-              { position: 2, discNumber: 1, recordingMbid: 'rec-2', title: 'Closer', lengthMs: 200000 },
+              { position: 1, discNumber: 1, recordingMbid: '77777777-7777-4777-8777-777777777777', title: 'Opener', lengthMs: 180000 },
+              { position: 2, discNumber: 1, recordingMbid: '88888888-8888-4888-8888-888888888888', title: 'Closer', lengthMs: 200000 },
             ],
           }),
         },
@@ -545,7 +545,7 @@ test('a coherent single-disc album folder tags and moves every track', async (t)
     t.mock.module('../src/services/acoustid.js', {
       exports: {
         lookup: async ({ fingerprint: fp }) =>
-          fp === 'FP1' ? [{ recordingMbid: 'rec-1', score: 0.9 }] : [{ recordingMbid: 'rec-2', score: 0.9 }],
+          fp === 'FP1' ? [{ recordingMbid: '77777777-7777-4777-8777-777777777777', score: 0.9 }] : [{ recordingMbid: '88888888-8888-4888-8888-888888888888', score: 0.9 }],
       },
     });
     t.mock.module('../src/services/musicbrainz.js', {
@@ -556,14 +556,14 @@ test('a coherent single-disc album folder tags and moves every track', async (t)
         getReleaseWithTracks: async () => ({ release: {}, tracks: [] }),
         getRecording: async (mbid) => ({
           mbid, title: mbid, lengthMs: 0, artist: 'The Band',
-          releaseGroups: [{ mbid: 'rg-1', title: 'An Album' }], date: '2005-01-01',
+          releaseGroups: [{ mbid: '11111111-1111-4111-8111-111111111111', title: 'An Album' }], date: '2005-01-01',
         }),
-        resolvePrimaryReleaseForGroup: async () => 'release-1',
+        resolvePrimaryReleaseForGroup: async () => '55555555-5555-4555-8555-555555555555',
         getReleaseWithTracks: async () => ({
-          release: { mbid: 'release-1', title: 'An Album', artist: 'The Band', discCount: 1 },
+          release: { mbid: '55555555-5555-4555-8555-555555555555', title: 'An Album', artist: 'The Band', discCount: 1 },
           tracks: [
-            { position: 1, discNumber: 1, recordingMbid: 'rec-1', title: 'Opener', lengthMs: 180000 },
-            { position: 2, discNumber: 1, recordingMbid: 'rec-2', title: 'Closer', lengthMs: 200000 },
+            { position: 1, discNumber: 1, recordingMbid: '77777777-7777-4777-8777-777777777777', title: 'Opener', lengthMs: 180000 },
+            { position: 2, discNumber: 1, recordingMbid: '88888888-8888-4888-8888-888888888888', title: 'Closer', lengthMs: 200000 },
           ],
         }),
       },
@@ -624,11 +624,11 @@ test('a coherent two-disc album folder writes disc numbers and disc-aware move m
         getReleaseWithTracks: async () => ({ release: {}, tracks: [] }),
         getRecording: async () => ({
           mbid: 'rec-x', title: 'x', lengthMs: 0, artist: 'The Band',
-          releaseGroups: [{ mbid: 'rg-2', title: 'Double' }], date: '2005-01-01',
+          releaseGroups: [{ mbid: '44444444-4444-4444-8444-444444444444', title: 'Double' }], date: '2005-01-01',
         }),
-        resolvePrimaryReleaseForGroup: async () => 'release-2',
+        resolvePrimaryReleaseForGroup: async () => '66666666-6666-4666-8666-666666666666',
         getReleaseWithTracks: async () => ({
-          release: { mbid: 'release-2', title: 'Double', artist: 'The Band', discCount: 2 },
+          release: { mbid: '66666666-6666-4666-8666-666666666666', title: 'Double', artist: 'The Band', discCount: 2 },
           tracks: [
             { position: 1, discNumber: 1, recordingMbid: null, title: 'D1T1', lengthMs: 180000 },
             { position: 2, discNumber: 1, recordingMbid: null, title: 'D1T2', lengthMs: 180000 },
@@ -682,7 +682,7 @@ test('an incoherent album folder (track count mismatch) is left untouched and re
       exports: { fingerprint: async () => ({ durationSeconds: 180, fingerprint: 'FP' }) },
     });
     t.mock.module('../src/services/acoustid.js', {
-      exports: { lookup: async () => [{ recordingMbid: 'rec-1', score: 0.9 }] },
+      exports: { lookup: async () => [{ recordingMbid: '77777777-7777-4777-8777-777777777777', score: 0.9 }] },
     });
     let moveCalled = false;
     t.mock.module('../src/services/musicbrainz.js', {
@@ -692,7 +692,7 @@ test('an incoherent album folder (track count mismatch) is left untouched and re
         resolvePrimaryReleaseForGroup: async () => null,
         getReleaseWithTracks: async () => ({ release: {}, tracks: [] }),
         getRecording: async () => ({
-          mbid: 'rec-1', title: 'x', lengthMs: 0, artist: 'The Band',
+          mbid: '77777777-7777-4777-8777-777777777777', title: 'x', lengthMs: 0, artist: 'The Band',
           releaseGroups: [{ mbid: 'rg-3', title: 'Messy' }], date: null,
         }),
         resolvePrimaryReleaseForGroup: async () => 'release-3',
@@ -700,9 +700,9 @@ test('an incoherent album folder (track count mismatch) is left untouched and re
         getReleaseWithTracks: async () => ({
           release: { mbid: 'release-3', title: 'Messy', artist: 'The Band', discCount: 1 },
           tracks: [
-            { position: 1, discNumber: 1, recordingMbid: 'rec-1', title: 'A', lengthMs: 180000 },
-            { position: 2, discNumber: 1, recordingMbid: 'rec-2', title: 'B', lengthMs: 180000 },
-            { position: 3, discNumber: 1, recordingMbid: 'rec-3', title: 'C', lengthMs: 180000 },
+            { position: 1, discNumber: 1, recordingMbid: '77777777-7777-4777-8777-777777777777', title: 'A', lengthMs: 180000 },
+            { position: 2, discNumber: 1, recordingMbid: '88888888-8888-4888-8888-888888888888', title: 'B', lengthMs: 180000 },
+            { position: 3, discNumber: 1, recordingMbid: '99999999-9999-4999-8999-999999999999', title: 'C', lengthMs: 180000 },
           ],
         }),
       },
@@ -741,15 +741,15 @@ test('a dry-run previews planned tags and target path without writing or moving 
       exports: { fingerprint: async () => ({ durationSeconds: 200, fingerprint: 'AQAB...' }) },
     });
     t.mock.module('../src/services/acoustid.js', {
-      exports: { lookup: async () => [{ recordingMbid: 'rec-1', score: 0.9 }] },
+      exports: { lookup: async () => [{ recordingMbid: '77777777-7777-4777-8777-777777777777', score: 0.9 }] },
     });
     t.mock.module('../src/services/musicbrainz.js', {
       exports: {
         resolvePrimaryReleaseForGroup: async () => null,
         getReleaseWithTracks: async () => ({ release: {}, tracks: [] }),
         getRecording: async () => ({
-          mbid: 'rec-1', title: 'Preview Title', lengthMs: 200000, artist: 'Preview Artist',
-          releaseGroups: [{ mbid: 'rg-1', title: 'Preview Album' }], date: '2020-01-01',
+          mbid: '77777777-7777-4777-8777-777777777777', title: 'Preview Title', lengthMs: 200000, artist: 'Preview Artist',
+          releaseGroups: [{ mbid: '11111111-1111-4111-8111-111111111111', title: 'Preview Album' }], date: '2020-01-01',
         }),
       },
     });
@@ -802,20 +802,20 @@ test('a dry-run previews an album without writing or moving any track', async (t
       exports: { fingerprint: async () => ({ durationSeconds: 180, fingerprint: 'FP' }) },
     });
     t.mock.module('../src/services/acoustid.js', {
-      exports: { lookup: async () => [{ recordingMbid: 'rec-1', score: 0.9 }] },
+      exports: { lookup: async () => [{ recordingMbid: '77777777-7777-4777-8777-777777777777', score: 0.9 }] },
     });
     t.mock.module('../src/services/musicbrainz.js', {
       exports: {
         getRecording: async () => ({
-          mbid: 'rec-1', title: 'x', lengthMs: 0, artist: 'The Band',
-          releaseGroups: [{ mbid: 'rg-1', title: 'Album' }], date: null,
+          mbid: '77777777-7777-4777-8777-777777777777', title: 'x', lengthMs: 0, artist: 'The Band',
+          releaseGroups: [{ mbid: '11111111-1111-4111-8111-111111111111', title: 'Album' }], date: null,
         }),
-        resolvePrimaryReleaseForGroup: async () => 'release-1',
+        resolvePrimaryReleaseForGroup: async () => '55555555-5555-4555-8555-555555555555',
         getReleaseWithTracks: async () => ({
-          release: { mbid: 'release-1', title: 'Album', artist: 'The Band', discCount: 1 },
+          release: { mbid: '55555555-5555-4555-8555-555555555555', title: 'Album', artist: 'The Band', discCount: 1 },
           tracks: [
-            { position: 1, discNumber: 1, recordingMbid: 'rec-1', title: 'One', lengthMs: 180000 },
-            { position: 2, discNumber: 1, recordingMbid: 'rec-1', title: 'Two', lengthMs: 180000 },
+            { position: 1, discNumber: 1, recordingMbid: '77777777-7777-4777-8777-777777777777', title: 'One', lengthMs: 180000 },
+            { position: 2, discNumber: 1, recordingMbid: '77777777-7777-4777-8777-777777777777', title: 'Two', lengthMs: 180000 },
           ],
         }),
       },
@@ -867,15 +867,15 @@ test('processIngest calls onItem once per completed item, in order', async (t) =
       exports: { fingerprint: async () => ({ durationSeconds: 200, fingerprint: 'FP' }) },
     });
     t.mock.module('../src/services/acoustid.js', {
-      exports: { lookup: async () => [{ recordingMbid: 'rec-1', score: 0.9 }] },
+      exports: { lookup: async () => [{ recordingMbid: '77777777-7777-4777-8777-777777777777', score: 0.9 }] },
     });
     t.mock.module('../src/services/musicbrainz.js', {
       exports: {
         resolvePrimaryReleaseForGroup: async () => null,
         getReleaseWithTracks: async () => ({ release: {}, tracks: [] }),
         getRecording: async () => ({
-          mbid: 'rec-1', title: 'T', lengthMs: 200000, artist: 'A',
-          releaseGroups: [{ mbid: 'rg-1', title: 'Alb' }], date: '2020-01-01',
+          mbid: '77777777-7777-4777-8777-777777777777', title: 'T', lengthMs: 200000, artist: 'A',
+          releaseGroups: [{ mbid: '11111111-1111-4111-8111-111111111111', title: 'Alb' }], date: '2020-01-01',
         }),
       },
     });
@@ -927,7 +927,7 @@ test('a non-rate-limit error on one item is caught, reported as needsReview, and
       },
     });
     t.mock.module('../src/services/acoustid.js', {
-      exports: { lookup: async () => [{ recordingMbid: 'rec-1', score: 0.9 }] },
+      exports: { lookup: async () => [{ recordingMbid: '77777777-7777-4777-8777-777777777777', score: 0.9 }] },
     });
     t.mock.module('../src/services/musicbrainz.js', {
       exports: {
@@ -936,8 +936,8 @@ test('a non-rate-limit error on one item is caught, reported as needsReview, and
         resolvePrimaryReleaseForGroup: async () => null,
         getReleaseWithTracks: async () => ({ release: {}, tracks: [] }),
         getRecording: async () => ({
-          mbid: 'rec-1', title: 'Track Title', lengthMs: 200000, artist: 'Track Artist',
-          releaseGroups: [{ mbid: 'rg-1', title: 'Track Album' }], date: '2020-01-01',
+          mbid: '77777777-7777-4777-8777-777777777777', title: 'Track Title', lengthMs: 200000, artist: 'Track Artist',
+          releaseGroups: [{ mbid: '11111111-1111-4111-8111-111111111111', title: 'Track Album' }], date: '2020-01-01',
         }),
       },
     });
@@ -1018,7 +1018,7 @@ test('findCandidatesForFile returns every AcoustID candidate with recording deta
           title: mbid === 'rec-hi' ? 'High Score Track' : 'Low Score Track',
           lengthMs: 200000,
           artist: 'Some Artist',
-          releaseGroups: [{ mbid: 'rg-1', title: 'Some Album' }],
+          releaseGroups: [{ mbid: '11111111-1111-4111-8111-111111111111', title: 'Some Album' }],
           date: '2020-01-01',
         }),
       },
@@ -1111,7 +1111,7 @@ test('resolveLooseFileOverride tags and moves the file using the chosen recordin
           title: 'Chosen Title',
           lengthMs: 200000,
           artist: 'Chosen Artist',
-          releaseGroups: [{ mbid: 'rg-1', title: 'Chosen Album' }],
+          releaseGroups: [{ mbid: '11111111-1111-4111-8111-111111111111', title: 'Chosen Album' }],
           date: '2021-01-01',
         }),
       },
@@ -1145,7 +1145,7 @@ test('resolveLooseFileOverride rejects a path outside INGEST_DIR', async (t) => 
     const { resolveLooseFileOverride } = await freshIngestExports();
     const { BadRequestError } = await import('../src/lib/httpErrors.js');
     await assert.rejects(
-      () => resolveLooseFileOverride({ filePath: '/etc/passwd', name: 'x', recordingMbid: 'rec-1', dryRun: false }),
+      () => resolveLooseFileOverride({ filePath: '/etc/passwd', name: 'x', recordingMbid: '77777777-7777-4777-8777-777777777777', dryRun: false }),
       (err) => err instanceof BadRequestError
     );
   });
@@ -1162,7 +1162,7 @@ test('resolveLooseFileOverride rejects a symlink inside INGEST_DIR that targets 
     const { resolveLooseFileOverride } = await freshIngestExports();
     const { BadRequestError } = await import('../src/lib/httpErrors.js');
     await assert.rejects(
-      () => resolveLooseFileOverride({ filePath: link, name: 'sneaky.mp3', recordingMbid: 'rec-1', dryRun: false }),
+      () => resolveLooseFileOverride({ filePath: link, name: 'sneaky.mp3', recordingMbid: '77777777-7777-4777-8777-777777777777', dryRun: false }),
       (err) => err instanceof BadRequestError,
       'a symlink escaping INGEST_DIR must be refused before any tag/move work',
     );
@@ -1210,11 +1210,11 @@ test('an album folder is track-ordered by natural sort, not lexicographically', 
       exports: {
         getRecording: async (mbid) => ({
           mbid, title: mbid, lengthMs: 0, artist: 'The Band',
-          releaseGroups: [{ mbid: 'rg-1', title: 'Numbered' }], date: '2005-01-01',
+          releaseGroups: [{ mbid: '11111111-1111-4111-8111-111111111111', title: 'Numbered' }], date: '2005-01-01',
         }),
-        resolvePrimaryReleaseForGroup: async () => 'release-1',
+        resolvePrimaryReleaseForGroup: async () => '55555555-5555-4555-8555-555555555555',
         getReleaseWithTracks: async () => ({
-          release: { mbid: 'release-1', title: 'Numbered', artist: 'The Band', discCount: 1 },
+          release: { mbid: '55555555-5555-4555-8555-555555555555', title: 'Numbered', artist: 'The Band', discCount: 1 },
           tracks: [
             { position: 2, discNumber: 1, recordingMbid: 'rec-b', title: 'Bee', lengthMs: 180000 },
             { position: 10, discNumber: 1, recordingMbid: 'rec-a', title: 'Ay', lengthMs: 200000 },
@@ -1243,5 +1243,71 @@ test('an album folder is track-ordered by natural sort, not lexicographically', 
     assert.equal(result.matched.length, 2, 'the folder is coherent only when files are naturally sorted');
     assert.deepEqual(moves.map((m) => m.title), ['Bee', 'Ay']);
     assert.deepEqual(moves.map((m) => m.track), [2, 10]);
+  });
+});
+
+// Multi-disc rips are normally laid out as "Album/CD1", "Album/Disc 2" and so on.
+// Only the top level of an album folder was read, so those folders looked empty
+// and never appeared for ingest at all.
+test('an album folder with disc subfolders is found, and its files are ordered across discs', async (t) => {
+  await withIngestDir(async (dir) => {
+    const album = path.join(dir, 'Big Album');
+    await fs.mkdir(path.join(album, 'CD1'), { recursive: true });
+    await fs.mkdir(path.join(album, 'CD2'), { recursive: true });
+    await fs.writeFile(path.join(album, 'CD1', '1 - a.mp3'), 'fake-audio');
+    await fs.writeFile(path.join(album, 'CD1', '10 - b.mp3'), 'fake-audio');
+    await fs.writeFile(path.join(album, 'CD1', '2 - c.mp3'), 'fake-audio');
+    await fs.writeFile(path.join(album, 'CD2', '1 - d.mp3'), 'fake-audio');
+
+    const { items } = await scanIngestDir();
+    assert.equal(items.length, 1);
+    assert.equal(items[0].type, 'album');
+    assert.equal(items[0].trackCount, 4, 'every disc counts toward the folder');
+
+    // The order the coherence check depends on: disc, then natural filename order
+    // within it (so "10 - b" follows "2 - c", not "1 - a").
+    const seen = [];
+    t.mock.module('../src/services/fpcalc.js', {
+      exports: {
+        fingerprint: async (f) => { seen.push(path.relative(album, f)); return { durationSeconds: 1, fingerprint: 'x' }; },
+      },
+    });
+    t.mock.module('../src/services/acoustid.js', { exports: { lookup: async () => [] } });
+    const processIngestFresh = await freshProcessIngest();
+    await processIngestFresh({ dryRun: true });
+
+    assert.deepEqual(seen, [
+      path.join('CD1', '1 - a.mp3'),
+      path.join('CD1', '2 - c.mp3'),
+      path.join('CD1', '10 - b.mp3'),
+      path.join('CD2', '1 - d.mp3'),
+    ]);
+  });
+});
+
+// Two ingest runs at once walk the same folder and reach the same file: two
+// taglib writers racing on one save() and two moves racing on one rename. A
+// double-clicked button or an EventSource retry was enough to cause it.
+test('a second concurrent ingest run is refused rather than racing the first', async (t) => {
+  await withIngestDir(async (dir) => {
+    await fs.writeFile(path.join(dir, 'track.mp3'), 'fake-audio');
+
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    t.mock.module('../src/services/fpcalc.js', {
+      exports: { fingerprint: async () => { await gate; return { durationSeconds: 1, fingerprint: 'x' }; } },
+    });
+    t.mock.module('../src/services/acoustid.js', { exports: { lookup: async () => [] } });
+
+    const mod = await freshIngestExports();
+    const first = mod.processIngest({ dryRun: true });
+    assert.equal(mod.ingestInProgress(), true);
+    assert.throws(() => mod.processIngest({ dryRun: true }), /already in progress/);
+
+    release();
+    await first;
+    // Once it has finished, a new run is allowed again.
+    assert.equal(mod.ingestInProgress(), false);
+    await mod.processIngest({ dryRun: true });
   });
 });

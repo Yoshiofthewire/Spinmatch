@@ -6,6 +6,7 @@ import { readTags } from './tags.js';
 import { getDb, withTransaction } from '../lib/db.js';
 import {
   upsertLocalTrack, getChangeKeys, markRemoved, markRemovedByPath, recomputeStats,
+  purgeRemoved,
 } from './libraryRepo.js';
 import { assertInsideMusicDir } from '../lib/paths.js';
 
@@ -72,6 +73,14 @@ export function rowFor(filePath, stat, meta) {
 // build independent `seen` sets, so a file created mid-scan could be wrongly
 // markRemoved()'d by whichever run finishes last — this prevents that.
 let inFlight = null;
+let activeWorker = null;
+
+// Hard ceiling on one scan. Without it a worker wedged on an unresponsive mount
+// never settles its promise, `inFlight` is never cleared, and every subsequent
+// scanLibrary() hands back that same dead promise — the Rescan button spins
+// forever until the container restarts. Generous enough that a real 100k-track
+// first scan over a slow disk finishes well inside it.
+const SCAN_TIMEOUT_MS = 60 * 60 * 1000;
 
 // Runs the scan in a worker thread so its synchronous, CPU-bound work — a tag
 // read per file (node-taglib-sharp is sync) and the DB writes — never blocks
@@ -80,8 +89,15 @@ let inFlight = null;
 // opens its own DB connection from the same config.library.dbPath.
 export function scanLibrary() {
   if (inFlight) return inFlight;
-  inFlight = spawnScanWorker().finally(() => { inFlight = null; });
+  inFlight = spawnScanWorker().finally(() => { inFlight = null; activeWorker = null; });
   return inFlight;
+}
+
+// Terminates a scan in progress, so shutdown doesn't wait on a worker that may
+// be blocked in a filesystem call. Chunked commits mean the index is left at a
+// consistent (if incomplete) point; the next scan reconciles the rest.
+export async function stopScan() {
+  if (activeWorker) await activeWorker.terminate();
 }
 
 function spawnScanWorker() {
@@ -90,15 +106,27 @@ function spawnScanWorker() {
     // `--test` under the test runner, or `--env-file`); process.env is still
     // inherited, so config.js resolves MUSIC_DIR/LIBRARY_DB normally.
     const worker = new Worker(new URL('./libraryScanWorker.js', import.meta.url), { execArgv: [] });
+    activeWorker = worker;
     let settled = false;
-    worker.once('message', (msg) => {
+    const settle = (fn, value) => {
+      if (settled) return;
       settled = true;
-      if (msg.ok) resolve(msg.summary);
-      else reject(new Error(msg.error));
+      clearTimeout(timer);
+      fn(value);
+    };
+    const timer = setTimeout(() => {
+      worker.terminate();
+      settle(reject, new Error(`library scan exceeded ${SCAN_TIMEOUT_MS}ms and was terminated`));
+    }, SCAN_TIMEOUT_MS);
+    timer.unref?.();
+
+    worker.once('message', (msg) => {
+      if (msg.ok) settle(resolve, msg.summary);
+      else settle(reject, new Error(msg.error));
     });
-    worker.once('error', (err) => { settled = true; reject(err); });
+    worker.once('error', (err) => settle(reject, err));
     worker.once('exit', (code) => {
-      if (!settled) reject(new Error(`library scan worker exited with code ${code}`));
+      settle(reject, new Error(`library scan worker exited with code ${code}`));
     });
   });
 }
@@ -169,6 +197,11 @@ export async function runScanOnce() {
   }
   withTransaction(db, () => {
     markRemoved(db, seen);
+    // Tombstones exist so a file on a temporarily-unavailable volume isn't
+    // forgotten and then re-added as brand new (losing its added_at). After a
+    // month it isn't coming back, and keeping the row makes every later scan's
+    // getChangeKeys() and every COUNT pay for it.
+    purgeRemoved(db);
     recomputeStats(db);
   });
 

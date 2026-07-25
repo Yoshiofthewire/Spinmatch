@@ -3,8 +3,16 @@ import path from 'node:path';
 import { TTLCache } from '../lib/cache.js';
 
 const CACHE_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
-const cache = new TTLCache();
-const imageCache = new TTLCache();
+// A Cover Art Archive front cover is routinely 1-5 MB and occasionally far more.
+// Anything above this is refused rather than buffered: the only use for these
+// bytes is embedding art into a file, and a 40 MB scan is not that.
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+
+// URLs are small, so a generous cache costs little. Image *bodies* are not: this
+// cache holds Buffers, and 500 albums ingested in one run at a few MB each is
+// hundreds of megabytes retained for 12 hours. Hence the much tighter bound.
+const cache = new TTLCache({ maxEntries: 2000 });
+const imageCache = new TTLCache({ maxEntries: 24 });
 
 // Returns the real Cover Art Archive front-cover URL, or null if none exists
 // (or the lookup failed) so the route can fall back to a placeholder image.
@@ -17,7 +25,10 @@ export async function getFrontCoverUrl(releaseGroupMbid) {
   try {
     const response = await fetch(url, { method: 'HEAD', redirect: 'follow' });
     if (response.ok) result = response.url;
-  } catch {
+  } catch (err) {
+    // Cover art is decorative: a failed HEAD means "no art", and logging it is
+    // enough. The route falls back to a placeholder.
+    console.warn(`coverArt: front-cover lookup failed for ${releaseGroupMbid}: ${err.message}`);
     result = null;
   }
 
@@ -36,12 +47,18 @@ export async function getFrontCoverImage(releaseGroupMbid) {
   if (url) {
     try {
       const response = await fetch(url);
-      if (response.ok) {
+      const declared = Number(response.headers.get('content-length'));
+      if (response.ok && !(declared > MAX_IMAGE_BYTES)) {
         const bytes = Buffer.from(await response.arrayBuffer());
-        const mimeType = response.headers.get('content-type') || 'image/jpeg';
-        result = { bytes, mimeType };
+        // Re-checked after reading: Content-Length is a hint, not a promise.
+        if (bytes.length <= MAX_IMAGE_BYTES) {
+          result = { bytes, mimeType: response.headers.get('content-type') || 'image/jpeg' };
+        } else {
+          console.warn(`coverArt: front cover for ${releaseGroupMbid} exceeds ${MAX_IMAGE_BYTES} bytes, skipping`);
+        }
       }
-    } catch {
+    } catch (err) {
+      console.warn(`coverArt: could not fetch front cover for ${releaseGroupMbid}: ${err.message}`);
       result = null;
     }
   }

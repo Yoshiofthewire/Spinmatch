@@ -3,6 +3,7 @@ import * as tags from './tags.js';
 // links against whatever musicbrainz.js exposes — the search endpoints used
 // here are only reached on the no-AcoustID path.
 import * as mb from './musicbrainz.js';
+import { luceneQuoted } from '../lib/lucene.js';
 import { rankCandidates } from './durationMatch.js';
 import { normalizeTitle } from '../lib/normalize.js';
 
@@ -18,10 +19,10 @@ import { normalizeTitle } from '../lib/normalize.js';
 // agreement below, so a handful is plenty.
 const SEARCH_LIMIT = 5;
 
-// Inside a quoted Lucene term only `"` and `\` need handling; drop them rather
-// than escape, since a tag containing either is noise for matching anyway.
+// Escaped rather than stripped, so a file tagged "AC\DC" searches for the band
+// it names instead of for "AC DC".
 function term(value) {
-  return String(value).replace(/["\\]/g, ' ').trim();
+  return luceneQuoted(String(value).trim());
 }
 
 // A corrupt or non-audio file that slipped past the extension check has nothing
@@ -50,8 +51,16 @@ function rankByDuration(recordings, { title, durationMs }) {
   return rankCandidates(plausible, durationMs);
 }
 
-// Mirrors ingest.js's identifyFile: `{ confirmed, reason }`, where `confirmed`
-// is a full getRecording() result ready to tag and file.
+/**
+ * Mirrors ingest.js's identifyFile. Exactly one of `confirmed` / `reason` is set:
+ *  - matched: `{ confirmed: Recording, reason: null }` — a full getRecording()
+ *    result, ready to tag and file.
+ *  - not matched: `{ confirmed: null, reason: string }` — the reason is shown to
+ *    the user in the review list, so it explains what to do next.
+ *
+ * @param {string} filePath
+ * @returns {Promise<{confirmed: object|null, reason: string|null}>}
+ */
 export async function identifyFileFromTags(filePath) {
   const current = await readTagsSafely(filePath);
   if (!current?.artist || !current.title) {
@@ -71,10 +80,18 @@ export async function identifyFileFromTags(filePath) {
   return { confirmed: await mb.getRecording(best.mbid), reason: null };
 }
 
-// Mirrors the fingerprint path's per-file candidate gathering for an album
-// folder: `{ perFile, releaseGroupMbids }`, or `{ reason }` when the tags give
-// us nothing to go on. `recMbids` is always empty here — without fingerprints
-// the folder's coherence check rests entirely on durations.
+/**
+ * Mirrors the fingerprint path's per-file candidate gathering for an album folder.
+ * Either shape, never a mixture — callers discriminate on `reason`:
+ *  - `{ perFile: Array<{filePath, durationMs, recMbids, tags}>, releaseGroupMbids: string[] }`
+ *  - `{ reason: string }` when the tags give us nothing to go on.
+ *
+ * `recMbids` is always empty here: without fingerprints the folder's coherence
+ * check rests entirely on durations.
+ *
+ * @param {string[]} files
+ * @returns {Promise<{perFile?: object[], releaseGroupMbids?: string[], reason?: string}>}
+ */
 export async function albumCandidatesFromTags(files) {
   const perFile = [];
   for (const filePath of files) {
@@ -112,9 +129,20 @@ export async function albumCandidatesFromTags(files) {
 // Manual-picker counterpart to findCandidatesForFile's AcoustID near-misses:
 // whatever MusicBrainz returns for the file's tags, unfiltered, so a human can
 // pick even when the automatic tag match above wasn't confident enough.
-export async function candidatesFromTags(filePath) {
-  const current = await readTagsSafely(filePath);
-  if (!current?.artist && !current?.title) return { candidates: [] };
+//
+// `fallback` fills in fields the file's own tags don't carry. The library's
+// repair flow passes the file's path-derived tags here, because the files that
+// need repairing are precisely the ones whose tags are too empty to search on —
+// without it, every Health row returns zero candidates and the picker is a bare
+// search box. Only used to fill gaps; a real tag always wins.
+export async function candidatesFromTags(filePath, { fallback = null } = {}) {
+  const tags = await readTagsSafely(filePath);
+  const current = {
+    ...tags,
+    artist: tags?.artist ?? fallback?.artist ?? null,
+    title: tags?.title ?? fallback?.title ?? null,
+  };
+  if (!current.artist && !current.title) return { candidates: [] };
 
   const recordings = await mb.searchRecordings(recordingQuery(current));
   const candidates = recordings.slice(0, 10).map((r) => ({

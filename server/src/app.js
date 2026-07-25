@@ -13,17 +13,53 @@ import { libraryRouter } from './routes/library.js';
 import { authRouter } from './routes/auth.js';
 import { requireAuth } from './middleware/requireAuth.js';
 import { errorHandler } from './middleware/errorHandler.js';
+import { securityHeaders } from './middleware/securityHeaders.js';
+import { sameOriginOnly } from './middleware/sameOriginOnly.js';
+import { config } from './config.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// `auth` defaults to true so the real server and the auth tests run the full
-// session gate. Feature-route tests that aren't exercising auth pass
-// `{ auth: false }` to swap the gate for a pass-through — it never affects
-// production, which always calls createApp() with no arguments.
-export function createApp({ auth = true } = {}) {
+// `gate` is the session check, injected so feature-route tests that aren't
+// exercising auth can pass a pass-through. It is a dependency rather than an
+// `auth: false` flag on purpose: a boolean that switches off a security control
+// is a bypass switch shipping in production code, and this way the default is
+// the only thing production can get.
+export function createApp({ gate = requireAuth } = {}) {
   const app = express();
-  app.use(express.json());
-  const gate = auth ? requireAuth : (req, res, next) => next();
+  // Off unless configured. See config.trustProxy — this governs both req.ip
+  // (which the login rate limiter keys on) and req.secure (which decides whether
+  // the session cookie is marked Secure).
+  //
+  // `!= null` rather than a truthiness check: 0 and false are both meaningful
+  // values here ("trust nothing"), and silently skipping them would be the same
+  // class of bug as the string/number mix-up parseTrustProxy exists to fix.
+  if (config.trustProxy != null) {
+    try {
+      app.set('trust proxy', config.trustProxy);
+    } catch (err) {
+      // proxy-addr throws on anything it can't read as an IP or subnet. Failing
+      // loudly but comprehensibly beats a raw TypeError stack at boot, and
+      // beats starting up with the setting quietly inert.
+      console.error(
+        `Invalid TRUST_PROXY value ${JSON.stringify(String(config.trustProxy))}: ${err.message}`
+      );
+      console.error('Expected a hop count (e.g. 1), a subnet (10.0.0.0/8), or a preset (loopback).');
+      throw err;
+    }
+  }
+  app.use(securityHeaders);
+  app.use(express.json({ limit: '256kb' }));
+
+  // CSRF guard for the whole API, in one place. Applying it per-route meant two
+  // POST /api/verify endpoints never got it — each spawning a rate-limited
+  // yt-dlp subprocess per track. Safe methods are exempt; the GET endpoints that
+  // still need it (the SSE streams, which do real work) opt in individually.
+  app.use('/api', (req, res, next) => (
+    req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS'
+      ? next()
+      : sameOriginOnly(req, res, next)
+  ));
+
   app.use(express.static(path.join(__dirname, '..', 'public')));
 
   // Public routes: liveness, feature-flag config, and the auth flow itself.

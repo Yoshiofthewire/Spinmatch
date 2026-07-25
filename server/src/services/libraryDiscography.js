@@ -1,15 +1,18 @@
 import { searchArtists, browseReleaseGroupsByArtist, searchReleaseGroups } from './musicbrainz.js';
+import { luceneQuoted } from '../lib/lucene.js';
 import { detectAlbumGaps } from './libraryGaps.js';
 import { getDb } from '../lib/db.js';
-import { listArtistAlbums } from './libraryRepo.js';
+import { listArtistAlbums, artistExists } from './libraryRepo.js';
+import { primaryArtist } from '../lib/artistCredit.js';
 import { normalizeTitle } from '../lib/normalize.js';
 import { NotFoundError } from '../lib/httpErrors.js';
+import { config } from '../config.js';
 
 // A local artist name has to be turned into a MusicBrainz artist id before its
 // discography can be fetched, and that resolution is a fuzzy search. Anything at
 // or above this score is taken automatically; below it the caller is asked to
 // pick, because guessing wrong produces a wildly wrong "missing albums" list.
-const AUTO_ACCEPT_SCORE = 90;
+const AUTO_ACCEPT_SCORE = config.matching.artistAutoAcceptScore;
 // Re-check a remembered "no match" after a week — the artist may since have
 // been added to MusicBrainz, or the local tags may have been fixed.
 const NEGATIVE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -19,6 +22,15 @@ export function getArtistLink(db, artist) {
     'SELECT artist, mb_artist_id AS mbArtistId, confirmed, checked_at AS checkedAt '
     + 'FROM library_artist_links WHERE artist = ? COLLATE NOCASE'
   ).get(artist) ?? null;
+}
+
+// Forgets a remembered resolution so it can be looked up again. A wrong
+// auto-accepted guess used to be permanent: positives had no TTL, `confirmed` was
+// written but never read, and there was no way to clear one short of opening the
+// database by hand.
+export function deleteArtistLink(db, artist) {
+  return db.prepare('DELETE FROM library_artist_links WHERE artist = ? COLLATE NOCASE')
+    .run(artist).changes > 0;
 }
 
 export function saveArtistLink(db, { artist, mbArtistId, confirmed = 0 }) {
@@ -32,18 +44,36 @@ export function saveArtistLink(db, { artist, mbArtistId, confirmed = 0 }) {
   `).run(artist, mbArtistId, confirmed, Date.now());
 }
 
-// Resolves a local artist name to a MusicBrainz id, caching both hits and
-// misses. Returns {mbArtistId} when settled, or {candidates} when the match is
-// too weak to pick automatically.
-export async function resolveArtist(artist, { db = getDb() } = {}) {
+/**
+ * Resolves a local artist name to a MusicBrainz id, caching both hits and misses.
+ *
+ * Exactly one of two outcomes, discriminated by `mbArtistId`:
+ *  - settled:  `{ mbArtistId: string, cached: boolean }`
+ *  - unsettled: `{ mbArtistId: null, candidates: Array<{mbid, name, disambiguation, score}>, cached: boolean }`
+ *
+ * `candidates` is empty when nothing matched at all, and populated when several
+ * plausible artists matched and guessing would produce a wrong discography.
+ *
+ * @param {string} artist
+ * @param {{db?: object}} [options]
+ * @returns {Promise<{mbArtistId: string|null, candidates?: object[], cached: boolean}>}
+ */
+export async function resolveArtist(artist, { db = getDb(), allowCreditFallback = true } = {}) {
   const cached = getArtistLink(db, artist);
-  if (cached?.mbArtistId) return { mbArtistId: cached.mbArtistId, cached: true };
+  // A choice the user made explicitly is kept indefinitely. A guess the app made
+  // for itself is re-checked on the same cycle as a remembered miss, because a
+  // wrong guess produces a wildly wrong "missing albums" list and nothing else
+  // would ever revisit it.
+  if (cached?.mbArtistId
+      && (cached.confirmed || Date.now() - cached.checkedAt < NEGATIVE_TTL_MS)) {
+    return { mbArtistId: cached.mbArtistId, cached: true };
+  }
   if (cached && !cached.mbArtistId && Date.now() - cached.checkedAt < NEGATIVE_TTL_MS) {
     // Remembered negative: don't re-search on every visit.
     return { mbArtistId: null, candidates: [], cached: true };
   }
 
-  const artists = await searchArtists(`artist:"${artist.replace(/"/g, '')}"`);
+  const artists = await searchArtists(`artist:"${luceneQuoted(artist)}"`);
   const exact = artists.filter((a) => normalizeTitle(a.name) === normalizeTitle(artist));
   const best = exact[0] ?? artists[0];
 
@@ -51,12 +81,49 @@ export async function resolveArtist(artist, { db = getDb() } = {}) {
     saveArtistLink(db, { artist, mbArtistId: best.mbid, confirmed: 0 });
     return { mbArtistId: best.mbid, cached: false };
   }
+
+  // The whole string didn't settle. Before giving up, try its primary artist —
+  // a quarter of a real library is rows like "Justice & Thundercat" or
+  // "Nine Inch Nails / Stephen Morris and Gillian Gilbert", which resolve to
+  // nothing while the artist they lead with is one you own hundreds of tracks
+  // by. Reached only on failure, so a name that resolves whole ("She & Him")
+  // never gets split.
+  const viaCredit = allowCreditFallback ? await resolveViaCredit(artist, db) : null;
+  if (viaCredit) return viaCredit;
+
   if (!best) {
     saveArtistLink(db, { artist, mbArtistId: null, confirmed: 0 });
     return { mbArtistId: null, candidates: [], cached: false };
   }
   // Ambiguous: hand the choice back rather than guessing.
   return { mbArtistId: null, candidates: artists.slice(0, 8), cached: false };
+}
+
+// Resolves a joined credit through its primary artist, but only when that artist
+// is separately present in the collection.
+//
+// That ownership check is the entire safety argument, and it is not theoretical:
+// MusicBrainz has exact artists named "Florence", "Earth" and "Wind", so
+// splitting "Florence + The Machine" or "Earth, Wind & Fire" and trusting a name
+// match would link the wrong act with full confidence. Requiring the segment to
+// be something already on disk makes the fallback self-validating — it can only
+// ever recognise an artist the user demonstrably has.
+//
+// Recurses once (allowCreditFallback: false) so the primary's own resolution
+// reuses the normal cache; for an owned artist that is usually already a cache
+// hit and costs no upstream call at all.
+async function resolveViaCredit(artist, db) {
+  const primary = primaryArtist(artist);
+  if (!primary || !artistExists(db, primary)) return null;
+
+  const resolved = await resolveArtist(primary, { db, allowCreditFallback: false });
+  if (!resolved.mbArtistId) return null;
+
+  // Remembered against the ORIGINAL string, so the split is paid for once.
+  saveArtistLink(db, { artist, mbArtistId: resolved.mbArtistId, confirmed: 0 });
+  // `via` lets the UI say which artist this was matched through rather than
+  // presenting a discography that appears to come from nowhere.
+  return { mbArtistId: resolved.mbArtistId, cached: false, via: primary };
 }
 
 // Diffs a MusicBrainz studio-album discography against what's on disk.
@@ -104,6 +171,11 @@ export async function getArtistDiscography(artist, { db = getDb() } = {}) {
   return {
     artist,
     mbArtistId: resolution.mbArtistId,
+    // Set when the name only resolved through its primary artist, e.g.
+    // "Nine Inch Nails / Stephen Morris..." matched via "Nine Inch Nails". The
+    // UI shows it, because a discography that silently belongs to a different
+    // name than the one you clicked looks like a bug.
+    via: resolution.via ?? null,
     owned: ownedOut,
     missing,
     unmatchedLocal,
@@ -140,10 +212,9 @@ export async function resolveAlbum(artist, album, { db = getDb() } = {}) {
     return { releaseGroupMbid: null, cached: true };
   }
 
-  const clean = (value) => String(value ?? '').replace(/"/g, '');
   const query = artist
-    ? `releasegroup:"${clean(album)}" AND artist:"${clean(artist)}"`
-    : `releasegroup:"${clean(album)}"`;
+    ? `releasegroup:"${luceneQuoted(album)}" AND artist:"${luceneQuoted(artist)}"`
+    : `releasegroup:"${luceneQuoted(album)}"`;
   const results = await searchReleaseGroups(query);
 
   // Require the title to actually match after normalization: MusicBrainz always
@@ -166,6 +237,10 @@ export async function checkAlbumAgainstMusicBrainz(artist, album, { db = getDb()
   }
   // verify:false — the YouTube lookup is one rate-limited yt-dlp call per
   // missing track, far too slow for a panel. The client verifies individually.
-  const gaps = await detectAlbumGaps(releaseGroupMbid, { verify: false });
+  // The local artist/album are passed through so ownership is judged against the
+  // album actually on disk rather than against MusicBrainz's joined artist credit.
+  const gaps = await detectAlbumGaps(releaseGroupMbid, {
+    verify: false, localArtist: artist, localAlbum: album,
+  });
   return { artist, album, releaseGroupMbid, unresolved: false, ...gaps };
 }

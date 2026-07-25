@@ -8,13 +8,12 @@ import TracksTab from '../components/library/TracksTab.jsx';
 import IncompleteTab from '../components/library/IncompleteTab.jsx';
 import HealthTab from '../components/library/HealthTab.jsx';
 import DuplicatesTab from '../components/library/DuplicatesTab.jsx';
+import DiscoveryPanel from '../components/library/DiscoveryPanel.jsx';
+import PlaylistPanel from '../components/library/PlaylistPanel.jsx';
 import ArtistDetail from '../components/library/ArtistDetail.jsx';
 import AlbumDetail from '../components/library/AlbumDetail.jsx';
 import PlayerBar from '../components/library/PlayerBar.jsx';
-import {
-  getLibraryStats, getLibraryArtists, getLibraryAlbums,
-  getIncompleteAlbums, getLibraryHealth, scanLibrary,
-} from '../api/library.js';
+import { getLibraryStats, getIncompleteAlbums, getLibraryHealth, scanLibrary } from '../api/library.js';
 import { albumKey } from '../lib/albumKey.js';
 
 const TABS = [
@@ -25,6 +24,7 @@ const TABS = [
   ['incomplete', 'Incomplete'],
   ['health', 'Health'],
   ['duplicates', 'Duplicates'],
+  ['discover', 'Discover'],
 ];
 
 export default function LibraryPage() {
@@ -35,8 +35,6 @@ export default function LibraryPage() {
   const [selectedAlbum, setSelectedAlbum] = useState(null);
 
   const [stats, setStats] = useState(null);
-  const [artists, setArtists] = useState([]);
-  const [albums, setAlbums] = useState([]);
   const [incomplete, setIncomplete] = useState([]);
   const [health, setHealth] = useState(null);
 
@@ -57,18 +55,15 @@ export default function LibraryPage() {
     if (showLoading) setState('loading');
     setError(null);
     try {
-      // One round of requests for everything cheap and offline. The tracks tab
-      // and the MusicBrainz panels fetch on their own.
-      const [s, a, al, inc, h] = await Promise.all([
+      // Only what the page frame itself needs. Every tab that shows a list —
+      // artists, albums, tracks — fetches its own page from the server, so
+      // opening the Library no longer pulls the whole collection down first.
+      const [s, inc, h] = await Promise.all([
         getLibraryStats(),
-        getLibraryArtists({ sort: artistSort }),
-        getLibraryAlbums({ sort: albumSort }),
         getIncompleteAlbums(),
         getLibraryHealth(),
       ]);
       setStats(s);
-      setArtists(a.artists);
-      setAlbums(al.albums);
       setIncomplete(inc.albums);
       setHealth(h);
       setState('ready');
@@ -81,18 +76,6 @@ export default function LibraryPage() {
   const refresh = () => load({ showLoading: false });
 
   useEffect(() => { load(); }, []);
-
-  // Re-sorting is a server round trip because the SQL does the ordering, but
-  // it's a cheap aggregate query and it keeps one sort implementation.
-  useEffect(() => {
-    if (state !== 'ready') return;
-    getLibraryArtists({ sort: artistSort }).then((r) => setArtists(r.artists)).catch(() => {});
-  }, [artistSort]);
-
-  useEffect(() => {
-    if (state !== 'ready') return;
-    getLibraryAlbums({ sort: albumSort }).then((r) => setAlbums(r.albums)).catch(() => {});
-  }, [albumSort]);
 
   async function rescan() {
     setScanning(true);
@@ -205,7 +188,6 @@ export default function LibraryPage() {
               )}
               {tab === 'artists' && (
                 <ArtistsTab
-                  artists={artists}
                   sort={artistSort}
                   onSortChange={setArtistSort}
                   onSelect={openArtist}
@@ -213,10 +195,10 @@ export default function LibraryPage() {
               )}
               {tab === 'albums' && (
                 <AlbumsTab
-                  albums={albums}
                   sort={albumSort}
                   onSortChange={setAlbumSort}
                   onSelect={openAlbum}
+                  incomplete={incomplete}
                   incompleteKeys={incompleteKeys}
                 />
               )}
@@ -233,10 +215,20 @@ export default function LibraryPage() {
                   duplicateCount={health.duplicateCount}
                   onFixed={refresh}
                   onGoTo={switchTab}
+                  onSelectAlbum={openAlbum}
                 />
               )}
               {tab === 'duplicates' && (
                 <DuplicatesTab onPlay={(track, queue) => setPlaying({ track, queue })} />
+              )}
+              {/* The one tab that looks outward. Both panels are opt-in: the
+                  discovery half walks the rate-limited MusicBrainz queue, and
+                  the playlist half needs input before it has anything to do. */}
+              {tab === 'discover' && (
+                <>
+                  <DiscoveryPanel />
+                  <PlaylistPanel onPlay={(track, queue) => setPlaying({ track, queue })} />
+                </>
               )}
             </>
           )}

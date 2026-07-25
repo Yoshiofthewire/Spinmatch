@@ -439,6 +439,12 @@ tbody tr:hover {
   color: #ff8a78;
 }
 
+.banner-success {
+  background: rgba(80, 210, 140, 0.1);
+  border-color: rgba(80, 210, 140, 0.3);
+  color: #6fdca6;
+}
+
 .banner-rate-limited {
   background: rgba(240, 180, 41, 0.12);
   border-color: rgba(240, 180, 41, 0.3);
@@ -669,6 +675,51 @@ a:hover {
 }
 
 .auth-card input:focus-visible {
+  border-color: var(--lock);
+}
+
+/* ---------- Account ---------- */
+
+.account-page {
+  max-width: 32rem;
+}
+
+.account-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  margin-top: 1.5rem;
+  padding: 1.5rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+}
+
+.account-form h2 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1.1rem;
+}
+
+.account-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.account-form input {
+  padding: 0.75rem 1rem;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg-alt);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 1rem;
+}
+
+.account-form input:focus-visible {
   border-color: var(--lock);
 }
 
@@ -939,6 +990,88 @@ a:hover {
     rgba(240, 180, 41, 0.05) 6px,
     rgba(240, 180, 41, 0.05) 12px
   );
+}
+
+/* A suggestion from listening data rather than the relationship graph. Distinct
+   from badge-confirmed so "sounds like" and "sounds like + member of band" don't
+   read as the same claim at a glance. */
+.badge-similar {
+  background: rgba(140, 130, 255, 0.15);
+  color: #a99cff;
+}
+
+/* ---------- Playlist reconstruction ---------- */
+
+.playlist-input {
+  width: 100%;
+  padding: 0.7rem 0.9rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  resize: vertical;
+}
+
+.playlist-input:focus {
+  outline: none;
+  border-color: var(--lock);
+}
+
+.playlist-missing {
+  margin: 0.25rem 0 0;
+  padding-left: 1.2rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+/* ---------- Bulk tag repair ---------- */
+
+.bulk-fix-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.bulk-fix-table {
+  font-size: 0.85rem;
+}
+
+/* A value that would be written, as against one already on the file. The
+   distinction is the whole point of the preview, so it carries colour and weight
+   rather than relying on position in the row. */
+.bulk-fix-fill {
+  color: var(--lock);
+  font-weight: 600;
+}
+
+/* A file the proposal wouldn't change. Still listed, so the table accounts for
+   the whole album rather than only its holes. */
+.bulk-fix-unchanged td {
+  opacity: 0.55;
+}
+
+/* The repair panel opens as a row of the table, directly under the track it
+   belongs to, so the connection between the button and what it opened is
+   visible without scrolling. */
+.track-row-panel > td {
+  padding: 0;
+  background: var(--surface);
+  border-left: 2px solid var(--lock);
+}
+
+.track-row-panel .ingest-match-picker {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+}
+
+/* A track that has just been repaired, held in place until the list refetches so
+   the fix is visibly attributed to the row it happened on. */
+.track-row-fixed td {
+  color: var(--muted);
+  background: rgba(47, 217, 196, 0.06);
 }
 
 .badge-incomplete {

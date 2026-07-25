@@ -56,7 +56,7 @@ test('identifyFileFromTags refuses a candidate whose duration is outside toleran
   t.mock.module('../src/services/musicbrainz.js', {
     exports: {
       searchRecordings: async () => [
-        { mbid: 'rec-1', title: 'Opener', artist: 'The Band', lengthMs: 240000, score: 100, releaseGroupTitle: null },
+        { mbid: '77777777-7777-4777-8777-777777777777', title: 'Opener', artist: 'The Band', lengthMs: 240000, score: 100, releaseGroupTitle: null },
       ],
       getRecording: async () => { throw new Error('should not resolve an unconfirmed candidate'); },
     },
@@ -74,7 +74,7 @@ test('identifyFileFromTags refuses a candidate with a different title even at th
   t.mock.module('../src/services/musicbrainz.js', {
     exports: {
       searchRecordings: async () => [
-        { mbid: 'rec-1', title: 'A Different Song', artist: 'The Band', lengthMs: 180000, score: 100, releaseGroupTitle: null },
+        { mbid: '77777777-7777-4777-8777-777777777777', title: 'A Different Song', artist: 'The Band', lengthMs: 180000, score: 100, releaseGroupTitle: null },
       ],
       getRecording: async () => { throw new Error('should not resolve an unconfirmed candidate'); },
     },
@@ -125,7 +125,7 @@ test('albumCandidatesFromTags returns release groups and orders files by their t
     exports: {
       searchReleaseGroups: async (query) => {
         queries.push(query);
-        return [{ mbid: 'rg-1', title: 'An Album', artist: 'The Band', score: 100 }];
+        return [{ mbid: '11111111-1111-4111-8111-111111111111', title: 'An Album', artist: 'The Band', score: 100 }];
       },
     },
   });
@@ -133,7 +133,7 @@ test('albumCandidatesFromTags returns release groups and orders files by their t
   const { albumCandidatesFromTags } = await freshTagMatch();
   const result = await albumCandidatesFromTags(['/ingest/album/a.mp3', '/ingest/album/b.mp3']);
 
-  assert.deepEqual(result.releaseGroupMbids, ['rg-1']);
+  assert.deepEqual(result.releaseGroupMbids, ['11111111-1111-4111-8111-111111111111']);
   assert.deepEqual(result.perFile.map((f) => f.filePath), ['/ingest/album/b.mp3', '/ingest/album/a.mp3']);
   assert.deepEqual(result.perFile.map((f) => f.durationMs), [180000, 200000]);
   assert.deepEqual(result.perFile.map((f) => f.recMbids), [[], []]);
@@ -168,7 +168,7 @@ test('candidatesFromTags maps search hits onto the picker shape with 0–1 score
   t.mock.module('../src/services/musicbrainz.js', {
     exports: {
       searchRecordings: async () => [
-        { mbid: 'rec-1', title: 'Opener', artist: 'The Band', lengthMs: 180000, score: 100, releaseGroupTitle: 'An Album' },
+        { mbid: '77777777-7777-4777-8777-777777777777', title: 'Opener', artist: 'The Band', lengthMs: 180000, score: 100, releaseGroupTitle: 'An Album' },
       ],
     },
   });
@@ -177,7 +177,7 @@ test('candidatesFromTags maps search hits onto the picker shape with 0–1 score
   const { candidates } = await candidatesFromTags('/ingest/opener.mp3');
 
   assert.deepEqual(candidates, [{
-    recordingMbid: 'rec-1', title: 'Opener', artist: 'The Band',
+    recordingMbid: '77777777-7777-4777-8777-777777777777', title: 'Opener', artist: 'The Band',
     lengthMs: 180000, score: 1, releaseGroupTitle: 'An Album',
   }]);
 });
@@ -190,6 +190,57 @@ test('candidatesFromTags returns nothing to pick from when the file has no tags 
 
   const { candidatesFromTags } = await freshTagMatch();
   const { candidates } = await candidatesFromTags('/ingest/untagged.mp3');
+
+  assert.deepEqual(candidates, []);
+});
+
+// The library's repair flow passes path-derived tags here. Without them a file
+// with no artist or title tag returns zero candidates — which is exactly the
+// file the Health tab asks you to repair.
+test('candidatesFromTags searches on the fallback when the file has no tags of its own', async (t) => {
+  const queries = [];
+  t.mock.module('../src/services/tags.js', tagsMock(async () => fileTags({ artist: null, title: null })));
+  t.mock.module('../src/services/musicbrainz.js', {
+    exports: { searchRecordings: async (query) => { queries.push(query); return []; } },
+  });
+
+  const { candidatesFromTags } = await freshTagMatch();
+  await candidatesFromTags('/music/untagged.mp3', {
+    fallback: { artist: 'The Band', title: 'Opener' },
+  });
+
+  assert.equal(queries.length, 1, 'the empty tags no longer short-circuit the search');
+  assert.match(queries[0], /recording:"Opener"/);
+  assert.match(queries[0], /artist:"The Band"/);
+});
+
+test('candidatesFromTags prefers a real tag over the fallback', async (t) => {
+  const queries = [];
+  t.mock.module('../src/services/tags.js', tagsMock(async () => fileTags({ title: 'Real Title' })));
+  t.mock.module('../src/services/musicbrainz.js', {
+    exports: { searchRecordings: async (query) => { queries.push(query); return []; } },
+  });
+
+  const { candidatesFromTags } = await freshTagMatch();
+  await candidatesFromTags('/music/tagged.mp3', {
+    fallback: { artist: 'Wrong Band', title: 'Wrong Title' },
+  });
+
+  assert.match(queries[0], /recording:"Real Title"/);
+  assert.match(queries[0], /artist:"The Band"/, 'the real artist tag wins too');
+  assert.doesNotMatch(queries[0], /Wrong/);
+});
+
+test('candidatesFromTags still finds nothing when neither tags nor fallback have anything', async (t) => {
+  t.mock.module('../src/services/tags.js', tagsMock(async () => fileTags({ artist: null, title: null })));
+  t.mock.module('../src/services/musicbrainz.js', {
+    exports: { searchRecordings: async () => { throw new Error('should not search without tags'); } },
+  });
+
+  const { candidatesFromTags } = await freshTagMatch();
+  const { candidates } = await candidatesFromTags('/music/untagged.mp3', {
+    fallback: { artist: null, title: null },
+  });
 
   assert.deepEqual(candidates, []);
 });

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import EqualizerLoader from '../EqualizerLoader.jsx';
 import LocalCover from './LocalCover.jsx';
 import AlbumGapPanel from './AlbumGapPanel.jsx';
+import BulkFixPanel from './BulkFixPanel.jsx';
 import RescanButton from './RescanButton.jsx';
 import { getAlbumTracks } from '../../api/library.js';
 import { formatDuration, formatLongDuration } from '../../lib/format.js';
@@ -136,6 +137,15 @@ export default function AlbumDetail({ album, onPlay, onSelectArtist, onLibraryCh
           </table>
         </div>
       ))}
+
+      {/* Repairs what's here; AlbumGapPanel below finds what isn't. Applying a
+          repair re-reads the tracklist, because the tags it just wrote are what
+          the rows above are showing. */}
+      <BulkFixPanel
+        artist={album.artist}
+        album={album.album}
+        onApplied={() => { setReload((n) => n + 1); onLibraryChanged?.(); }}
+      />
 
       {/* Independent of the local tracklist load, so an upstream failure and a
           local failure can't take each other down. */}

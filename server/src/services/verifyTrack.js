@@ -4,7 +4,7 @@ import { TTLCache } from '../lib/cache.js';
 
 const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 
-const cache = new TTLCache();
+const cache = new TTLCache({ maxEntries: 2000 });
 
 function cacheKey({ artist, title, album, lengthMs }) {
   return `${artist}|${title}|${album || ''}|${lengthMs}`.toLowerCase();

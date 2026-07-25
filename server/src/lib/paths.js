@@ -12,7 +12,10 @@ export function assertInsideMusicDir(destPath) {
   const resolvedDest = path.resolve(destPath);
   const resolvedRoot = path.resolve(config.ingest.musicDir);
   if (!resolvedDest.startsWith(resolvedRoot + path.sep)) {
-    throw new BadRequestError(`Refusing to write outside MUSIC_DIR: ${destPath}`);
+    // The path is logged, not returned: error messages reach the browser, and
+    // the server's directory layout isn't the client's business.
+    console.warn(`paths: refusing to write outside MUSIC_DIR: ${destPath}`);
+    throw new BadRequestError('Refusing to write outside the music folder');
   }
   return resolvedDest;
 }
@@ -22,7 +25,16 @@ export function assertInsideMusicDir(destPath) {
 // at /etc/shadow resolves lexically to an in-root path, so the real path has to
 // be the thing that gets tested. Returns the resolved path to open.
 export async function assertReadableInsideMusicDir(filePath) {
-  const root = await fs.realpath(path.resolve(config.ingest.musicDir));
+  let root;
+  try {
+    root = await fs.realpath(path.resolve(config.ingest.musicDir));
+  } catch {
+    // An unmounted volume makes the root itself unresolvable. Without this the
+    // raw ENOENT escapes as a 500 on every route that reads a file — the same
+    // failure the scanner already guards against before it wipes the index.
+    console.warn('paths: MUSIC_DIR is not readable');
+    throw new BadRequestError('The music folder is not readable');
+  }
   let real;
   try {
     real = await fs.realpath(filePath);
@@ -30,7 +42,7 @@ export async function assertReadableInsideMusicDir(filePath) {
     throw new BadRequestError('File is not readable');
   }
   if (real !== root && !real.startsWith(root + path.sep)) {
-    throw new BadRequestError('Refusing to read outside MUSIC_DIR');
+    throw new BadRequestError('Refusing to read outside the music folder');
   }
   return real;
 }

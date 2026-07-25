@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import Pagination from '../Pagination.jsx';
 import EqualizerLoader from '../EqualizerLoader.jsx';
 import FixTrackPanel from './FixTrackPanel.jsx';
@@ -18,14 +18,25 @@ const ISSUES = [
   ['noCoverArt', 'No embedded cover art', true],
 ];
 
-function IssueTracks({ issue, fixable, onFixed }) {
+function IssueTracks({ issue, fixable, onFixed, onSelectAlbum }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [page, setPage] = useState(1);
   const [fixing, setFixing] = useState(null); // track being fixed
   const [fixed, setFixed] = useState({}); // trackId -> filled field list
+  // Bumped after a repair to refetch the current page. A repaired track no
+  // longer matches the issue it was listed under, so without this it sits in the
+  // table looking untouched however many times you fix it.
+  const [reloadToken, setReloadToken] = useState(0);
 
+  // Everything below is scoped to one issue and one page of it: leaving either
+  // has to clear the open panel and the per-track badges too, or a badge keyed
+  // by track id reappears against whatever row reuses that id in the next view.
   useEffect(() => { setPage(1); }, [issue]);
+  useEffect(() => {
+    setFixing(null);
+    setFixed({});
+  }, [issue, page]);
 
   useEffect(() => {
     let cancelled = false;
@@ -35,11 +46,12 @@ function IssueTracks({ issue, fixable, onFixed }) {
       .then((result) => { if (!cancelled) setData(result); })
       .catch((err) => { if (!cancelled) setError(err.message); });
     return () => { cancelled = true; };
-  }, [issue, page]);
+  }, [issue, page, reloadToken]);
 
   function handleFixed(result) {
     setFixed((prev) => ({ ...prev, [fixing.id]: result.filledFields }));
     setFixing(null);
+    setReloadToken((n) => n + 1);
     onFixed();
   }
 
@@ -58,45 +70,68 @@ function IssueTracks({ issue, fixable, onFixed }) {
         </thead>
         <tbody>
           {data.tracks.map((track) => (
-            <tr key={track.id}>
-              <td>{track.artist ?? <span className="muted">—</span>}</td>
-              <td>
-                {track.title ?? <span className="muted">—</span>}
-                {/* The path is the only identifier an untagged file has, so it
-                    has to be visible for the row to mean anything. */}
-                {!track.title && <span className="muted mono fix-path">{track.path}</span>}
-              </td>
-              <td>{track.album ?? <span className="muted">—</span>}</td>
-              <td className="mono">{track.trackNumber ?? '—'}</td>
-              {fixable && (
+            /* Fragment rather than a bare <tr> so the repair panel can open as a
+               row of its own directly beneath the one that was clicked. Rendering
+               it after the table instead puts it up to PAGE_SIZE rows below the
+               button, off-screen, which reads as the button doing nothing. */
+            <Fragment key={track.id}>
+              <tr className={fixed[track.id] ? 'track-row-fixed' : undefined}>
+                <td>{track.artist ?? <span className="muted">—</span>}</td>
                 <td>
-                  {fixed[track.id] ? (
-                    <span className="badge badge-confirmed">
-                      {fixed[track.id].length ? `Filled ${fixed[track.id].join(', ')}` : 'No changes needed'}
-                    </span>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => setFixing(fixing?.id === track.id ? null : track)}
-                    >
-                      {fixing?.id === track.id ? 'Close' : 'Fix tags'}
-                    </button>
-                  )}
+                  {track.title ?? <span className="muted">—</span>}
+                  {/* The path is the only identifier an untagged file has, so it
+                      has to be visible for the row to mean anything. */}
+                  {!track.title && <span className="muted mono fix-path">{track.path}</span>}
                 </td>
+                <td>{track.album ?? <span className="muted">—</span>}</td>
+                <td className="mono">{track.trackNumber ?? '—'}</td>
+                {fixable && (
+                  <td>
+                    {fixed[track.id] ? (
+                      <span className="badge badge-confirmed">
+                        {fixed[track.id].length ? `Filled ${fixed[track.id].join(', ')}` : 'No changes needed'}
+                      </span>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => setFixing(fixing?.id === track.id ? null : track)}
+                        >
+                          {fixing?.id === track.id ? 'Close' : 'Fix tags'}
+                        </button>
+                        {/* One file with an empty tag usually means the whole
+                            folder has one, and repairing them one at a time is
+                            the slow way round. */}
+                        {track.album && (
+                          <button
+                            type="button"
+                            className="chip-button"
+                            title={`Repair every file in ${track.album} at once`}
+                            onClick={() => onSelectAlbum({ artist: track.artist, album: track.album })}
+                          >
+                            Whole album
+                          </button>
+                        )}
+                      </>
+                    )}
+                  </td>
+                )}
+              </tr>
+              {fixing?.id === track.id && (
+                <tr className="track-row-panel">
+                  <td colSpan={fixable ? 5 : 4}>
+                    <FixTrackPanel
+                      track={fixing}
+                      onFixed={handleFixed}
+                      onCancel={() => setFixing(null)}
+                    />
+                  </td>
+                </tr>
               )}
-            </tr>
+            </Fragment>
           ))}
         </tbody>
       </table>
-
-      {fixing && (
-        <FixTrackPanel
-          key={fixing.id}
-          track={fixing}
-          onFixed={handleFixed}
-          onCancel={() => setFixing(null)}
-        />
-      )}
 
       <Pagination
         page={page}
@@ -111,9 +146,17 @@ function IssueTracks({ issue, fixable, onFixed }) {
 // gap and discography detection produce false positives: matching is done on
 // artist and title, so an empty artist tag is invisible to both. Each count
 // drills into the tracks behind it so it can be acted on, not just read.
-export default function HealthTab({ health, totalTracks, duplicateCount, onFixed, onGoTo }) {
+export default function HealthTab({ health, totalTracks, duplicateCount, onFixed, onGoTo, onSelectAlbum }) {
   const [issue, setIssue] = useState(null);
   const active = ISSUES.find(([key]) => key === issue);
+
+  // Repairing the last track in a category drops its count to 0, which disables
+  // its tile — leaving the selection stuck on a tile that can no longer be
+  // clicked to dismiss it. Clearing the selection is what the disabled tile
+  // would have done if it were still clickable.
+  useEffect(() => {
+    if (issue && health[issue] === 0) setIssue(null);
+  }, [issue, health]);
 
   return (
     <>
@@ -158,7 +201,12 @@ export default function HealthTab({ health, totalTracks, duplicateCount, onFixed
               this isn&apos;t a tagging problem — the file is likely truncated or corrupt.
             </p>
           )}
-          <IssueTracks issue={active[0]} fixable={active[2]} onFixed={onFixed} />
+          <IssueTracks
+            issue={active[0]}
+            fixable={active[2]}
+            onFixed={onFixed}
+            onSelectAlbum={onSelectAlbum}
+          />
         </>
       )}
 

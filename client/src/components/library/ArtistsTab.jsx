@@ -1,8 +1,11 @@
-import { useMemo, useState } from 'react';
 import Pagination from '../Pagination.jsx';
 import SortSelect from './SortSelect.jsx';
-import { usePagination } from '../../lib/usePagination.js';
+import EqualizerLoader from '../EqualizerLoader.jsx';
+import { getLibraryArtists } from '../../api/library.js';
+import { useServerList } from '../../lib/useServerList.js';
 import { formatLongDuration } from '../../lib/format.js';
+
+const PAGE_SIZE = 50;
 
 const SORTS = [
   ['name', 'Name'],
@@ -11,20 +14,16 @@ const SORTS = [
   ['duration', 'Playtime'],
 ];
 
-// The full artist list is small enough to hold client-side (a thousand rows of
-// four numbers), which buys instant filtering as you type instead of a request
-// per keystroke. The tracks tab, which is two orders of magnitude bigger, pages
-// on the server instead.
-export default function ArtistsTab({ artists, sort, onSortChange, onSelect }) {
-  const [query, setQuery] = useState('');
-
-  const filtered = useMemo(() => {
-    const needle = query.trim().toLowerCase();
-    if (!needle) return artists;
-    return artists.filter((a) => a.artist.toLowerCase().includes(needle));
-  }, [artists, query]);
-
-  const { page, setPage, pageCount, pageItems } = usePagination(filtered, 50);
+// Filtered and paged on the server, like the tracks tab. Holding the whole list
+// client-side bought instant filtering at demo scale, and cost a response
+// carrying every artist in the collection on every visit to the page.
+export default function ArtistsTab({ sort, onSortChange, onSelect }) {
+  const list = useServerList({
+    fetcher: ({ q, sort: s, limit, offset }) => getLibraryArtists({ q, sort: s, limit, offset }),
+    sort,
+    pageSize: PAGE_SIZE,
+  });
+  const artists = list.data?.artists ?? [];
 
   return (
     <>
@@ -32,15 +31,18 @@ export default function ArtistsTab({ artists, sort, onSortChange, onSelect }) {
         <input
           type="search"
           placeholder="Filter artists…"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          value={list.query}
+          onChange={(e) => list.setQuery(e.target.value)}
           aria-label="Filter artists"
         />
         <SortSelect value={sort} options={SORTS} onChange={onSortChange} />
-        <span className="muted">{filtered.length.toLocaleString()} shown</span>
+        {list.data && <span className="muted">{list.total.toLocaleString()} shown</span>}
       </div>
 
-      {filtered.length === 0 ? (
+      {list.state === 'error' && <p className="banner banner-error">{list.error}</p>}
+      {list.state === 'loading' && <EqualizerLoader label="Loading artists…" />}
+
+      {list.state === 'ready' && (artists.length === 0 ? (
         <p className="muted">No artists match that filter.</p>
       ) : (
         <>
@@ -49,7 +51,7 @@ export default function ArtistsTab({ artists, sort, onSortChange, onSelect }) {
               <tr><th>Artist</th><th>Albums</th><th>Tracks</th><th>Playtime</th></tr>
             </thead>
             <tbody>
-              {pageItems.map((a) => (
+              {artists.map((a) => (
                 <tr key={a.artist}>
                   <td>
                     <button type="button" className="link-button" onClick={() => onSelect(a.artist)}>
@@ -63,9 +65,9 @@ export default function ArtistsTab({ artists, sort, onSortChange, onSelect }) {
               ))}
             </tbody>
           </table>
-          <Pagination page={page} pageCount={pageCount} onChange={setPage} />
+          <Pagination page={list.page} pageCount={list.pageCount} onChange={list.setPage} />
         </>
-      )}
+      ))}
     </>
   );
 }

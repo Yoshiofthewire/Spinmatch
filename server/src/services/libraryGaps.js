@@ -1,7 +1,7 @@
 import { resolvePrimaryReleaseForGroup, getReleaseWithTracks } from './musicbrainz.js';
-import { verifyTrack } from './verifyTrack.js';
+import { verifyRecording } from './verifiedLinks.js';
 import { getDb } from '../lib/db.js';
-import { listArtistTitles } from './libraryRepo.js';
+import { listArtistTitles, getAlbumTracks } from './libraryRepo.js';
 import { NotFoundError } from '../lib/httpErrors.js';
 import { normalizeTitle } from '../lib/normalize.js';
 
@@ -13,17 +13,42 @@ import { normalizeTitle } from '../lib/normalize.js';
 // onMissing/signal exist for the streaming route: with verify on, each missing
 // track takes about a second, so the caller needs results as they land and a way
 // to abort when the client disconnects rather than a single long-held request.
+/**
+ * Diffs a MusicBrainz tracklist against what's on disk.
+ *
+ * @param {string} releaseGroupMbid
+ * @param {object} [options]
+ * @param {boolean} [options.verify]  Look each missing track up on YouTube.
+ * @param {(entry: object) => void} [options.onMissing]  Called per missing track as it lands.
+ * @param {AbortSignal} [options.signal]
+ * @param {string} [options.localArtist]  The artist as tagged locally, which is
+ *   not MusicBrainz's joined artist credit — see the ownership note below.
+ * @param {string} [options.localAlbum]  Scopes ownership to one local album.
+ * @returns {Promise<{album: object, owned: object[], missing: object[]}>}
+ */
 export async function detectAlbumGaps(releaseGroupMbid, {
-  verify = true, onMissing, signal,
+  verify = true, onMissing, signal, localArtist, localAlbum,
 } = {}) {
   const releaseMbid = await resolvePrimaryReleaseForGroup(releaseGroupMbid);
   if (!releaseMbid) throw new NotFoundError('No release found for this release group');
 
   const { release, tracks } = await getReleaseWithTracks(releaseMbid);
   const db = getDb();
-  // One query for the artist's owned titles, normalized, instead of an exact
-  // match per track — catches "Song (Remastered)" as owning "Song".
-  const ownedTitles = new Set(listArtistTitles(db, release.artist).map(normalizeTitle));
+  // Which local titles count as "owned" for this tracklist.
+  //
+  // `release.artist` is MusicBrainz's joined artist-credit string, which for a
+  // collaboration or a split is something like "Danger MouseSparklehorse" and
+  // matches no local artist tag at all — so scoping ownership to it reported
+  // every track of such an album as missing. When the caller knows which local
+  // album it is asking about (the per-album check does), compare against that
+  // album's own tracklist: it's both correct for collaborations and narrower,
+  // since a track also present on a greatest-hits shouldn't count as owned here.
+  const ownedTitles = new Set(
+    (localAlbum
+      ? getAlbumTracks(db, { artist: localArtist, album: localAlbum }).map((t) => t.title)
+      : listArtistTitles(db, localArtist ?? release.artist)
+    ).filter(Boolean).map(normalizeTitle),
+  );
   const owned = [];
   const missing = [];
 
@@ -47,7 +72,17 @@ export async function detectAlbumGaps(releaseGroupMbid, {
       record({ position: track.position, title: track.title, lengthMs: track.lengthMs, status: 'unchecked', video: null, deltaSeconds: null });
       continue;
     }
-    const verified = await verifyTrack({ artist: release.artist, title: track.title, album: release.title, lengthMs: track.lengthMs });
+    // verifyRecording rather than verifyTrack: this is the one place that knows
+    // which MusicBrainz recording a lookup is for, so it's the only place that
+    // can remember the answer past a restart. A sweep across an artist is many
+    // minutes of 1-req/s lookups, and verifyTrack's cache is in-memory only.
+    const verified = await verifyRecording({
+      recordingMbid: track.recordingMbid,
+      artist: release.artist,
+      title: track.title,
+      album: release.title,
+      lengthMs: track.lengthMs,
+    });
     record({ position: track.position, title: track.title, lengthMs: track.lengthMs, ...verified });
   }
 

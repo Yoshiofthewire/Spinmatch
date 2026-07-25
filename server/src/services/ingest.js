@@ -12,29 +12,86 @@ import * as organize from './organize.js';
 import { RateLimitedError, BadRequestError } from '../lib/httpErrors.js';
 
 const AUDIO_EXTENSIONS = new Set(['.mp3', '.flac', '.m4a', '.aac', '.ogg']);
-const SCORE_THRESHOLD = 0.5;
-const DURATION_TOLERANCE_MS = 5000;
+const SCORE_THRESHOLD = config.matching.acoustidMinScore;
+const DURATION_TOLERANCE_MS = config.matching.durationToleranceMs;
 
 // Paths reaching this module from the manual-override routes are client-
 // supplied. Resolve BOTH the target and the root through fs.realpath so a
 // symlink planted in INGEST_DIR that points at, say, /etc/passwd is rejected —
 // path.resolve() alone only normalizes "..", it does not follow symlinks, so it
 // would have let the link's in-tree name pass while the real target escaped.
-async function assertInsideIngestDir(filePath) {
+//
+// Returns the resolved path, and callers must use it rather than the one they
+// were given. Checking one path and then opening another is a time-of-check /
+// time-of-use gap: the two callers below make an uncached MusicBrainz request in
+// between, so the window is seconds wide, and a symlink swapped into it would be
+// followed by the tag write. The message deliberately omits the path — the
+// client already knows what it sent, and the error is relayed to the browser.
+async function resolveInsideIngestDir(filePath) {
   const root = await fs.realpath(config.ingest.ingestDir);
   let real;
   try {
     real = await fs.realpath(filePath);
   } catch {
-    throw new BadRequestError(`No such file inside INGEST_DIR: ${filePath}`);
+    throw new BadRequestError('No such file inside the ingest folder');
   }
   if (real !== root && !real.startsWith(root + path.sep)) {
-    throw new BadRequestError(`Refusing to operate outside INGEST_DIR: ${filePath}`);
+    throw new BadRequestError('Refusing to operate outside the ingest folder');
   }
+  return real;
 }
 
 function isAudioFile(name) {
   return AUDIO_EXTENSIONS.has(path.extname(name).toLowerCase());
+}
+
+// Natural sort, so "10 - x.mp3" follows "2 - x.mp3". A plain lexicographic sort
+// mis-orders any album with 10+ un-zero-padded track numbers, which then fails
+// the positional coherence check for the whole folder.
+function naturalCompare(a, b) {
+  return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
+}
+
+// The audio files of an album folder, including one level of disc subfolders —
+// "Album/CD1", "Album/Disc 2" and friends, which is how most multi-disc rips are
+// laid out and which used to be invisible to ingest entirely. Ordered by
+// subfolder then filename so file[i] lines up with track[i] across discs.
+// Symlinks are skipped at both levels, same as everywhere else in this module.
+async function collectAlbumFiles(dir) {
+  let entries;
+  try {
+    entries = await fs.readdir(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const here = entries
+    .filter((e) => e.isFile() && !e.isSymbolicLink() && isAudioFile(e.name))
+    .map((e) => e.name)
+    .sort(naturalCompare)
+    .map((name) => path.join(dir, name));
+
+  const subdirs = entries
+    .filter((e) => e.isDirectory() && !e.isSymbolicLink() && !e.name.startsWith('.'))
+    .map((e) => e.name)
+    .sort(naturalCompare);
+
+  const nested = [];
+  for (const sub of subdirs) {
+    const subPath = path.join(dir, sub);
+    let subEntries;
+    try {
+      subEntries = await fs.readdir(subPath, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    nested.push(...subEntries
+      .filter((e) => e.isFile() && !e.isSymbolicLink() && isAudioFile(e.name))
+      .map((e) => e.name)
+      .sort(naturalCompare)
+      .map((name) => path.join(subPath, name)));
+  }
+
+  return [...here, ...nested];
 }
 
 export async function scanIngestDir() {
@@ -59,8 +116,7 @@ export async function scanIngestDir() {
     // guard on the manual-override path).
     if (entry.isSymbolicLink()) continue;
     if (entry.isDirectory()) {
-      const children = await fs.readdir(path.join(dir, entry.name), { withFileTypes: true });
-      const trackCount = children.filter((c) => !c.isSymbolicLink() && isAudioFile(c.name)).length;
+      const trackCount = (await collectAlbumFiles(path.join(dir, entry.name))).length;
       if (trackCount > 0) {
         items.push({ id: entry.name, type: 'album', name: entry.name, path: path.join(dir, entry.name), trackCount });
       }
@@ -72,6 +128,13 @@ export async function scanIngestDir() {
   return { items };
 }
 
+/**
+ * Identifies one loose file. Same two-outcome shape as
+ * tagMatch.identifyFileFromTags: `{ confirmed, reason }`, with exactly one set.
+ *
+ * @param {string} filePath
+ * @returns {Promise<{confirmed: object|null, reason: string|null}>}
+ */
 async function identifyFile(filePath) {
   // No API key (or no key obtainable — AcoustID's registration has been down):
   // fall back to matching on the file's existing tags rather than punting the
@@ -247,11 +310,20 @@ async function albumCandidates(files) {
   return { perFile, releaseGroupMbids };
 }
 
+// Returns either `{ release, tracks, coverImage, files }` on success or
+// `{ reason }` on failure — never a mixture. Callers discriminate on `reason`.
 async function identifyAlbum(files) {
-  const { perFile, releaseGroupMbids, reason } = config.acoustidApiKey
+  if (files.length === 0) return { reason: 'this folder contains no audio files' };
+  const candidates = config.acoustidApiKey
     ? await albumCandidates(files)
     : await tagMatch.albumCandidatesFromTags(files);
-  if (reason) return { reason };
+  // The two producers return one shape or the other; treating a missing perFile
+  // as a failure means a future third producer can't leak `undefined` into the
+  // coherence check below.
+  if (candidates.reason || !candidates.perFile) {
+    return { reason: candidates.reason ?? 'could not derive candidates for this folder' };
+  }
+  const { perFile, releaseGroupMbids } = candidates;
 
   // First release-group that resolves to a release whose tracklist coherently
   // explains the whole folder wins (all-or-nothing at the folder level).
@@ -270,16 +342,7 @@ async function identifyAlbum(files) {
 }
 
 async function processAlbumFolder(item, { dryRun }) {
-  const entries = await fs.readdir(item.path, { withFileTypes: true });
-  const files = entries
-    .filter((e) => !e.isSymbolicLink() && isAudioFile(e.name))
-    .map((e) => e.name)
-    // Natural sort so "10 - x.mp3" follows "2 - x.mp3"; plain lexicographic
-    // sort would mis-order any album with 10+ un-zero-padded track numbers and
-    // fail the positional coherence check for the whole folder.
-    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }))
-    .map((name) => path.join(item.path, name));
-
+  const files = await collectAlbumFiles(item.path);
   const identified = await identifyAlbum(files);
   if (identified.reason) {
     return { needsReview: [{ path: item.path, name: item.name, code: 'album_incoherent', reason: identified.reason }] };
@@ -334,10 +397,32 @@ async function processAlbumFolder(item, { dryRun }) {
   return { matched, needsReview };
 }
 
+// Only one ingest run at a time, process-wide. Two concurrent runs walk the same
+// directory and reach the same file: that's two node-taglib-sharp writers racing
+// on one save(), and two moveIntoLibrary() calls racing on one rename — a
+// corrupted audio file, not an error message. A double-clicked button or an
+// EventSource retry is enough to trigger it.
+//
+// Unlike scanLibrary(), a second caller can't be coalesced onto the run in
+// flight: each has its own onItem stream and expects its own results. Reject.
+let inFlight = null;
+
+export function processIngest(options = {}) {
+  if (inFlight) {
+    throw new BadRequestError('An ingest run is already in progress — wait for it to finish.');
+  }
+  inFlight = runIngest(options).finally(() => { inFlight = null; });
+  return inFlight;
+}
+
+export function ingestInProgress() {
+  return inFlight !== null;
+}
+
 // `onItem`, when given, is called once per completed item as it resolves
 // (`{ kind: 'matched' | 'needsReview', ...entry }`) so callers can stream
 // progress. Without it, behaviour is identical — everything is just collected.
-export async function processIngest({ dryRun = false, onItem, signal } = {}) {
+async function runIngest({ dryRun = false, onItem, signal } = {}) {
   const { items } = await scanIngestDir();
   const matched = [];
   const needsReview = [];
@@ -377,14 +462,14 @@ export async function processIngest({ dryRun = false, onItem, signal } = {}) {
 // every candidate (not just ones scoring above SCORE_THRESHOLD) so a human can
 // pick from AcoustID's near-misses when auto-matching failed.
 export async function findCandidatesForFile(filePath) {
-  await assertInsideIngestDir(filePath);
+  const real = await resolveInsideIngestDir(filePath);
   // Without a key there are no fingerprint near-misses to offer, so seed the
   // picker with what MusicBrainz returns for the file's own tags instead.
   if (!config.acoustidApiKey) {
-    return tagMatch.candidatesFromTags(filePath);
+    return tagMatch.candidatesFromTags(real);
   }
 
-  const { durationSeconds, fingerprint: fp } = await fingerprint(filePath);
+  const { durationSeconds, fingerprint: fp } = await fingerprint(real);
   const acoustidCandidates = await lookup({ fingerprint: fp, durationSeconds });
   const top = acoustidCandidates.slice(0, 10);
   const recordings = await Promise.all(top.map((c) => getRecording(c.recordingMbid)));
@@ -405,7 +490,9 @@ export async function findCandidatesForFile(filePath) {
 // the recording is already chosen (by the user, via findCandidatesForFile's
 // near-misses or a text search), so just resolve it and finalize.
 export async function resolveLooseFileOverride({ filePath, name, recordingMbid, dryRun = false }) {
-  await assertInsideIngestDir(filePath);
+  const real = await resolveInsideIngestDir(filePath);
   const confirmed = await getRecording(recordingMbid);
-  return finalizeLooseFile(filePath, name, confirmed, { dryRun });
+  // `real`, not `filePath`: getRecording above is a network call, and the path
+  // that gets opened has to be the one that was actually validated.
+  return finalizeLooseFile(real, name, confirmed, { dryRun });
 }
