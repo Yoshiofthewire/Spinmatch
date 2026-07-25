@@ -172,11 +172,13 @@ The Library page has eight tabs:
   problem, and no fix is offered. When a file's tags are too empty to search on, the picker falls
   back to what the file's *path* says — `Artist/Album/05 - Title.flac` is metadata too — and a
   **Whole album** button escalates to the album-wide repair described below.
-- **Duplicates** — the same artist and title indexed at more than one path, with every copy's
-  album, track number, length, format, size and full path side by side, and a play button for each
-  so they can be compared. Often legitimate — an album track that also appears on a compilation.
-  **Spinmatch never deletes files;** this view tells you what you have and leaves the decision to
-  you.
+- **Duplicates** — the same artist, album and title indexed at more than one path, with every
+  copy's track number, length, format, size and full path side by side, and a play button for each
+  so they can be compared. The album is part of the match, so a song that appears on two different
+  releases — an album track that's also on a compilation — is not a duplicate and is not listed.
+  What's left is genuine redundancy: a FLAC and a 128k MP3 of the same album track, or a folder
+  copied twice. **Spinmatch never deletes files;** this view tells you what you have and leaves the
+  decision to you.
 - **Discover** — the one view that looks outward: artists and records connected to the ones you
   already own the most of, plus playlist reconstruction. See below.
 

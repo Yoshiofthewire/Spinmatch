@@ -5,10 +5,14 @@ import { usePagination } from '../../lib/usePagination.js';
 import { getDuplicates } from '../../api/library.js';
 import { formatDuration, formatBytes } from '../../lib/format.js';
 
-// The same artist and title at more than one path, with every copy laid out so
-// they can actually be compared — a count alone can't tell you whether you have
-// a FLAC and a 128k MP3 of the same song or two legitimately different
-// recordings that happen to share a title.
+// Every copy of the same track from the same release, laid out so they can
+// actually be compared — a count alone can't tell you whether you have a FLAC
+// and a 128k MP3 of one album track or something you'd rather keep both of.
+//
+// A song that appears on two different albums never reaches this view: owning a
+// track on its album and again on a compilation is owning two records, not two
+// copies. Album is part of the match server-side, in libraryRepo's
+// duplicateGroups.
 //
 // Deliberately read-only: Spinmatch never deletes a file, so this view shows you
 // what you have and leaves the decision (and the deletion) to you.
@@ -27,27 +31,30 @@ export default function DuplicatesTab({ onPlay }) {
 
   if (error) return <p className="banner banner-error">{error}</p>;
   if (!groups) return <EqualizerLoader label="Finding duplicates…" />;
-  if (groups.length === 0) return <p className="muted">No duplicate artist/title pairs found.</p>;
+  if (groups.length === 0) {
+    return <p className="muted">No duplicates — no track is indexed at more than one path within the same release.</p>;
+  }
 
   return (
     <>
       <p className="muted">
-        {groups.length.toLocaleString()} artist/title pair{groups.length === 1 ? '' : 's'} appear
-        at more than one path. Often legitimate — an album track that also shows up on a
-        compilation or soundtrack. <strong>Spinmatch never deletes files;</strong> play the
-        copies to compare them and remove what you don&apos;t want yourself.
+        {groups.length.toLocaleString()} track{groups.length === 1 ? '' : 's'} indexed at more than
+        one path within the same release. A song that also appears on a different album isn&apos;t
+        counted as a duplicate. <strong>Spinmatch never deletes files;</strong> play the copies to
+        compare them and remove what you don&apos;t want yourself.
       </p>
 
       {pageItems.map((group) => (
-        <div key={`${group.artist}-${group.title}`} className="duplicate-group">
+        <div key={`${group.artist}-${group.album}-${group.title}`} className="duplicate-group">
           <h3>
-            {group.title} <span className="muted">— {group.artist}</span>
+            {group.title}
+            <span className="muted">— {group.artist} · {group.album ?? 'No album'}</span>
             <span className="badge badge-none">{group.copies.length} copies</span>
           </h3>
           <table className="library-table">
             <thead>
               <tr>
-                <th aria-label="Play" /><th>Album</th><th>#</th><th>Length</th>
+                <th aria-label="Play" /><th>#</th><th>Length</th>
                 <th>Format</th><th>Size</th><th>Path</th>
               </tr>
             </thead>
@@ -59,12 +66,13 @@ export default function DuplicatesTab({ onPlay }) {
                       type="button"
                       className="play-button"
                       onClick={() => onPlay(copy, group.copies)}
-                      aria-label={`Play ${copy.title} from ${copy.album ?? 'unknown album'}`}
+                      // The album no longer tells two copies apart — they share
+                      // it — so the format does.
+                      aria-label={`Play ${copy.title} from ${group.album ?? 'unknown album'} (${copy.ext ?? 'unknown format'})`}
                     >
                       ▶
                     </button>
                   </td>
-                  <td>{copy.album ?? <span className="muted">—</span>}</td>
                   <td className="mono">{copy.trackNumber ?? '—'}</td>
                   <td className="mono">{formatDuration(copy.durationMs)}</td>
                   <td className="mono">{copy.ext ?? '—'}</td>
