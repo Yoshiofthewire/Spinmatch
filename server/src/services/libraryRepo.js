@@ -450,11 +450,17 @@ export function listHealthTracks(db, { issue, limit = 50, offset = 0 }) {
   return { tracks, total };
 }
 
-// Groups every live track by folded (artist, title) and keeps the groups with
-// more than one member. One query, one folding function, one place — rather than
-// grouping in SQL with LOWER() and then re-querying each group with JavaScript's
-// toLowerCase(), which disagreed for any non-ASCII name and returned groups with
-// no copies in them at all.
+// Groups every live track by folded (artist, album, title) and keeps the groups
+// with more than one member. Album is in the key because a song on two different
+// releases is not a duplicate — an album track that also lands on a greatest-hits
+// set is two records sharing a recording, and both are worth keeping. What's left
+// is the case worth acting on: the same track from the same release at more than
+// one path.
+//
+// One query, one folding function, one place — rather than grouping in SQL with
+// LOWER() and then re-querying each group with JavaScript's toLowerCase(), which
+// disagreed for any non-ASCII name and returned groups with no copies in them at
+// all.
 function duplicateGroups(db) {
   const rows = db.prepare(`
     SELECT ${TRACK_COLUMNS_WITH_PATH} FROM local_tracks
@@ -464,23 +470,31 @@ function duplicateGroups(db) {
 
   const byKey = new Map();
   for (const row of rows) {
-    const key = foldKey(row.artist, row.title);
+    // foldKey maps a null album to '', so tracks with no album tag share one
+    // bucket instead of each becoming a group of one.
+    const key = foldKey(row.artist, row.album, row.title);
     if (!byKey.has(key)) byKey.set(key, []);
     byKey.get(key).push(row);
   }
   return [...byKey.values()].filter((copies) => copies.length > 1);
 }
 
-// Every copy of each duplicated artist/title, so they can be compared field by
-// field. findHealthIssues only counts them; deciding which copy to keep needs
-// the paths, formats, sizes and durations side by side.
+// Every copy of each duplicated artist/album/title, so they can be compared
+// field by field. findHealthIssues only counts them; deciding which copy to keep
+// needs the paths, formats, sizes and durations side by side.
 export function findDuplicateGroups(db, { limit = 200 } = {}) {
   return duplicateGroups(db)
     .sort((a, b) => b.length - a.length
       || String(a[0].artist).localeCompare(String(b[0].artist))
+      || String(a[0].album ?? '').localeCompare(String(b[0].album ?? ''))
       || String(a[0].title).localeCompare(String(b[0].title)))
     .slice(0, limit)
-    .map((copies) => ({ artist: copies[0].artist, title: copies[0].title, copies }));
+    .map((copies) => ({
+      artist: copies[0].artist,
+      album: copies[0].album,
+      title: copies[0].title,
+      copies,
+    }));
 }
 
 // Indexed file paths for one artist or album. The targeted rescan turns these

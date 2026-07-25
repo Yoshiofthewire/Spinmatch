@@ -135,14 +135,15 @@ test('albums of the same name by different artists are not merged', () => {
 test('findHealthIssues counts missing tags and duplicate recordings', () => {
   const db = openDb(':memory:');
   repo.upsertLocalTrack(db, { path: '/m/1.mp3', artist: 'A', album: 'Al', title: 'Dup', durationMs: 1000, changeKey: '1:1' });
-  repo.upsertLocalTrack(db, { path: '/m/2.mp3', artist: 'a', album: 'Other', title: 'dup', durationMs: 1000, changeKey: '2:1' });
+  repo.upsertLocalTrack(db, { path: '/m/2.mp3', artist: 'a', album: 'al', title: 'dup', durationMs: 1000, changeKey: '2:1' });
   repo.upsertLocalTrack(db, { path: '/m/3.mp3', artist: null, album: null, title: 'Orphan', durationMs: null, changeKey: '3:1' });
   const health = repo.findHealthIssues(db);
   assert.equal(health.missingArtist, 1);
   assert.equal(health.missingAlbum, 1);
   assert.equal(health.missingDuration, 1);
   assert.equal(health.missingTrackNumber, 3);
-  // Case-insensitive grouping catches "A/Dup" vs "a/dup".
+  // Case-insensitive grouping catches "A/Al/Dup" vs "a/al/dup" across all three
+  // key components.
   assert.equal(health.duplicateCount, 1);
   db.close();
 });
@@ -150,7 +151,7 @@ test('findHealthIssues counts missing tags and duplicate recordings', () => {
 test('findDuplicateGroups returns every copy so they can be compared', () => {
   const db = openDb(':memory:');
   repo.upsertLocalTrack(db, { path: '/m/1.flac', artist: 'A', album: 'Al', title: 'Dup', durationMs: 1000, changeKey: '1:1', ext: 'flac', sizeBytes: 900 });
-  repo.upsertLocalTrack(db, { path: '/m/2.mp3', artist: 'a', album: 'Other', title: 'dup', durationMs: 1000, changeKey: '2:1', ext: 'mp3', sizeBytes: 100 });
+  repo.upsertLocalTrack(db, { path: '/m/2.mp3', artist: 'a', album: 'al', title: 'dup', durationMs: 1000, changeKey: '2:1', ext: 'mp3', sizeBytes: 100 });
   repo.upsertLocalTrack(db, { path: '/m/3.mp3', artist: 'A', album: 'Al', title: 'Unique', durationMs: 1000, changeKey: '3:1' });
 
   const groups = repo.findDuplicateGroups(db);
@@ -168,8 +169,8 @@ test('findDuplicateGroups returns every copy so they can be compared', () => {
 // zero copies — the Duplicates tab rendered a header over an empty table.
 test('findDuplicateGroups finds the copies for non-ASCII artists and titles', () => {
   const db = openDb(':memory:');
-  repo.upsertLocalTrack(db, { path: '/m/1.flac', artist: 'ÄRZTE', album: 'Al', title: 'Über', durationMs: 1000, changeKey: '1:1', ext: 'flac', sizeBytes: 900 });
-  repo.upsertLocalTrack(db, { path: '/m/2.mp3', artist: 'ärzte', album: 'Other', title: 'über', durationMs: 1000, changeKey: '2:1', ext: 'mp3', sizeBytes: 100 });
+  repo.upsertLocalTrack(db, { path: '/m/1.flac', artist: 'ÄRZTE', album: 'ÜBER', title: 'Über', durationMs: 1000, changeKey: '1:1', ext: 'flac', sizeBytes: 900 });
+  repo.upsertLocalTrack(db, { path: '/m/2.mp3', artist: 'ärzte', album: 'über', title: 'über', durationMs: 1000, changeKey: '2:1', ext: 'mp3', sizeBytes: 100 });
 
   const groups = repo.findDuplicateGroups(db);
   assert.equal(groups.length, 1);
@@ -177,6 +178,49 @@ test('findDuplicateGroups finds the copies for non-ASCII artists and titles', ()
   assert.deepEqual(groups[0].copies.map((c) => c.ext).sort(), ['flac', 'mp3']);
   // And the count on the Health tab has to agree with the view it links to.
   assert.equal(repo.findHealthIssues(db).duplicateCount, 1);
+  db.close();
+});
+
+// The requirement, stated directly: "Hey Jude" on the album, on 1967-1970 and
+// on 1 is three records that happen to share a recording, and a collector who
+// owns all three wants to keep all three.
+test('a song on two different albums is not a duplicate', () => {
+  const db = openDb(':memory:');
+  repo.upsertLocalTrack(db, { path: '/m/1.mp3', artist: 'The Beatles', album: 'Hey Jude', title: 'Hey Jude', durationMs: 431000, changeKey: '1:1' });
+  repo.upsertLocalTrack(db, { path: '/m/2.mp3', artist: 'The Beatles', album: '1967-1970', title: 'Hey Jude', durationMs: 431000, changeKey: '2:1' });
+
+  assert.deepEqual(repo.findDuplicateGroups(db), []);
+  // And the Health tab must agree with the view it links to.
+  assert.equal(repo.findHealthIssues(db).duplicateCount, 0);
+  db.close();
+});
+
+// A null album folds to the empty string, so album-less tracks share one bucket
+// rather than each becoming a group of one. Rare in a scanned library —
+// libraryScanner substitutes the containing directory name for a missing album
+// tag — but it keeps two loose copies of the same song reported.
+test('two copies with no album at all still group as a duplicate', () => {
+  const db = openDb(':memory:');
+  repo.upsertLocalTrack(db, { path: '/m/1.mp3', artist: 'A', album: null, title: 'Loose', durationMs: 1000, changeKey: '1:1' });
+  repo.upsertLocalTrack(db, { path: '/m/2.mp3', artist: 'A', album: null, title: 'loose', durationMs: 1000, changeKey: '2:1' });
+
+  const groups = repo.findDuplicateGroups(db);
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].copies.length, 2);
+  assert.equal(groups[0].album, null);
+  db.close();
+});
+
+// The album is now a property of the group, not of each copy, because every
+// copy in a group shares it by construction. The Duplicates tab renders it from
+// here, so it has to be in the payload.
+test('a duplicate group carries the album it belongs to', () => {
+  const db = openDb(':memory:');
+  repo.upsertLocalTrack(db, { path: '/m/1.flac', artist: 'A', album: 'Al', title: 'Dup', durationMs: 1000, changeKey: '1:1', ext: 'flac' });
+  repo.upsertLocalTrack(db, { path: '/m/2.mp3', artist: 'A', album: 'Al', title: 'Dup', durationMs: 1000, changeKey: '2:1', ext: 'mp3' });
+
+  const [group] = repo.findDuplicateGroups(db);
+  assert.equal(group.album, 'Al');
   db.close();
 });
 
