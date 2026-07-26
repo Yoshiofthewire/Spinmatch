@@ -585,6 +585,36 @@ a:hover {
   color: var(--muted);
 }
 
+/* The fingerprint half of the tag-repair panel: an opt-in button, and the
+   opt-in-again checkbox that lets its matches replace existing tags. */
+.fix-fingerprint {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.85rem;
+}
+
+.fix-fingerprint .muted {
+  font-size: 0.8rem;
+}
+
+.fix-section-title {
+  margin: 0 0 0.5rem;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.fix-overwrite {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-bottom: 0.85rem;
+  font-size: 0.85rem;
+}
+
 /* ---------- Library page ---------- */
 
 .stats-row {

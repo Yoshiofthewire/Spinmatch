@@ -123,6 +123,49 @@ test('writeMissingTags never overwrites a field that already has a value', async
   });
 });
 
+// The overwrite mode exists for one case: a fingerprint has identified the file
+// as a different recording than its tags claim, so the existing values are the
+// thing that's wrong. Off by default — see libraryFix.js.
+test('writeMissingTags with overwrite replaces a field that already has a value', async () => {
+  await withCopiedFixture('tagged.mp3', async (file) => {
+    const { filledFields } = await writeMissingTags(file, {
+      artist: 'Corrected Artist',
+      title: 'Corrected Title',
+    }, { overwrite: true });
+    assert.ok(filledFields.includes('artist'));
+    assert.ok(filledFields.includes('title'));
+
+    const after = await readTags(file);
+    assert.equal(after.artist, 'Corrected Artist');
+    assert.equal(after.title, 'Corrected Title');
+  });
+});
+
+// So that applying a match the file already agrees with reports "no changes
+// needed" instead of claiming a write it didn't make.
+test('writeMissingTags with overwrite does not report a field that already matches', async () => {
+  await withCopiedFixture('tagged.mp3', async (file) => {
+    const { filledFields } = await writeMissingTags(file, {
+      artist: 'Existing Artist',
+      title: 'Corrected Title',
+    }, { overwrite: true });
+    assert.ok(!filledFields.includes('artist'), 'an already-correct field is not rewritten');
+    assert.ok(filledFields.includes('title'), 'a field that differs still is');
+  });
+});
+
+test('writeMissingTags with overwrite still leaves existing cover art alone', async () => {
+  await withCopiedFixture('silence.mp3', async (file) => {
+    const coverImage = { bytes: Buffer.from([0xff, 0xd8, 0xff, 0xd9]), mimeType: 'image/jpeg' };
+    await writeMissingTags(file, { artist: 'A' }, { coverImage });
+
+    const secondCover = { bytes: Buffer.from([0xff, 0xd8, 0xff, 0x00, 0xff, 0xd9]), mimeType: 'image/jpeg' };
+    const { filledFields } = await writeMissingTags(file, { artist: 'B' }, { coverImage: secondCover, overwrite: true });
+    assert.ok(filledFields.includes('artist'), 'the tag is still corrected');
+    assert.ok(!filledFields.includes('coverArt'), 'art is never replaced, in either mode');
+  });
+});
+
 test('writeMissingTags embeds cover art only when none is present', async () => {
   await withCopiedFixture('silence.mp3', async (file) => {
     const coverImage = { bytes: Buffer.from([0xff, 0xd8, 0xff, 0xd9]), mimeType: 'image/jpeg' };

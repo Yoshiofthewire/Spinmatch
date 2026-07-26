@@ -993,63 +993,54 @@ test('a RateLimitedError mid-run stops processing and returns partial results pl
   });
 });
 
-test('findCandidatesForFile returns every AcoustID candidate with recording details, sorted by score', async (t) => {
+// The mapping from an AcoustID lookup to picker rows lives in
+// fingerprintMatch.js and is covered by fingerprintMatch.test.js. What ingest
+// still owns is the choice of source and the path validation, so that's what
+// these two pin down. (Mocking fpcalc/acoustid here would no longer reach the
+// extracted module: freshIngestExports only busts ingest.js's own cache, so
+// anything it statically imports keeps the dependencies it first resolved.)
+test('findCandidatesForFile asks the fingerprint matcher when an AcoustID key is configured', async (t) => {
   await withIngestDir(async (dir) => {
     const filePath = path.join(dir, 'track.mp3');
     await fs.writeFile(filePath, 'fake-audio');
 
-    t.mock.module('../src/services/fpcalc.js', {
-      exports: { fingerprint: async () => ({ durationSeconds: 200, fingerprint: 'AQAB...' }) },
-    });
-    t.mock.module('../src/services/acoustid.js', {
+    let fingerprintedPath = null;
+    t.mock.module('../src/services/fingerprintMatch.js', {
       exports: {
-        lookup: async () => [
-          { recordingMbid: 'rec-hi', score: 0.4 },
-          { recordingMbid: 'rec-lo', score: 0.1 },
-        ],
-      },
-    });
-    t.mock.module('../src/services/musicbrainz.js', {
-      exports: {
-        resolvePrimaryReleaseForGroup: async () => null,
-        getReleaseWithTracks: async () => ({ release: {}, tracks: [] }),
-        getRecording: async (mbid) => ({
-          mbid,
-          title: mbid === 'rec-hi' ? 'High Score Track' : 'Low Score Track',
-          lengthMs: 200000,
-          artist: 'Some Artist',
-          releaseGroups: [{ mbid: '11111111-1111-4111-8111-111111111111', title: 'Some Album' }],
-          date: '2020-01-01',
-        }),
+        candidatesFromFingerprint: async (p) => {
+          fingerprintedPath = p;
+          return { candidates: [{ recordingMbid: 'rec-hi', score: 0.4 }] };
+        },
       },
     });
 
     const { findCandidatesForFile } = await freshIngestExports();
     const result = await findCandidatesForFile(filePath);
 
-    assert.equal(result.candidates.length, 2);
-    assert.equal(result.candidates[0].recordingMbid, 'rec-hi');
-    assert.equal(result.candidates[0].score, 0.4);
-    assert.equal(result.candidates[0].title, 'High Score Track');
-    assert.equal(result.candidates[0].releaseGroupTitle, 'Some Album');
-    assert.equal(result.candidates[1].recordingMbid, 'rec-lo');
+    assert.equal(fingerprintedPath, await fs.realpath(filePath), 'the resolved path is what gets fingerprinted');
+    assert.deepEqual(result.candidates, [{ recordingMbid: 'rec-hi', score: 0.4 }]);
   });
 });
 
-test('findCandidatesForFile returns an empty list when AcoustID finds nothing', async (t) => {
+test('findCandidatesForFile falls back to the tag matcher with no AcoustID key', async (t) => {
   await withIngestDir(async (dir) => {
-    const filePath = path.join(dir, 'unknown.mp3');
+    const filePath = path.join(dir, 'track.mp3');
     await fs.writeFile(filePath, 'fake-audio');
 
-    t.mock.module('../src/services/fpcalc.js', {
-      exports: { fingerprint: async () => ({ durationSeconds: 200, fingerprint: 'AQAB...' }) },
+    t.mock.module('../src/services/fingerprintMatch.js', {
+      exports: {
+        candidatesFromFingerprint: async () => assert.fail('no key means no fingerprinting'),
+      },
     });
-    t.mock.module('../src/services/acoustid.js', { exports: { lookup: async () => [] } });
+    t.mock.module('../src/services/tagMatch.js', {
+      exports: { candidatesFromTags: async () => ({ candidates: [{ recordingMbid: 'from-tags', score: 0.9 }] }) },
+    });
 
     const { findCandidatesForFile } = await freshIngestExports();
-    const result = await findCandidatesForFile(filePath);
-
-    assert.deepEqual(result.candidates, []);
+    await withoutAcoustidKey(async () => {
+      const result = await findCandidatesForFile(filePath);
+      assert.deepEqual(result.candidates, [{ recordingMbid: 'from-tags', score: 0.9 }]);
+    });
   });
 });
 

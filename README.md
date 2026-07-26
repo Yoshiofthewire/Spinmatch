@@ -166,12 +166,21 @@ The Library page has eight tabs:
   artist tag is invisible to it. Each count drills into the tracks behind it, and most offer a
   **Fix tags** action: pick the right MusicBrainz recording (from the file's own tags, or by
   searching) and Spinmatch fills in what's missing — artist, title, album, year, track and disc
-  number, and cover art. It only ever fills tags that are *empty*, never overwrites a value you
-  already have, and never moves or renames the file. A missing *duration* is the exception: that
-  means the audio stream itself couldn't be decoded, so it's a broken file rather than a tagging
-  problem, and no fix is offered. When a file's tags are too empty to search on, the picker falls
-  back to what the file's *path* says — `Artist/Album/05 - Title.flac` is metadata too — and a
+  number, and cover art. By default it only fills tags that are *empty*, never overwrites a value
+  you already have, and it never moves or renames the file. A missing *duration* is the exception:
+  that means the audio stream itself couldn't be decoded, so it's a broken file rather than a
+  tagging problem, and no fix is offered. When a file's tags are too empty to search on, the picker
+  falls back to what the file's *path* says — `Artist/Album/05 - Title.flac` is metadata too — and a
   **Whole album** button escalates to the album-wide repair described below.
+
+  With an `ACOUSTID_API_KEY` set, the panel also offers **Identify by audio**: it fingerprints the
+  file with Chromaprint and asks AcoustID what the recording actually is, which is the only way to
+  identify a file whose tags and path are both useless. Because a fingerprint doesn't depend on the
+  metadata being repaired, it's also the one source allowed to *replace* tags rather than only fill
+  blanks — that's what fixes a file tagged as the wrong song entirely. It's a separate tick box,
+  unchecked by default, and offered only for fingerprint matches. Embedded cover art is never
+  replaced in either mode. The button is opt-in per track rather than automatic because
+  fingerprinting spawns a subprocess over the audio and spends a rate-limited AcoustID call.
 - **Duplicates** — the same artist, album and title indexed at more than one path, with every
   copy's track number, length, format, size and full path side by side, and a play button for each
   so they can be compared. The album is part of the match, so a song that appears on two different

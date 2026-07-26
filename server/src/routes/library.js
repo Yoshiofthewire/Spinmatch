@@ -10,7 +10,7 @@ import {
 import {
   getArtistDiscography, saveArtistLink, deleteArtistLink, checkAlbumAgainstMusicBrainz,
 } from '../services/libraryDiscography.js';
-import { getFixCandidates, applyFix } from '../services/libraryFix.js';
+import { getFixCandidates, getFingerprintCandidates, applyFix } from '../services/libraryFix.js';
 import { previewBulkFix, applyBulkFix, MAX_BULK_FIX } from '../services/libraryBulkFix.js';
 import {
   getSimilarArtists, getRecommendations, reconstructPlaylist,
@@ -415,14 +415,27 @@ libraryRouter.get('/fix-candidates/:trackId', async (req, res, next) => {
   }
 });
 
-// Writes tags to a file in place. Never moves or renames it, and only fills
-// fields that are currently empty — see libraryFix.js.
+// The same repair, identified by the file's audio instead of its metadata.
+// Separate from the route above rather than a flag on it, because this one
+// spawns fpcalc and spends an AcoustID call — the client asks for it by button,
+// not on every panel it opens.
+libraryRouter.get('/fingerprint-candidates/:trackId', async (req, res, next) => {
+  try {
+    res.json(await getFingerprintCandidates(Number(req.params.trackId)));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Writes tags to a file in place. Never moves or renames it, and by default only
+// fills fields that are currently empty. `overwrite` opts into replacing tags
+// that disagree with the chosen recording — see libraryFix.js.
 libraryRouter.post('/fix', async (req, res, next) => {
   try {
     const trackId = Number(req.body?.trackId);
     if (!trackId) throw new BadRequestError('trackId is required');
     const recordingMbid = assertMbid(str(req.body?.recordingMbid), 'recordingMbid');
-    res.json(await applyFix({ trackId, recordingMbid }));
+    res.json(await applyFix({ trackId, recordingMbid, overwrite: Boolean(req.body?.overwrite) }));
   } catch (err) {
     next(err);
   }

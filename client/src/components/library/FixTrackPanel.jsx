@@ -1,14 +1,26 @@
 import { useEffect, useState } from 'react';
 import { get } from '../../api/client.js';
+import { useConfig } from '../../ConfigContext.jsx';
 import EqualizerLoader from '../EqualizerLoader.jsx';
 import CandidateRow from '../CandidateRow.jsx';
-import { getFixCandidates, applyFix } from '../../api/library.js';
+import { getFixCandidates, getFingerprintCandidates, applyFix } from '../../api/library.js';
 
 // Repairs the tags of a file already in the library. The ingest counterpart of
 // this (IngestMatchPicker) tags AND moves the file; here the file is already
-// where it belongs, so applying a match only writes tags — and only the ones
-// that are currently empty, so an existing value is never overwritten.
+// where it belongs, so applying a match only writes tags.
+//
+// Two ways to identify the file, and the difference matters. The candidates
+// loaded on open come from its own tags and path, which is free but useless for
+// exactly the files that need repairing most. "Identify by audio" fingerprints
+// it instead — the one signal that doesn't depend on the metadata being fixed —
+// but that costs an fpcalc run and a rate-limited AcoustID call, so it waits to
+// be asked for.
+//
+// Only a fingerprint match may overwrite tags the file already has, and only
+// when explicitly ticked: the tag/path candidates are a guess built from the
+// same metadata they'd be replacing.
 export default function FixTrackPanel({ track, onFixed, onCancel }) {
+  const { acoustidConfigured } = useConfig();
   const [candidates, setCandidates] = useState(null);
   const [loadError, setLoadError] = useState(null);
   const [query, setQuery] = useState('');
@@ -16,16 +28,33 @@ export default function FixTrackPanel({ track, onFixed, onCancel }) {
   const [searching, setSearching] = useState(false);
   const [applyingMbid, setApplyingMbid] = useState(null);
   const [applyError, setApplyError] = useState(null);
+  const [fpCandidates, setFpCandidates] = useState(null);
+  const [fingerprinting, setFingerprinting] = useState(false);
+  const [overwrite, setOverwrite] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     setCandidates(null);
     setLoadError(null);
+    setFpCandidates(null);
+    setOverwrite(false);
     getFixCandidates(track.id)
       .then((data) => { if (!cancelled) setCandidates(data.candidates); })
       .catch((err) => { if (!cancelled) setLoadError(err); });
     return () => { cancelled = true; };
   }, [track.id]);
+
+  async function handleIdentifyByAudio() {
+    setFingerprinting(true);
+    setApplyError(null);
+    try {
+      setFpCandidates((await getFingerprintCandidates(track.id)).candidates);
+    } catch (err) {
+      setApplyError(err);
+    } finally {
+      setFingerprinting(false);
+    }
+  }
 
   async function handleSearch(e) {
     e.preventDefault();
@@ -42,22 +71,78 @@ export default function FixTrackPanel({ track, onFixed, onCancel }) {
     }
   }
 
-  async function handleUse(recordingMbid) {
+  // `fromFingerprint` gates the overwrite: a tag-derived candidate never gets to
+  // replace the tags it was derived from.
+  async function handleUse(recordingMbid, fromFingerprint = false) {
     setApplyingMbid(recordingMbid);
     setApplyError(null);
     try {
-      onFixed(await applyFix({ trackId: track.id, recordingMbid }));
+      onFixed(await applyFix({
+        trackId: track.id,
+        recordingMbid,
+        overwrite: fromFingerprint && overwrite,
+      }));
     } catch (err) {
       setApplyError(err);
       setApplyingMbid(null);
     }
   }
 
+  // A recording the fingerprint already offered isn't offered again below with a
+  // weaker score and a different apply behaviour.
+  const fpMbids = new Set((fpCandidates ?? []).map((c) => c.recordingMbid));
+  const tagCandidates = (candidates ?? []).filter((c) => !fpMbids.has(c.recordingMbid));
+
   return (
     <div className="ingest-match-picker">
       <p className="muted mono fix-path">{track.path}</p>
 
       {loadError && <p className="banner banner-error">{loadError.message}</p>}
+
+      {acoustidConfigured && (
+        <div className="fix-fingerprint">
+          <button type="button" onClick={handleIdentifyByAudio} disabled={fingerprinting}>
+            {fingerprinting ? 'Fingerprinting…' : 'Identify by audio'}
+          </button>
+          <span className="muted">Reads the file itself — the way to fix tags that are wrong, not just missing.</span>
+        </div>
+      )}
+
+      {fpCandidates && fpCandidates.length === 0 && (
+        <p className="muted">AcoustID doesn&apos;t recognise this recording.</p>
+      )}
+      {fpCandidates && fpCandidates.length > 0 && (
+        <>
+          <h4 className="fix-section-title">AcoustID matches</h4>
+          {/* Above the list, not below it: it changes what "Use this" does, so
+              it has to be read before the button is reached. Off by default,
+              and only ever offered here — nothing in this app can be undone. */}
+          <label className="fix-overwrite">
+            <input
+              type="checkbox"
+              checked={overwrite}
+              onChange={(e) => setOverwrite(e.target.checked)}
+            />
+            Replace existing tags, don&apos;t just fill blanks
+          </label>
+          <ul className="ingest-candidate-list">
+            {fpCandidates.map((c) => (
+              <CandidateRow
+                key={c.recordingMbid}
+                mbid={c.recordingMbid}
+                title={c.title}
+                artist={c.artist}
+                releaseGroupTitle={c.releaseGroupTitle}
+                lengthMs={c.lengthMs}
+                score={c.score}
+                busy={applyingMbid === c.recordingMbid}
+                onUse={(mbid) => handleUse(mbid, true)}
+              />
+            ))}
+          </ul>
+        </>
+      )}
+
       {candidates === null && !loadError && <EqualizerLoader label="Searching MusicBrainz…" />}
       {candidates && candidates.length === 0 && (
         <p className="muted">
@@ -65,22 +150,27 @@ export default function FixTrackPanel({ track, onFixed, onCancel }) {
           when the tags are what&apos;s missing. Search for it below.
         </p>
       )}
-      {candidates && candidates.length > 0 && (
-        <ul className="ingest-candidate-list">
-          {candidates.map((c) => (
-            <CandidateRow
-              key={c.recordingMbid}
-              mbid={c.recordingMbid}
-              title={c.title}
-              artist={c.artist}
-              releaseGroupTitle={c.releaseGroupTitle}
-              lengthMs={c.lengthMs}
-              score={c.score}
-              busy={applyingMbid === c.recordingMbid}
-              onUse={handleUse}
-            />
-          ))}
-        </ul>
+      {tagCandidates.length > 0 && (
+        <>
+          {fpCandidates && fpCandidates.length > 0 && (
+            <h4 className="fix-section-title">Matches from this file&apos;s tags and path</h4>
+          )}
+          <ul className="ingest-candidate-list">
+            {tagCandidates.map((c) => (
+              <CandidateRow
+                key={c.recordingMbid}
+                mbid={c.recordingMbid}
+                title={c.title}
+                artist={c.artist}
+                releaseGroupTitle={c.releaseGroupTitle}
+                lengthMs={c.lengthMs}
+                score={c.score}
+                busy={applyingMbid === c.recordingMbid}
+                onUse={handleUse}
+              />
+            ))}
+          </ul>
+        </>
       )}
 
       <form className="ingest-candidate-search" onSubmit={handleSearch}>

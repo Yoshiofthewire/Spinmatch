@@ -76,7 +76,16 @@ export async function readCoverArt(filePath) {
   }
 }
 
-export async function writeMissingTags(filePath, desired, { coverImage } = {}) {
+// `overwrite` widens the contract from "fill the blanks" to "correct the file":
+// a field is written when it differs from what's desired, not only when it's
+// empty. Reserved for the fingerprint path, where the audio itself says the
+// existing tags name the wrong recording. A field that already agrees is left
+// alone and stays out of filledFields, so applying a match the file already
+// matches honestly reports that nothing changed.
+//
+// Cover art is fill-only in both modes: replacing embedded art is irreversible
+// and this app has no undo.
+export async function writeMissingTags(filePath, desired, { coverImage, overwrite = false } = {}) {
   const file = File.createFromPath(filePath);
   const filledFields = [];
   try {
@@ -85,7 +94,8 @@ export async function writeMissingTags(filePath, desired, { coverImage } = {}) {
       const desiredValue = desired[field];
       if (desiredValue == null) continue;
       const current = readField(tag, field);
-      if (current == null) {
+      const shouldWrite = overwrite ? current !== desiredValue : current == null;
+      if (shouldWrite) {
         writeField(tag, field, desiredValue);
         filledFields.push(field);
       }

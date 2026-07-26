@@ -8,12 +8,16 @@ import os from 'node:os';
 import path from 'node:path';
 
 process.env.MB_CONTACT_EMAIL = 'test@example.com';
+// The fingerprint path is only offered when a key is configured; the
+// "unconfigured" test flips this off on the config singleton per-test.
+process.env.ACOUSTID_API_KEY = 'test-acoustid-key';
 
 const musicDir = fs.mkdtempSync(path.join(os.tmpdir(), 'spinmatch-fix-'));
 process.env.MUSIC_DIR = musicDir;
 
 const { openDb, setDbForTest } = await import('../src/lib/db.js');
 const repo = await import('../src/services/libraryRepo.js');
+const configModule = await import('../src/config.js');
 
 const RECORDING = {
   mbid: '77777777-7777-4777-8777-777777777777',
@@ -31,8 +35,11 @@ let counter = 0;
 // Every query candidatesFromTags sent upstream, so the path-derived fallback can
 // be asserted on what was actually searched for.
 let searched = [];
+// Every file handed to the fingerprint matcher, so "the audio is only read when
+// asked for" can be asserted.
+let fingerprinted = [];
 
-async function freshFix({ current, recording = RECORDING, coverImage = null } = {}) {
+async function freshFix({ current, recording = RECORDING, coverImage = null, fingerprintCandidates = [] } = {}) {
   counter += 1;
   const { mock } = await import('node:test');
   mock.reset();
@@ -58,14 +65,29 @@ async function freshFix({ current, recording = RECORDING, coverImage = null } = 
     namedExports: {
       readTags: async () => ({ ...current, hasCoverArt: false }),
       readCoverArt: async () => null,
-      // Mirrors the real writeMissingTags contract: only fills what's empty.
+      // Mirrors the real writeMissingTags contract: fills what's empty, or with
+      // overwrite, whatever disagrees with what's wanted.
       writeMissingTags: async (filePath, desired, opts) => {
-        const filledFields = Object.keys(desired)
-          .filter((k) => desired[k] != null && current[k] == null);
-        written = { filePath, desired, filledFields, coverImage: opts?.coverImage ?? null };
+        const filledFields = Object.keys(desired).filter((k) => (
+          desired[k] != null && (opts?.overwrite ? current[k] !== desired[k] : current[k] == null)
+        ));
+        written = {
+          filePath, desired, filledFields,
+          coverImage: opts?.coverImage ?? null,
+          overwrite: opts?.overwrite ?? false,
+        };
         return { filledFields };
       },
       plannedFills: () => [],
+    },
+  });
+
+  mock.module('../src/services/fingerprintMatch.js', {
+    namedExports: {
+      candidatesFromFingerprint: async (filePath) => {
+        fingerprinted.push(filePath);
+        return { candidates: fingerprintCandidates };
+      },
     },
   });
 
@@ -213,6 +235,141 @@ test('getFixCandidates commits to nothing for a file with no usable path', async
   assert.equal(result.pathTags.artist, null);
   assert.equal(result.pathTags.album, null);
   assert.equal(result.pathTags.title, 'unknown');
+  db.close();
+});
+
+// The fingerprint is the one signal that doesn't depend on the metadata being
+// repaired, so it's what the panel offers when the tag/path search comes back
+// with nothing useful. It costs an fpcalc subprocess, hence on demand only.
+test('getFingerprintCandidates identifies the file by its audio', async () => {
+  const db = openDb(':memory:');
+  setDbForTest(db);
+  const track = seedTrack(db);
+  fingerprinted = [];
+
+  const { getFingerprintCandidates } = await freshFix({
+    current: { artist: null, title: null, album: null, trackNumber: null, disc: null, year: null },
+    fingerprintCandidates: [
+      { recordingMbid: '77777777-7777-4777-8777-777777777777', title: 'Idioteque', artist: 'Radiohead', lengthMs: 300_000, score: 0.92, releaseGroupTitle: 'Kid A' },
+    ],
+  });
+  const result = await getFingerprintCandidates(track.id);
+
+  assert.deepEqual(fingerprinted, [track.path], 'the indexed file itself is what gets fingerprinted');
+  assert.equal(result.candidates.length, 1);
+  assert.equal(result.candidates[0].score, 0.92);
+  assert.equal(result.track.id, track.id);
+  db.close();
+});
+
+test('getFingerprintCandidates does not fall back to a tag search when the audio is unknown', async () => {
+  const db = openDb(':memory:');
+  setDbForTest(db);
+  const track = seedTrack(db);
+  searched = [];
+
+  const { getFingerprintCandidates } = await freshFix({
+    current: { artist: null, title: null, album: null, trackNumber: null, disc: null, year: null },
+    fingerprintCandidates: [],
+  });
+  const result = await getFingerprintCandidates(track.id);
+
+  assert.deepEqual(result.candidates, []);
+  assert.deepEqual(searched, [], 'the caller already has the tag candidates on screen');
+  db.close();
+});
+
+test('getFingerprintCandidates is refused when no AcoustID key is configured', async () => {
+  const db = openDb(':memory:');
+  setDbForTest(db);
+  const track = seedTrack(db);
+
+  const { getFingerprintCandidates } = await freshFix({
+    current: { artist: null, title: null, album: null, trackNumber: null, disc: null, year: null },
+  });
+  const original = configModule.config.acoustidApiKey;
+  configModule.config.acoustidApiKey = null;
+  try {
+    await assert.rejects(() => getFingerprintCandidates(track.id), /acoustid/i);
+  } finally {
+    configModule.config.acoustidApiKey = original;
+  }
+  db.close();
+});
+
+// A file tagged as the wrong song can't be repaired by filling blanks — there
+// aren't any. Only offered for fingerprint matches, and only on an explicit
+// opt-in, because there's no undo.
+test('an overwriting fix replaces tags that disagree with the recording', async () => {
+  const db = openDb(':memory:');
+  setDbForTest(db);
+  const track = seedTrack(db, { artist: 'Wrong Band', title: 'Wrong Song' });
+  written = null;
+
+  const { applyFix } = await freshFix({
+    current: { artist: 'Wrong Band', title: 'Wrong Song', album: null, trackNumber: null, disc: null, year: null },
+  });
+  const result = await applyFix({
+    trackId: track.id, recordingMbid: '77777777-7777-4777-8777-777777777777', overwrite: true,
+  });
+
+  assert.equal(written.overwrite, true);
+  assert.ok(result.filledFields.includes('artist'), 'the wrong artist is corrected');
+  assert.ok(result.filledFields.includes('title'));
+  assert.equal(result.overwritten, true, 'the caller can tell "replaced" from "filled"');
+  db.close();
+});
+
+test('an overwriting fix corrects a track number that disagrees with the tracklist', async () => {
+  const db = openDb(':memory:');
+  setDbForTest(db);
+  const track = seedTrack(db, { artist: 'Radiohead', trackNumber: 2 });
+  written = null;
+
+  const { applyFix } = await freshFix({
+    current: { artist: 'Radiohead', title: null, album: null, trackNumber: 2, disc: null, year: null },
+  });
+  await applyFix({
+    trackId: track.id, recordingMbid: '77777777-7777-4777-8777-777777777777', overwrite: true,
+  });
+
+  // The default path skips the tracklist lookup entirely for a file that
+  // already has a number; overwriting has to fetch it to correct a wrong one.
+  assert.equal(written.desired.trackNumber, 7, 'the position comes from the release tracklist');
+  db.close();
+});
+
+test('a fix that is not overwriting still reports itself as such', async () => {
+  const db = openDb(':memory:');
+  setDbForTest(db);
+  const track = seedTrack(db);
+  written = null;
+
+  const { applyFix } = await freshFix({
+    current: { artist: null, title: null, album: null, trackNumber: null, disc: null, year: null },
+  });
+  const result = await applyFix({ trackId: track.id, recordingMbid: '77777777-7777-4777-8777-777777777777' });
+
+  assert.equal(written.overwrite, false, 'fill-only stays the default');
+  assert.equal(result.overwritten, false);
+  db.close();
+});
+
+test('an overwriting fix still leaves existing cover art alone', async () => {
+  const db = openDb(':memory:');
+  setDbForTest(db);
+  const arted = seedTrack(db, { artist: 'Wrong Band', hasCoverArt: 1 });
+  written = null;
+
+  const { applyFix } = await freshFix({
+    current: { artist: 'Wrong Band', title: null, album: null, trackNumber: null, disc: null, year: null },
+    coverImage: { bytes: Buffer.from('img'), mimeType: 'image/jpeg' },
+  });
+  await applyFix({
+    trackId: arted.id, recordingMbid: '77777777-7777-4777-8777-777777777777', overwrite: true,
+  });
+
+  assert.equal(written.coverImage, null, 'art belonging to the wrong song is still not replaced');
   db.close();
 });
 

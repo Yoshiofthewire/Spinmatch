@@ -49,7 +49,10 @@ function IssueTracks({ issue, fixable, onFixed, onSelectAlbum }) {
   }, [issue, page, reloadToken]);
 
   function handleFixed(result) {
-    setFixed((prev) => ({ ...prev, [fixing.id]: result.filledFields }));
+    setFixed((prev) => ({
+      ...prev,
+      [fixing.id]: { fields: result.filledFields, overwritten: result.overwritten },
+    }));
     setFixing(null);
     setReloadToken((n) => n + 1);
     onFixed();
@@ -89,7 +92,9 @@ function IssueTracks({ issue, fixable, onFixed, onSelectAlbum }) {
                   <td>
                     {fixed[track.id] ? (
                       <span className="badge badge-confirmed">
-                        {fixed[track.id].length ? `Filled ${fixed[track.id].join(', ')}` : 'No changes needed'}
+                        {fixed[track.id].fields.length
+                          ? `${fixed[track.id].overwritten ? 'Replaced' : 'Filled'} ${fixed[track.id].fields.join(', ')}`
+                          : 'No changes needed'}
                       </span>
                     ) : (
                       <>

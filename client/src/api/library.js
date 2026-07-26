@@ -60,8 +60,16 @@ export function getFixCandidates(trackId) {
   return get(`/library/fix-candidates/${trackId}`);
 }
 
-export function applyFix({ trackId, recordingMbid }) {
-  return post('/library/fix', { trackId, recordingMbid });
+// Identifies the file by its audio rather than its tags. Costs an fpcalc run and
+// an AcoustID call, so it's only ever fired from an explicit button.
+export function getFingerprintCandidates(trackId) {
+  return get(`/library/fingerprint-candidates/${trackId}`);
+}
+
+// `overwrite` replaces tags that disagree with the chosen recording instead of
+// only filling empty ones. Reserved for fingerprint matches — see FixTrackPanel.
+export function applyFix({ trackId, recordingMbid, overwrite = false }) {
+  return post('/library/fix', { trackId, recordingMbid, overwrite });
 }
 
 // What repairing a whole album's tags would write. Read-only — 'path' makes no

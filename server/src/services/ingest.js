@@ -8,6 +8,7 @@ import * as tags from './tags.js';
 import { getFrontCoverImage } from './coverArt.js';
 import { rankCandidates } from './durationMatch.js';
 import * as tagMatch from './tagMatch.js';
+import * as fingerprintMatch from './fingerprintMatch.js';
 import * as organize from './organize.js';
 import { RateLimitedError, BadRequestError } from '../lib/httpErrors.js';
 
@@ -458,32 +459,16 @@ async function runIngest({ dryRun = false, onItem, signal } = {}) {
   return { matched, needsReview, dryRun };
 }
 
-// Re-fingerprints filePath and re-runs the AcoustID lookup, this time keeping
-// every candidate (not just ones scoring above SCORE_THRESHOLD) so a human can
-// pick from AcoustID's near-misses when auto-matching failed.
+// Candidates for a human to pick from when auto-matching failed, keeping every
+// candidate rather than only ones above SCORE_THRESHOLD — the near-misses are
+// the point. Which of the two sources answers depends on the key: without one
+// there are no fingerprint near-misses to offer, so the picker is seeded with
+// what MusicBrainz returns for the file's own tags instead.
 export async function findCandidatesForFile(filePath) {
   const real = await resolveInsideIngestDir(filePath);
-  // Without a key there are no fingerprint near-misses to offer, so seed the
-  // picker with what MusicBrainz returns for the file's own tags instead.
-  if (!config.acoustidApiKey) {
-    return tagMatch.candidatesFromTags(real);
-  }
-
-  const { durationSeconds, fingerprint: fp } = await fingerprint(real);
-  const acoustidCandidates = await lookup({ fingerprint: fp, durationSeconds });
-  const top = acoustidCandidates.slice(0, 10);
-  const recordings = await Promise.all(top.map((c) => getRecording(c.recordingMbid)));
-
-  const candidates = recordings.map((rec, i) => ({
-    recordingMbid: rec.mbid,
-    title: rec.title,
-    artist: rec.artist,
-    lengthMs: rec.lengthMs,
-    score: top[i].score,
-    releaseGroupTitle: rec.releaseGroups[0]?.title ?? null,
-  }));
-
-  return { candidates };
+  return config.acoustidApiKey
+    ? fingerprintMatch.candidatesFromFingerprint(real)
+    : tagMatch.candidatesFromTags(real);
 }
 
 // Manual-override counterpart to the automatic identify-then-finalize flow:

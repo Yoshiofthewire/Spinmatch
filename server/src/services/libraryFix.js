@@ -1,13 +1,15 @@
 import { getDb } from '../lib/db.js';
+import { config } from '../config.js';
 import { getTrackById } from './libraryRepo.js';
 import { candidatesFromTags } from './tagMatch.js';
+import { candidatesFromFingerprint } from './fingerprintMatch.js';
 import { tagsFromPath } from './libraryPathTags.js';
 import { getRecording, resolvePrimaryReleaseForGroup, getReleaseWithTracks } from './musicbrainz.js';
 import { getFrontCoverImage } from './coverArt.js';
 import { writeMissingTags } from './tags.js';
 import { reindexFile } from './libraryScanner.js';
 import { assertReadableInsideMusicDir } from '../lib/paths.js';
-import { NotFoundError } from '../lib/httpErrors.js';
+import { NotFoundError, BadRequestError } from '../lib/httpErrors.js';
 import { assertMbid } from '../lib/mbid.js';
 
 // Repairing the tags of a file that is ALREADY in the library. Deliberately not
@@ -41,6 +43,22 @@ export async function getFixCandidates(trackId) {
   return { track, candidates, pathTags: fallback };
 }
 
+// The same candidate list, identified by the audio instead of the metadata.
+// Reached from a button rather than on panel open: fingerprinting spawns fpcalc
+// over 120 seconds of audio and spends a rate-limited AcoustID call, which is
+// too much to do for every Health row a user expands.
+//
+// No tag-search fallback when this comes back empty — whoever asked already has
+// the tag/path candidates from getFixCandidates on screen.
+export async function getFingerprintCandidates(trackId) {
+  if (!config.acoustidApiKey) {
+    throw new BadRequestError('AcoustID is not configured on this server');
+  }
+  const { track, real } = await trackOrThrow(trackId);
+  const { candidates } = await candidatesFromFingerprint(real);
+  return { track, candidates };
+}
+
 // Where this recording sits on its release, so a missing track/disc number can
 // be filled too — that's the Health count the Overview chip surfaces, and the
 // one that actually breaks gap detection. Two cached upstream calls, and only
@@ -55,10 +73,16 @@ async function positionOnRelease(releaseGroupMbid, recordingMbid) {
 
 // Applies one candidate: fills the tags the file is missing and re-indexes it.
 //
-// writeMissingTags only writes fields that are currently empty, which is exactly
-// the contract wanted here — a "fix" must never overwrite metadata the user
-// already has, only fill the holes the Health report flagged.
-export async function applyFix({ trackId, recordingMbid }) {
+// By default writeMissingTags only writes fields that are currently empty,
+// which is the contract the Health report implies — a "fix" must never
+// overwrite metadata the user already has, only fill the holes it flagged.
+//
+// `overwrite` is the exception the fingerprint path earns: when the audio says
+// the file is a different recording than its tags claim, the existing values
+// are the thing that's wrong and filling holes repairs nothing. The UI only
+// offers it for fingerprint-sourced candidates, and only when explicitly
+// ticked, because nothing here can be undone.
+export async function applyFix({ trackId, recordingMbid, overwrite = false }) {
   assertMbid(recordingMbid, 'recordingMbid');
   const { track, real } = await trackOrThrow(trackId);
   const recording = await getRecording(recordingMbid);
@@ -66,7 +90,9 @@ export async function applyFix({ trackId, recordingMbid }) {
   const releaseGroupMbid = recording.releaseGroups?.[0]?.mbid ?? null;
   const albumTitle = recording.releaseGroups?.[0]?.title ?? null;
 
-  const position = track.trackNumber == null && releaseGroupMbid
+  // Fill-only can skip the tracklist for a file that already has a number;
+  // overwriting has to fetch it, since a wrong number is exactly what it's for.
+  const position = (overwrite || track.trackNumber == null) && releaseGroupMbid
     ? await positionOnRelease(releaseGroupMbid, recordingMbid)
     : {};
 
@@ -83,12 +109,13 @@ export async function applyFix({ trackId, recordingMbid }) {
     year: recording.date ? Number(recording.date.slice(0, 4)) || null : null,
     trackNumber: position.trackNumber ?? null,
     disc: position.disc ?? null,
-  }, { coverImage });
+  }, { coverImage, overwrite });
 
   await reindexFile(real);
 
   return {
     filledFields,
+    overwritten: overwrite,
     track: getTrackById(getDb(), trackId),
     recording: { mbid: recording.mbid, title: recording.title, artist: recording.artist },
   };

@@ -168,8 +168,17 @@ for `fpcalc`):
 - `fingerprintMatch`: maps a lookup result to candidate rows; returns an empty list when AcoustID
   finds nothing.
 - `ingest.findCandidatesForFile` still returns what it did before the extraction, on both the
-  key-configured and no-key branches. The existing ingest tests covering this must keep passing
-  unmodified — that is the check that the extraction was behaviour-preserving.
+  key-configured and no-key branches.
+
+  These two tests could not be kept unmodified, as originally planned. `ingest.test.js` mocks
+  `fpcalc`/`acoustid` and re-imports `ingest.js` under a cache-busting query string; anything
+  `ingest.js` statically imports is loaded once and keeps whatever dependencies it first resolved,
+  so the mocks stop reaching the mapping logic once it lives in `fingerprintMatch.js`. The two
+  tests were rewritten to assert what ingest still owns — source selection and path resolution —
+  against the new module as the seam. The mapping assertions they used to make (score ordering,
+  passthrough of title/`releaseGroupTitle`, the empty case) are reproduced in
+  `fingerprintMatch.test.js`. The other ~40 ingest tests are untouched and still cover the
+  pipeline through mocked `fpcalc`/`acoustid`, since `identifyFile` fingerprints inline.
 - `getFingerprintCandidates`: returns mapped candidates for an indexed track; rejects with
   `BadRequestError` when no API key is configured.
 - `applyFix` with `overwrite: true`: replaces a wrong artist and title; corrects a track number
