@@ -3,6 +3,7 @@ import { config } from '../config.js';
 import { getDb } from '../lib/db.js';
 import { getStats } from './libraryRepo.js';
 import { scanLibrary } from './libraryScanner.js';
+import { wasWrittenByUs } from '../lib/recentWrites.js';
 
 const HALF_HOUR = 30 * 60_000;
 const TWO_HOURS = 2 * 60 * 60_000;
@@ -63,10 +64,30 @@ export function startLibrarySync({ scan = scanLibrary, watch = true } = {}) {
 
   if (watch && config.ingest.musicDir) {
     try {
-      watcher = fs.watch(config.ingest.musicDir, { recursive: true }, () => {
+      watcher = fs.watch(config.ingest.musicDir, { recursive: true }, (eventType, filename) => {
+        // Ignore the app's own writes. Every tag repair changes an mtime, so a
+        // 500-file bulk fix fired 500 watch events, which debounced into a full
+        // library scan — one that then re-read the tags of all 500 files, since
+        // the app had just changed every one of their change_keys. The individual
+        // reindexFile calls had already done that work.
+        if (filename && wasWrittenByUs(filename)) return;
         if (debounce) clearTimeout(debounce);
         debounce = setTimeout(runScan, WATCH_DEBOUNCE_MS);
         debounce.unref?.();
+      });
+      // Without this the watcher is a live grenade. Recursive fs.watch on Linux
+      // takes one inotify watch per directory, and a large library against the
+      // default max_user_watches hits ENOSPC — which arrives as an 'error' event,
+      // and an EventEmitter 'error' with no listener throws. That went to the
+      // global uncaughtException handler, printed one line, and left the app
+      // reporting itself healthy with file-change detection silently dead.
+      watcher.on('error', (err) => {
+        console.warn(`librarySync: watch on MUSIC_DIR failed, falling back to interval scans only: ${err.message}`);
+        if (err.code === 'ENOSPC') {
+          console.warn('librarySync: this is usually the inotify watch limit — raise fs.inotify.max_user_watches.');
+        }
+        try { watcher.close(); } catch { /* already gone */ }
+        watcher = null;
       });
     } catch (err) {
       console.warn(`librarySync: could not watch MUSIC_DIR: ${err.message}`);
@@ -80,6 +101,9 @@ export function startLibrarySync({ scan = scanLibrary, watch = true } = {}) {
       if (debounce) clearTimeout(debounce);
       if (watcher) watcher.close();
     },
+    // Whether file-change detection is actually running. Surfaced so an operator
+    // can tell "nothing changed" from "the watcher died and nobody said so".
+    watching: () => watcher !== null,
     // Exposed only so tests can prove the concurrency guard above coalesces
     // overlapping scans; not used by production callers.
     _triggerScan: runScan,

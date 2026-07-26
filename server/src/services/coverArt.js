@@ -1,18 +1,23 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { TTLCache } from '../lib/cache.js';
+import { MAX_IMAGE_BYTES } from '../lib/imageBytes.js';
 
 const CACHE_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
-// A Cover Art Archive front cover is routinely 1-5 MB and occasionally far more.
-// Anything above this is refused rather than buffered: the only use for these
-// bytes is embedding art into a file, and a 40 MB scan is not that.
-const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 
 // URLs are small, so a generous cache costs little. Image *bodies* are not: this
-// cache holds Buffers, and 500 albums ingested in one run at a few MB each is
-// hundreds of megabytes retained for 12 hours. Hence the much tighter bound.
+// cache holds Buffers, so it is bounded by total bytes rather than by entry
+// count. `maxEntries: 24` was not the tight bound its comment claimed — at the
+// 8 MB per-image ceiling it permitted 192 MB of retained Buffers, which is most
+// of a small container's memory held for twelve hours.
 const cache = new TTLCache({ maxEntries: 2000 });
-const imageCache = new TTLCache({ maxEntries: 24 });
+const IMAGE_CACHE_MAX_BYTES = 32 * 1024 * 1024;
+const imageCache = new TTLCache({
+  maxEntries: 256,
+  maxBytes: IMAGE_CACHE_MAX_BYTES,
+  // A remembered "no art here" is a null, which costs nothing to keep.
+  sizeOf: (value) => value?.bytes?.length ?? 0,
+});
 
 // Returns the real Cover Art Archive front-cover URL, or null if none exists
 // (or the lookup failed) so the route can fall back to a placeholder image.
@@ -80,7 +85,7 @@ const SIDECAR_TYPES = {
 };
 
 // Returns {bytes, mimeType} for the album-folder cover image, or null. Not
-// cached: this is served with a long Cache-Control, and the files are local.
+// cached here: the route caches the extracted bytes, and the files are local.
 export async function readSidecarCover(dir) {
   let entries;
   try {
@@ -97,9 +102,19 @@ export async function readSidecarCover(dir) {
     .find(Boolean);
   if (!preferred) return null;
 
+  const full = path.join(dir, preferred);
   try {
+    // stat before read. The remote path has refused oversized art all along;
+    // this one read whatever was there, which made "a file named cover.jpg in an
+    // album folder" an arbitrary-size allocation on a route the album grid calls
+    // two dozen times in parallel.
+    const { size } = await fs.stat(full);
+    if (size > MAX_IMAGE_BYTES) {
+      console.warn(`coverArt: sidecar ${full} is ${size} bytes, over the ${MAX_IMAGE_BYTES} limit — skipping`);
+      return null;
+    }
     return {
-      bytes: await fs.readFile(path.join(dir, preferred)),
+      bytes: await fs.readFile(full),
       mimeType: SIDECAR_TYPES[path.extname(preferred).toLowerCase()],
     };
   } catch {

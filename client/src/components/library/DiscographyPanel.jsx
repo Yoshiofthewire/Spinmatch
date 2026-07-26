@@ -144,12 +144,6 @@ export default function DiscographyPanel({ artist }) {
               artist={artist}
               trackCount={0}
               streamUrl={artistMissingStreamUrl(artist)}
-              // There is no non-streaming fallback at this scale: a sweep can run
-              // for many minutes, which no single request should be held open
-              // for. Better to say so than to hang and time out.
-              runBlockingRequest={() => {
-                throw new Error('This needs a browser that supports EventSource.');
-              }}
               prompt={`Finding every track from all ${data.missing.length} missing albums
                 checks them one at a time to avoid rate limits, so this will take a while.
                 Results already found are remembered, so it can be stopped and resumed.`}

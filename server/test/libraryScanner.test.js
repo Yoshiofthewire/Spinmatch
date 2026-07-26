@@ -252,3 +252,88 @@ test('rescanDirs refuses a directory outside MUSIC_DIR', async () => {
     );
   });
 });
+
+// --- Hostile tag values, and the health counts that depend on the fallbacks ---
+
+// The bug: rowFor fills album from the folder name and title from the filename
+// when the tag is empty, so `album IS NULL` was never true for a scanned row and
+// the Health tab's "No album tag"/"No title tag" counts read zero on every
+// install. The old test for those counts inserted rows directly with
+// `album: null` — a shape production cannot produce — so it stayed green while
+// the feature did nothing. This one goes through the scanner.
+test('a file with no album or title tag is counted as untagged, not as tagged-from-path', async () => {
+  await withMusicDir(async (dir, db) => {
+    await fs.mkdir(path.join(dir, 'Band', 'Record'), { recursive: true });
+    await fs.writeFile(path.join(dir, 'Band', 'Record', '01 Song.mp3'), 'x');
+    const { runScanOnce } = await freshScanner(async () => ({
+      artist: 'Band', album: null, title: null, durationMs: 1000, genre: null,
+    }));
+    await runScanOnce();
+
+    const repo = await import('../src/services/libraryRepo.js');
+    // The columns are still filled, because browse views need something to
+    // group and label by...
+    const [track] = repo.listTracks(db, {}).tracks;
+    assert.equal(track.album, 'Record');
+    assert.equal(track.title, '01 Song');
+    // ...but the file itself carries neither, and Health says so.
+    const health = repo.findHealthIssues(db);
+    assert.equal(health.missingAlbum, 1);
+    assert.equal(health.missingTitle, 1);
+    assert.equal(track.albumSynthesized, 1);
+    assert.equal(track.titleSynthesized, 1);
+  });
+});
+
+test('a fully tagged file is not counted as missing an album or title', async () => {
+  await withMusicDir(async (dir, db) => {
+    await fs.writeFile(path.join(dir, 'song.mp3'), 'x');
+    const { runScanOnce } = await freshScanner(async () => ({
+      artist: 'A', album: 'Al', title: 'T', durationMs: 1000, genre: null,
+    }));
+    await runScanOnce();
+    const repo = await import('../src/services/libraryRepo.js');
+    const health = repo.findHealthIssues(db);
+    assert.equal(health.missingAlbum, 0);
+    assert.equal(health.missingTitle, 0);
+  });
+});
+
+// A track number comes out of a binary frame in a file the user downloaded from
+// a stranger. findIncompleteAlbums iterates 1..maxTrackNumber, so an absurd one
+// was a RangeError on the endpoint the Library page opens with — reachable by
+// dropping one crafted file into the library.
+test('an absurd track number is discarded rather than indexed', async () => {
+  await withMusicDir(async (dir, db) => {
+    await fs.writeFile(path.join(dir, 'song.mp3'), 'x');
+    const { runScanOnce } = await freshScanner(async () => ({
+      artist: 'A', album: 'Al', title: 'T', durationMs: 1000, genre: null,
+      trackNumber: 2000000000, disc: 999999, year: 1e9,
+    }));
+    await runScanOnce();
+
+    const repo = await import('../src/services/libraryRepo.js');
+    const [track] = repo.listTracks(db, {}).tracks;
+    assert.equal(track.trackNumber, null);
+    assert.equal(track.disc, null);
+    assert.equal(track.year, null);
+    // The endpoint that used to blow up now answers.
+    assert.doesNotThrow(() => repo.findIncompleteAlbums(db));
+  });
+});
+
+test('an in-range track number still survives the clamp', async () => {
+  await withMusicDir(async (dir, db) => {
+    await fs.writeFile(path.join(dir, 'song.mp3'), 'x');
+    const { runScanOnce } = await freshScanner(async () => ({
+      artist: 'A', album: 'Al', title: 'T', durationMs: 1000, genre: null,
+      trackNumber: 12, disc: 2, year: 1994,
+    }));
+    await runScanOnce();
+    const repo = await import('../src/services/libraryRepo.js');
+    const [track] = repo.listTracks(db, {}).tracks;
+    assert.equal(track.trackNumber, 12);
+    assert.equal(track.disc, 2);
+    assert.equal(track.year, 1994);
+  });
+});

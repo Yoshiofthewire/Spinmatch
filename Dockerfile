@@ -49,6 +49,19 @@ COPY server/src server/src
 COPY server/public server/public
 COPY --from=build /app/client/dist client/dist
 
+# Drop root. This process shells out to yt-dlp (which parses hostile HTML off
+# YouTube) and fpcalc, and feeds arbitrary downloaded files into a native tag
+# parser — none of which has any business running as uid 0 with the user's music
+# library mounted read-write. It also stops every ingested file from landing on
+# the host owned by root, which is what made them unwritable by the media player
+# they were ingested for.
+#
+# /data is chowned so the default LIBRARY_DB path stays writable; a bind-mounted
+# volume keeps its host ownership, so the compose/unraid docs note that the
+# mounted dirs need to be writable by uid 1000 (the node user).
+RUN mkdir -p /data/db /data/ingest /data/music && chown -R node:node /data /app
+USER node
+
 EXPOSE 3000
 
 # Liveness probe against the public health endpoint (Node 24 has global fetch).

@@ -163,7 +163,12 @@ The Library page has eight tabs:
   albums, and albums with no track numbers at all, where completeness can't be judged.
 - **Health** — tag hygiene: tracks missing an artist, album, title, track number, duration, or
   cover art. Worth checking, because the matching below is done on artist and title — an empty
-  artist tag is invisible to it. Each count drills into the tracks behind it, and most offer a
+  artist tag is invisible to it. Note that "No album tag" and "No title tag" count files whose
+  album or title is *displayed* everywhere else in the app: the scanner falls back to the folder
+  name and the filename so browse views have something to group and label by, and the Health tab
+  is where you find out that the file itself carries neither. Those rows show the value greyed out
+  and marked *(from folder)* / *(from filename)*, with the path beneath. Each count drills into
+  the tracks behind it, and most offer a
   **Fix tags** action: pick the right MusicBrainz recording (from the file's own tags, or by
   searching) and Spinmatch fills in what's missing — artist, title, album, year, track and disc
   number, and cover art. By default it only fills tags that are *empty*, never overwrites a value
@@ -357,6 +362,25 @@ docker compose up --build
 
 The app will be available at http://localhost:3000. The container builds the client and runs
 the server in a single image — no separate frontend container needed.
+
+### File ownership
+
+The container runs as the unprivileged `node` user (uid/gid **1000**), not as root. This process
+shells out to `yt-dlp` and `fpcalc` and parses tags out of files you downloaded from wherever,
+none of which should run as root with your music library mounted read-write — and it means files
+the ingest flow writes land owned by uid 1000 rather than by root, so your media player can still
+write to them.
+
+The three bind-mounted paths (`/data/ingest`, `/data/music`, `/data/db`) keep their **host**
+ownership, so they have to be writable by uid 1000. If ingest reports permission errors or the
+database can't be created, that's this:
+
+```
+sudo chown -R 1000:1000 ./ingest ./music ./db
+```
+
+To run as a different user — matching your own account, say — set `user:` in
+`docker-compose.yml` (e.g. `user: "1001:1001"`) and chown the mounts to match.
 
 ## Running on Unraid
 

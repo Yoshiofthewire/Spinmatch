@@ -10,6 +10,7 @@ import { rankCandidates } from './durationMatch.js';
 import * as tagMatch from './tagMatch.js';
 import * as fingerprintMatch from './fingerprintMatch.js';
 import * as organize from './organize.js';
+import { withFileLock } from '../lib/fileLock.js';
 import { RateLimitedError, BadRequestError } from '../lib/httpErrors.js';
 
 const AUDIO_EXTENSIONS = new Set(['.mp3', '.flac', '.m4a', '.aac', '.ogg']);
@@ -178,7 +179,12 @@ async function identifyFile(filePath) {
 // filled — computed from the already-read `current` tags, nothing written.
 async function applyOrPreviewTags(filePath, current, desired, coverImage, dryRun) {
   if (!dryRun) {
-    return tags.writeTags(filePath, desired, { coverImage });
+    // Locked even though processIngest already serializes runs process-wide:
+    // that guard stops two *runs* overlapping, and this one stops an ingest
+    // write racing a library repair on the same file. Nothing prevented that —
+    // a file can be under INGEST_DIR and, via a bind mount or a symlinked
+    // layout, be the same inode a fix-tags apply is writing.
+    return withFileLock(filePath, () => tags.writeTags(filePath, desired, { coverImage }));
   }
   const filledFields = tags.plannedFills(current, desired);
   if (coverImage && !current.hasCoverArt) filledFields.push('coverArt');
@@ -286,27 +292,59 @@ function albumIsCoherent(perFile, tracks) {
 // Per-file durations (plus any candidate recording MBIDs) and the release
 // groups worth checking the folder against. Either fingerprints every file, or
 // — without an AcoustID key — derives both from the files' own tags.
+// How many AcoustID candidates per file are worth resolving to a MusicBrainz
+// recording, and how many candidate release-groups are worth testing a folder
+// against. Both are hard caps on a fan-out that had none.
+//
+// Every getRecording is one trip through a global 1-request-per-second queue,
+// and this loop ran once per candidate per file: a 20-track album with 5
+// candidates each was up to 100 sequential calls, i.e. 100 seconds, before the
+// release-group loop below then spent 2 more calls on each of the dozens of
+// groups those recordings named. A box set was an unbounded run holding the
+// process-wide ingest lock the whole time.
+//
+// Three candidates is enough — AcoustID's top match is right the overwhelming
+// majority of the time, and the coherence check is what actually decides.
+const MAX_RECORDINGS_PER_FILE = 3;
+const MAX_RELEASE_GROUPS = 8;
+
 async function albumCandidates(files) {
   const perFile = [];
   for (const filePath of files) {
     const { durationSeconds, fingerprint: fp } = await fingerprint(filePath);
     const candidates = await lookup({ fingerprint: fp, durationSeconds });
-    const recMbids = candidates.filter((c) => c.score >= SCORE_THRESHOLD).map((c) => c.recordingMbid);
+    const recMbids = candidates
+      .filter((c) => c.score >= SCORE_THRESHOLD)
+      .slice(0, MAX_RECORDINGS_PER_FILE)
+      .map((c) => c.recordingMbid);
     perFile.push({ filePath, durationMs: durationSeconds * 1000, recMbids });
   }
 
-  // Candidate release-groups come from the files' candidate recordings.
+  // Candidate release-groups come from the files' candidate recordings, ranked
+  // by how many of the folder's files point at them. A group named by every
+  // track is overwhelmingly more likely to be the record than one named by a
+  // single track's stray compilation appearance, and testing it first is what
+  // makes the cap below cheap rather than arbitrary.
   const recCache = new Map();
-  const releaseGroupMbids = new Set();
+  const groupHits = new Map();
   for (const f of perFile) {
     for (const recMbid of f.recMbids) {
       if (!recCache.has(recMbid)) recCache.set(recMbid, await getRecording(recMbid));
-      for (const rg of recCache.get(recMbid).releaseGroups || []) releaseGroupMbids.add(rg.mbid);
+      for (const rg of recCache.get(recMbid).releaseGroups || []) {
+        groupHits.set(rg.mbid, (groupHits.get(rg.mbid) ?? 0) + 1);
+      }
     }
   }
-  if (releaseGroupMbids.size === 0) {
+  if (groupHits.size === 0) {
     return { reason: 'no confident AcoustID matches for the album tracks' };
   }
+
+  const releaseGroupMbids = new Set(
+    [...groupHits.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, MAX_RELEASE_GROUPS)
+      .map(([mbid]) => mbid)
+  );
 
   return { perFile, releaseGroupMbids };
 }

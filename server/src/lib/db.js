@@ -5,7 +5,7 @@ import { config } from '../config.js';
 
 // Bumped when local_tracks gains columns that existing rows need backfilled or
 // re-read from disk. migrate() below is what actually reacts to the change.
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 6;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS meta (
@@ -19,6 +19,20 @@ CREATE TABLE IF NOT EXISTS local_tracks (
   artist        TEXT,
   album         TEXT,
   title         TEXT,
+  -- 1 when the value in album/title above was derived from the file's location
+  -- (folder name, filename) because the tag itself was empty. The columns are
+  -- filled either way so browse views have something to group and label by;
+  -- these flags are what the Health tab's "No album tag"/"No title tag" counts
+  -- are computed from, since an IS NULL test can never be true for a scanned row.
+  album_synthesized INTEGER NOT NULL DEFAULT 0,
+  title_synthesized INTEGER NOT NULL DEFAULT 0,
+  -- Case-folded "artist␟album␟title", computed in JS on write (see
+  -- libraryRepo.upsertLocalTrack). Stored rather than derived at query time
+  -- because SQLite's LOWER() folds ASCII only and JavaScript's toLowerCase()
+  -- does not, so a group built one way and queried the other disagrees the
+  -- moment an artist is called "Ärzte". Storing the folded value lets the
+  -- duplicate count be a GROUP BY instead of a full table load into JS.
+  dup_key       TEXT,
   duration_ms   INTEGER,
   track_number  INTEGER,
   disc          INTEGER,
@@ -131,12 +145,21 @@ CREATE INDEX IF NOT EXISTS idx_lt_live_artist_album ON local_tracks(artist, albu
 CREATE INDEX IF NOT EXISTS idx_lt_live_added  ON local_tracks(added_at) WHERE removed = 0;
 CREATE INDEX IF NOT EXISTS idx_lt_live_title  ON local_tracks(title)  WHERE removed = 0;
 CREATE INDEX IF NOT EXISTS idx_lt_live_no_artist ON local_tracks(id) WHERE removed = 0 AND artist IS NULL;
-CREATE INDEX IF NOT EXISTS idx_lt_live_no_album  ON local_tracks(id) WHERE removed = 0 AND album IS NULL;
-CREATE INDEX IF NOT EXISTS idx_lt_live_no_title  ON local_tracks(id) WHERE removed = 0 AND title IS NULL;
+-- New names, because these match a new predicate and CREATE INDEX IF NOT EXISTS
+-- will not rebuild an index that already exists under the old one. The originals
+-- tested album/title for NULL — a condition the scanner never produces — so they
+-- were empty indexes maintained on every write to serve a count that was always
+-- zero. Dropped below.
+CREATE INDEX IF NOT EXISTS idx_lt_live_untagged_album ON local_tracks(id) WHERE removed = 0 AND (album IS NULL OR album_synthesized = 1);
+CREATE INDEX IF NOT EXISTS idx_lt_live_untagged_title ON local_tracks(id) WHERE removed = 0 AND (title IS NULL OR title_synthesized = 1);
 CREATE INDEX IF NOT EXISTS idx_lt_live_no_track_number ON local_tracks(id) WHERE removed = 0 AND track_number IS NULL;
 CREATE INDEX IF NOT EXISTS idx_lt_live_no_duration ON local_tracks(id) WHERE removed = 0 AND duration_ms IS NULL;
 CREATE INDEX IF NOT EXISTS idx_lt_live_no_cover ON local_tracks(id) WHERE removed = 0 AND has_cover_art = 0;
 CREATE INDEX IF NOT EXISTS idx_lt_removed ON local_tracks(removed) WHERE removed = 1;
+-- Serves the duplicate GROUP BY, which runs on every Library page load (the
+-- Health tab shows the count) and previously pulled every row in the table into
+-- JS to compute it.
+CREATE INDEX IF NOT EXISTS idx_lt_live_dup_key ON local_tracks(dup_key) WHERE removed = 0 AND dup_key IS NOT NULL;
 
 -- Superseded by the partial indexes above, which SQLite can use for strictly
 -- more queries. Dropped so an upgraded install isn't paying to maintain both.
@@ -144,6 +167,11 @@ DROP INDEX IF EXISTS idx_local_tracks_artist;
 DROP INDEX IF EXISTS idx_local_tracks_album;
 DROP INDEX IF EXISTS idx_local_tracks_artist_album;
 DROP INDEX IF EXISTS idx_local_tracks_added;
+
+-- Replaced by the untagged_* pair above, whose predicates match what the health
+-- queries actually ask.
+DROP INDEX IF EXISTS idx_lt_live_no_album;
+DROP INDEX IF EXISTS idx_lt_live_no_title;
 `;
 
 // Columns added to local_tracks after v1 shipped. CREATE TABLE IF NOT EXISTS
@@ -164,6 +192,14 @@ const V2_TRACK_COLUMNS = [
 const V2_STATS_COLUMNS = [
   ['total_duration_ms', 'INTEGER'],
   ['total_bytes', 'INTEGER'],
+];
+
+// v6: records whether album/title were read from the file or derived from its
+// path. See the note on the columns in SCHEMA.
+const V6_TRACK_COLUMNS = [
+  ['album_synthesized', 'INTEGER NOT NULL DEFAULT 0'],
+  ['title_synthesized', 'INTEGER NOT NULL DEFAULT 0'],
+  ['dup_key', 'TEXT'],
 ];
 
 function addMissingColumns(db, table, columns) {
@@ -216,6 +252,29 @@ export function migrate(db) {
   // SCHEMA, which openDb runs before migrate(), so an upgraded install already
   // has them by the time this is reached — and both are caches, so there is
   // nothing to backfill. The bump exists to record that this install is on 5.
+
+  if (current < 6) {
+    addMissingColumns(db, 'local_tracks', V6_TRACK_COLUMNS);
+    // Whether an existing row's album/title came from a tag or from its path is
+    // not recoverable from the row — the scanner wrote the fallback into the
+    // same column and kept no record. The only source of truth is the file, so
+    // clearing change_key forces exactly one re-read of tags on the next scan,
+    // the same one-time cost (and the same mechanism) as the v2 backfill. Until
+    // that scan lands the two new counts read zero, which is what they read
+    // before this migration anyway.
+    //
+    // Track numbers are clamped on that same re-read. An existing row can hold
+    // the out-of-range value that crashed findIncompleteAlbums, so the ones
+    // already stored are cleared here rather than left to the rescan — the
+    // Library page has to survive being opened before the scan finishes.
+    db.exec(`UPDATE local_tracks SET track_number = NULL
+             WHERE track_number IS NOT NULL AND (track_number < 1 OR track_number > 999)`);
+    db.exec(`UPDATE local_tracks SET disc = NULL
+             WHERE disc IS NOT NULL AND (disc < 1 OR disc > 99)`);
+    db.exec(`UPDATE local_tracks SET year = NULL
+             WHERE year IS NOT NULL AND (year < 1 OR year > 2999)`);
+    db.exec("UPDATE local_tracks SET change_key = '' WHERE removed = 0");
+  }
 
   db.prepare(
     "INSERT INTO meta (key, value) VALUES ('schema_version', ?) " +

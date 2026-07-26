@@ -23,6 +23,29 @@ export function changeKeyFor(stat) {
   return `${stat.size}:${Math.trunc(stat.mtimeMs)}`;
 }
 
+// Ceilings for the numeric tags. These values come out of a binary frame in a
+// file the user downloaded from a stranger, and nothing downstream expected
+// them to be hostile: findIncompleteAlbums iterates 1..maxTrackNumber to find
+// gaps, so a single file tagged `track = 2000000000` was a RangeError (or, at
+// values just below the array limit, a multi-gigabyte allocation on the main
+// thread) on GET /api/library/incomplete — which the Library page loads on open,
+// leaving no way to reach the UI that would show you the offending file.
+//
+// Clamped at the point a file becomes a row, so every reader downstream is safe
+// by construction rather than each having to remember. Out-of-range means null
+// ("this file has no usable number"), not a substituted guess.
+const MAX_TRACK_NUMBER = 999;
+const MAX_DISC_NUMBER = 99;
+const MIN_YEAR = 1;
+const MAX_YEAR = 2999;
+
+function boundedInt(value, min, max) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  const i = Math.trunc(n);
+  return i >= min && i <= max ? i : null;
+}
+
 async function* walk(dir) {
   let entries;
   try {
@@ -46,17 +69,28 @@ async function* walk(dir) {
 // file is indexed.
 export function rowFor(filePath, stat, meta) {
   const ext = path.extname(filePath);
+  // The folder name and filename stand in for a missing album/title tag so the
+  // browse views have something to group and label by. That fallback is a
+  // display convenience, not a fact about the file, and recording *that it
+  // happened* is what makes the Health tab honest: with the column simply
+  // filled in, `album IS NULL` matched nothing, so "No album tag" and "No title
+  // tag" reported zero on every install no matter how many untagged files it
+  // held. The flags below are what those two counts are now derived from.
+  const albumSynthesized = meta.album == null;
+  const titleSynthesized = meta.title == null;
   return {
     path: filePath,
     artist: meta.artist ?? null,
     album: meta.album ?? path.basename(path.dirname(filePath)),
     title: meta.title ?? path.basename(filePath, ext),
+    albumSynthesized: albumSynthesized ? 1 : 0,
+    titleSynthesized: titleSynthesized ? 1 : 0,
     // taglib reports fractional milliseconds for some formats; round so the
     // INTEGER column and the summed totals stay whole numbers.
     durationMs: meta.durationMs == null ? null : Math.round(meta.durationMs),
-    trackNumber: meta.trackNumber ?? null,
-    disc: meta.disc ?? null,
-    year: meta.year ?? null,
+    trackNumber: boundedInt(meta.trackNumber, 1, MAX_TRACK_NUMBER),
+    disc: boundedInt(meta.disc, 1, MAX_DISC_NUMBER),
+    year: boundedInt(meta.year, MIN_YEAR, MAX_YEAR),
     genre: meta.genre ?? null,
     hasCoverArt: meta.hasCoverArt ? 1 : 0,
     // From the stat the caller already took, so this costs nothing extra.

@@ -81,12 +81,27 @@ function IssueTracks({ issue, fixable, onFixed, onSelectAlbum }) {
               <tr className={fixed[track.id] ? 'track-row-fixed' : undefined}>
                 <td>{track.artist ?? <span className="muted">—</span>}</td>
                 <td>
-                  {track.title ?? <span className="muted">—</span>}
+                  {/* A synthesized value is shown but marked: the scanner fills
+                      album from the folder name and title from the filename when
+                      the tag is empty, so a row listed under "No title tag" does
+                      carry a title — it just isn't one the file claims. Rendering
+                      it as if it were real made the whole category look like a
+                      false positive. */}
+                  {track.title
+                    ? <span className={track.titleSynthesized ? 'muted' : undefined}>{track.title}</span>
+                    : <span className="muted">—</span>}
+                  {track.titleSynthesized && <span className="muted"> (from filename)</span>}
                   {/* The path is the only identifier an untagged file has, so it
                       has to be visible for the row to mean anything. */}
-                  {!track.title && <span className="muted mono fix-path">{track.path}</span>}
+                  {(!track.title || track.titleSynthesized)
+                    && <span className="muted mono fix-path">{track.path}</span>}
                 </td>
-                <td>{track.album ?? <span className="muted">—</span>}</td>
+                <td>
+                  {track.album
+                    ? <span className={track.albumSynthesized ? 'muted' : undefined}>{track.album}</span>
+                    : <span className="muted">—</span>}
+                  {track.albumSynthesized && <span className="muted"> (from folder)</span>}
+                </td>
                 <td className="mono">{track.trackNumber ?? '—'}</td>
                 {fixable && (
                   <td>

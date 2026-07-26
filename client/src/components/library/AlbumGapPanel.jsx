@@ -2,7 +2,7 @@ import { useState } from 'react';
 import EqualizerLoader from '../EqualizerLoader.jsx';
 import VerifyButton from '../VerifyButton.jsx';
 import BulkVerifyPanel from '../BulkVerifyPanel.jsx';
-import { getAlbumGapsFromLibrary, getAlbumGaps, missingStreamUrl } from '../../api/library.js';
+import { getAlbumGapsFromLibrary, missingStreamUrl } from '../../api/library.js';
 import { formatDuration } from '../../lib/format.js';
 
 // The MusicBrainz check for a single owned album. The tracklist on disk can look
@@ -77,9 +77,6 @@ export default function AlbumGapPanel({ artist, album }) {
               album={album}
               trackCount={data.missing.length}
               streamUrl={missingStreamUrl(data.album.mbid)}
-              runBlockingRequest={async () => ({
-                results: (await getAlbumGaps(data.album.mbid, { verify: true })).missing,
-              })}
               prompt={`Finding all ${data.missing.length} missing tracks on YouTube checks them
                 one at a time to avoid rate limits, so this may take a while.`}
               actionLabel="Find all missing on YouTube"

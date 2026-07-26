@@ -506,7 +506,13 @@ test('one unwritable file is reported without abandoning the rest of the album',
 
   const { applyBulkFix } = await freshBulkFix({
     writeTags: async (filePath, desired) => {
-      if (filePath.endsWith('01 First.mp3')) throw new Error('EACCES: permission denied');
+      if (filePath.endsWith('01 First.mp3')) {
+        // Shaped like the real thing: an fs error carries a `code` and a message
+        // with the absolute path baked into it.
+        const err = new Error(`EACCES: permission denied, open '${filePath}'`);
+        err.code = 'EACCES';
+        throw err;
+      }
       writes.push({ filePath, desired });
       return { filledFields: Object.keys(desired).filter((k) => desired[k] != null) };
     },
@@ -515,7 +521,12 @@ test('one unwritable file is reported without abandoning the rest of the album',
 
   assert.equal(result.applied.length, 1, 'the readable file was still repaired');
   assert.equal(result.failed.length, 1);
-  assert.match(result.failed[0].message, /EACCES/);
+  assert.equal(result.failed[0].code, 'unwritable');
+  // The failure is reported, but not by echoing the errno string: that carries
+  // the server's absolute directory layout, and this response is rendered in a
+  // page. paths.js refuses to do this in its own errors; so does this.
+  assert.doesNotMatch(result.failed[0].message, /EACCES/);
+  assert.doesNotMatch(result.failed[0].message, new RegExp(String.raw`[/\\]`));
   assert.equal(result.skipped, 0, 'every requested track is accounted for as applied or failed');
   db.close();
 });
@@ -557,5 +568,69 @@ test('apply reuses a supplied preview instead of resolving the album again', asy
 
   assert.equal(resolveCalls, 1, 'the upstream album was not resolved a second time');
   assert.equal(result.applied.length, 1);
+  db.close();
+});
+
+// The route hands an apply the preview it is applying, cached for up to ten
+// minutes, on the reasoning that "what gets written is what was on screen and
+// approved". That is only true if the file didn't move underneath it — and in
+// ten minutes the single-track fix, an external tagger, or a re-rip can all have
+// touched it. Nothing checked, so the honest-looking hand-off could write a
+// proposal derived from tags that no longer existed.
+test('an apply refuses a file that changed after the preview was taken', async () => {
+  const db = openDb(':memory:');
+  setDbForTest(db);
+  seedAlbum(db, {
+    artist: 'Band',
+    album: 'Record',
+    files: [
+      { rel: ['Band', 'Record', '01 First.mp3'], disk: { artist: null, title: null, album: null } },
+      { rel: ['Band', 'Record', '02 Second.mp3'], disk: { artist: null, title: null, album: null } },
+    ],
+  });
+  const ids = repo.listTracks(db, { album: 'Record' }).tracks.map((t) => t.id);
+  writes = [];
+
+  const { previewBulkFix, applyBulkFix } = await freshBulkFix();
+  const preview = await previewBulkFix({ artist: 'Band', album: 'Record', source: 'path', db });
+  assert.equal(preview.tracks.length, 2);
+  assert.ok(preview.tracks.every((t) => t.mtimeMs != null), 'the preview records what it previewed');
+
+  // One file is touched between preview and apply.
+  const changed = path.join(musicDir, 'Band', 'Record', '01 First.mp3');
+  const future = new Date(Date.now() + 60_000);
+  fs.utimesSync(changed, future, future);
+
+  const result = await applyBulkFix({
+    artist: 'Band', album: 'Record', source: 'path', trackIds: ids, preview, db,
+  });
+
+  assert.equal(result.applied.length, 1, 'the untouched file was still repaired');
+  assert.equal(result.failed.length, 1);
+  assert.equal(result.failed[0].code, 'stale');
+  assert.ok(!writes.some((w) => w.filePath === changed), 'the changed file was not written');
+  db.close();
+});
+
+test('an unchanged file applies normally from a cached preview', async () => {
+  const db = openDb(':memory:');
+  setDbForTest(db);
+  seedAlbum(db, {
+    artist: 'Band',
+    album: 'Record',
+    files: [{ rel: ['Band', 'Record', '01 First.mp3'], disk: { artist: null, title: null, album: null } }],
+  });
+  const ids = repo.listTracks(db, { album: 'Record' }).tracks.map((t) => t.id);
+  writes = [];
+
+  const { previewBulkFix, applyBulkFix } = await freshBulkFix();
+  const preview = await previewBulkFix({ artist: 'Band', album: 'Record', source: 'path', db });
+  const result = await applyBulkFix({
+    artist: 'Band', album: 'Record', source: 'path', trackIds: ids, preview, db,
+  });
+
+  assert.equal(result.applied.length, 1);
+  assert.equal(result.failed.length, 0);
+  assert.equal(writes.length, 1);
   db.close();
 });

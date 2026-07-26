@@ -2,18 +2,27 @@ export function upsertLocalTrack(db, {
   path, artist, album, title, durationMs, changeKey,
   trackNumber = null, disc = null, year = null, genre = null,
   hasCoverArt = 0, ext = null, sizeBytes = null, mtimeMs = null,
+  albumSynthesized = 0, titleSynthesized = 0,
 }) {
   const now = Date.now();
+  // Computed here rather than by the caller so it can never drift from the
+  // columns it folds, and so every writer (scanner, targeted rescan, tests) gets
+  // it without having to remember.
+  const dupKey = artist != null && title != null ? foldKey(artist, album, title) : null;
   db.prepare(`
     INSERT INTO local_tracks (
-      path, artist, album, title, duration_ms, track_number, disc, year, genre,
+      path, artist, album, title, album_synthesized, title_synthesized, dup_key,
+      duration_ms, track_number, disc, year, genre,
       has_cover_art, ext, size_bytes, mtime_ms, change_key, removed, added_at, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
     ON CONFLICT(path) DO UPDATE SET
       artist = excluded.artist,
       album = excluded.album,
       title = excluded.title,
+      album_synthesized = excluded.album_synthesized,
+      title_synthesized = excluded.title_synthesized,
+      dup_key = excluded.dup_key,
       duration_ms = excluded.duration_ms,
       track_number = excluded.track_number,
       disc = excluded.disc,
@@ -29,7 +38,8 @@ export function upsertLocalTrack(db, {
       -- entered the library, so a re-tag or a re-scan must not move it.
       updated_at = excluded.updated_at
   `).run(
-    path, artist, album, title, durationMs, trackNumber, disc, year, genre,
+    path, artist, album, title, albumSynthesized, titleSynthesized, dupKey,
+    durationMs, trackNumber, disc, year, genre,
     hasCoverArt, ext, sizeBytes, mtimeMs, changeKey, now, now,
   );
 }
@@ -254,7 +264,8 @@ const TRACK_SORTS = {
 const TRACK_COLUMNS = `
   id, artist, album, title, duration_ms AS durationMs, track_number AS trackNumber,
   disc, year, genre, has_cover_art AS hasCoverArt, ext, size_bytes AS sizeBytes,
-  added_at AS addedAt
+  added_at AS addedAt,
+  album_synthesized AS albumSynthesized, title_synthesized AS titleSynthesized
 `;
 
 // For the flows whose entire job is identifying a file on disk — the repair
@@ -354,6 +365,11 @@ export function getTrackById(db, id) {
 // Library page, node:sqlite is synchronous, and a query per album meant a
 // thousand-album collection blocked the event loop a thousand times to open a
 // tab. The track numbers come back in one pass and are grouped here.
+// Matches the clamp in libraryScanner.rowFor. Kept as its own constant here
+// rather than imported: this module is deliberately SQL-only and importing the
+// scanner would close a cycle (the scanner imports this file).
+const MAX_TRACK_POSITION = 999;
+
 export function findIncompleteAlbums(db) {
   const albums = db.prepare(`
     SELECT artist, album,
@@ -386,7 +402,14 @@ export function findIncompleteAlbums(db) {
     }
     const owned = numbersByAlbum.get(`${a.artist ?? ''}${UNIT_SEPARATOR}${a.album}`) ?? new Set();
     const missingPositions = [];
-    for (let n = 1; n <= a.maxTrackNumber; n += 1) {
+    // Bounded independently of what the tags claim. rowFor already clamps track
+    // numbers on the way in, but this loop allocates one array element per
+    // position and runs on the synchronous main thread, so it does not get to
+    // depend on an upstream guarantee: a row written before that clamp existed,
+    // or by any future path that bypasses rowFor, would otherwise turn one bad
+    // ID3 frame into a RangeError on the endpoint the Library page opens with.
+    const highest = Math.min(a.maxTrackNumber ?? 0, MAX_TRACK_POSITION);
+    for (let n = 1; n <= highest; n += 1) {
       if (!owned.has(n)) missingPositions.push(n);
     }
     if (missingPositions.length) {
@@ -408,10 +431,16 @@ export function findIncompleteAlbums(db) {
 // these were written out twice a change to one silently disagreed with the other
 // (badge says 12, list shows 8). Whitelisted the same way as the sort maps — the
 // client sends a key, never SQL.
+// The album/title predicates test the synthesized flags, not NULL. The scanner
+// fills both columns unconditionally — falling back to the folder name and the
+// filename — so `album IS NULL` matched no row the scanner had ever written, and
+// these two counts read zero on every install regardless of how many untagged
+// files it held. The NULL half of each is kept for rows written by anything that
+// doesn't go through rowFor (tests, future importers).
 const HEALTH_ISSUES = {
   missingArtist: 'artist IS NULL',
-  missingAlbum: 'album IS NULL',
-  missingTitle: 'title IS NULL',
+  missingAlbum: '(album IS NULL OR album_synthesized = 1)',
+  missingTitle: '(title IS NULL OR title_synthesized = 1)',
   missingTrackNumber: 'track_number IS NULL',
   missingDuration: 'duration_ms IS NULL',
   noCoverArt: 'has_cover_art = 0',
@@ -426,9 +455,9 @@ export function findHealthIssues(db) {
   );
   // Just the number here — this endpoint loads with the page, and the copies
   // themselves are only needed by the duplicates view, which fetches them itself.
-  // Counted through the same JS folding findDuplicateGroups groups by, so the
-  // count on the Health tab always matches the view it links to.
-  return { ...counts, duplicateCount: duplicateGroups(db).length };
+  // Counted over the same dup_key findDuplicateGroups groups by, so the count on
+  // the Health tab always matches the view it links to.
+  return { ...counts, duplicateCount: duplicateGroupCount(db) };
 }
 
 export function isHealthIssue(issue) {
@@ -461,21 +490,44 @@ export function listHealthTracks(db, { issue, limit = 50, offset = 0 }) {
 // LOWER() and then re-querying each group with JavaScript's toLowerCase(), which
 // disagreed for any non-ASCII name and returned groups with no copies in them at
 // all.
-function duplicateGroups(db) {
-  const rows = db.prepare(`
-    SELECT ${TRACK_COLUMNS_WITH_PATH} FROM local_tracks
-    WHERE removed = 0 AND artist IS NOT NULL AND title IS NOT NULL
-    ORDER BY album COLLATE NOCASE, path
-  `).all();
+// The GROUP BY behind both the count and the listing. dup_key is the folded
+// "artist␟album␟title", computed in JS on write (see upsertLocalTrack) precisely
+// so this can be a SQL grouping — SQLite's LOWER() and JavaScript's
+// toLowerCase() disagree on anything non-ASCII, so folding has to happen once,
+// in one language, and be stored.
+const DUPLICATE_KEYS_SQL = `
+  SELECT dup_key FROM local_tracks
+  WHERE removed = 0 AND dup_key IS NOT NULL
+  GROUP BY dup_key HAVING COUNT(*) > 1
+`;
 
-  const byKey = new Map();
-  for (const row of rows) {
-    // foldKey maps a null album to '', so tracks with no album tag share one
-    // bucket instead of each becoming a group of one.
-    const key = foldKey(row.artist, row.album, row.title);
-    if (!byKey.has(key)) byKey.set(key, []);
-    byKey.get(key).push(row);
-  }
+// Just how many duplicate groups there are.
+//
+// findHealthIssues needs this number and nothing else, and it used to get it by
+// materializing every live track in the library — every column, paths included —
+// into JS, building a Map of folded keys, and reading .length off the result.
+// That ran synchronously on every Library page load. This is the query that was
+// actually wanted.
+function duplicateGroupCount(db) {
+  return db.prepare(`SELECT COUNT(*) c FROM (${DUPLICATE_KEYS_SQL})`).get().c;
+}
+
+// Every copy of each duplicated key. Only the rows that are actually part of a
+// duplicate group are fetched — the previous version loaded the whole table and
+// then discarded the ~99% of it that had no duplicate.
+function duplicateGroups(db, { limit = 200 } = {}) {
+  const keys = db.prepare(`${DUPLICATE_KEYS_SQL} LIMIT ?`).all(limit).map((r) => r.dup_key);
+  if (keys.length === 0) return [];
+
+  const placeholders = keys.map(() => '?').join(', ');
+  const rows = db.prepare(`
+    SELECT ${TRACK_COLUMNS_WITH_PATH}, dup_key AS dupKey FROM local_tracks
+    WHERE removed = 0 AND dup_key IN (${placeholders})
+    ORDER BY album COLLATE NOCASE, path
+  `).all(...keys);
+
+  const byKey = new Map(keys.map((k) => [k, []]));
+  for (const row of rows) byKey.get(row.dupKey)?.push(row);
   return [...byKey.values()].filter((copies) => copies.length > 1);
 }
 
@@ -483,12 +535,11 @@ function duplicateGroups(db) {
 // field by field. findHealthIssues only counts them; deciding which copy to keep
 // needs the paths, formats, sizes and durations side by side.
 export function findDuplicateGroups(db, { limit = 200 } = {}) {
-  return duplicateGroups(db)
+  return duplicateGroups(db, { limit })
     .sort((a, b) => b.length - a.length
       || String(a[0].artist).localeCompare(String(b[0].artist))
       || String(a[0].album ?? '').localeCompare(String(b[0].album ?? ''))
       || String(a[0].title).localeCompare(String(b[0].title)))
-    .slice(0, limit)
     .map((copies) => ({
       artist: copies[0].artist,
       album: copies[0].album,

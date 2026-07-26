@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react';
-import { post } from '../api/client.js';
 import VerifyResultsTable from './VerifyResultsTable.jsx';
 import EqualizerLoader from './EqualizerLoader.jsx';
 import CopyButton from './CopyButton.jsx';
@@ -18,9 +17,6 @@ export default function BulkVerifyPanel({
   releaseGroupMbid,
   trackCount,
   streamUrl = `/api/verify/album/${releaseGroupMbid}/stream`,
-  // Must resolve to {results, error?}. A function rather than a path because the
-  // two callers' non-streaming endpoints differ in method and response shape.
-  runBlockingRequest = () => post(`/verify/album/${releaseGroupMbid}`, {}),
   prompt,
   actionLabel = 'Find all on YouTube',
 }) {
@@ -47,24 +43,6 @@ export default function BulkVerifyPanel({
     }));
   }
 
-  // Fallback for environments without EventSource: one blocking request.
-  async function runBlocking() {
-    try {
-      const result = await runBlockingRequest();
-      setResults(result.results);
-      if (result.error) {
-        setError(result.error);
-        setState('error');
-      } else {
-        setState('done');
-        logVerified(result.results);
-      }
-    } catch (err) {
-      setError(err);
-      setState('error');
-    }
-  }
-
   function handleClick() {
     setState('running');
     setError(null);
@@ -73,11 +51,11 @@ export default function BulkVerifyPanel({
     setCurrentAlbum(null);
     setSkipped([]);
 
-    if (typeof EventSource === 'undefined') {
-      runBlocking();
-      return;
-    }
-
+    // There was a non-streaming fallback here for "environments without
+    // EventSource". No such environment runs this client — EventSource predates
+    // every browser feature the app already depends on — and the endpoint behind
+    // it held one HTTP request open for the whole multi-minute run, which is the
+    // shape streaming exists to avoid. Both are gone.
     doneRef.current = false;
     const acc = [];
     const es = new EventSource(streamUrl);

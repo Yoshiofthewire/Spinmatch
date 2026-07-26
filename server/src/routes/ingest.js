@@ -4,6 +4,7 @@ import { scanIngestDir, processIngest, findCandidatesForFile, resolveLooseFileOv
 import { sameOriginOnly } from '../middleware/sameOriginOnly.js';
 import { NotFoundError, BadRequestError } from '../lib/httpErrors.js';
 import { assertMbid } from '../lib/mbid.js';
+import { sseStream, STREAM_HANDLED } from '../lib/sse.js';
 
 export const ingestRouter = Router();
 
@@ -57,33 +58,23 @@ ingestRouter.post('/file/resolve', async (req, res, next) => {
 // Streaming variant: emits one `item` event per file as it finishes, then a
 // terminal `done` (or `error`). GET so the browser's EventSource can consume it;
 // dryRun is a query flag (?dryRun=1) since EventSource can't send a body.
-ingestRouter.get('/process-stream', sameOriginOnly, async (req, res) => {
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-  res.flushHeaders?.();
-
+//
+// Uses the shared SSE lifecycle rather than its own copy of it. The hand-rolled
+// version here wrote events without checking whether the socket was still open,
+// and had no heartbeat at all — on a run this comment itself describes as
+// "potentially minutes-long", which is exactly the case a proxy's idle timeout
+// kills.
+ingestRouter.get('/process-stream', sameOriginOnly, sseStream(async ({ req, send, signal }) => {
   const dryRun = req.query.dryRun === '1' || req.query.dryRun === 'true';
-  const send = (event, data) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-
-  // Abort the (potentially minutes-long) ingest as soon as the client goes away
-  // so we stop fingerprinting/moving files into a dead connection.
-  const ac = new AbortController();
-  req.on('close', () => ac.abort());
-
-  try {
-    const result = await processIngest({ dryRun, onItem: (item) => send('item', item), signal: ac.signal });
-    if (!result.aborted) {
-      send('done', {
-        matched: result.matched.length,
-        needsReview: result.needsReview.length,
-        dryRun: result.dryRun,
-        error: result.error,
-      });
-    }
-  } catch (err) {
-    if (!ac.signal.aborted) send('error', { message: err.message, code: err.code });
-  } finally {
-    res.end();
-  }
-});
+  // `signal` aborts the (potentially minutes-long) ingest as soon as the client
+  // goes away, so we stop fingerprinting and moving files into a dead
+  // connection.
+  const result = await processIngest({ dryRun, onItem: (item) => send('item', item), signal });
+  if (result.aborted) return STREAM_HANDLED;
+  return {
+    matched: result.matched.length,
+    needsReview: result.needsReview.length,
+    dryRun: result.dryRun,
+    error: result.error,
+  };
+}));
