@@ -611,8 +611,13 @@ a:hover {
   display: flex;
   align-items: center;
   gap: 0.45rem;
-  margin-bottom: 0.85rem;
+  margin-bottom: 0.35rem;
   font-size: 0.85rem;
+}
+
+/* The last box before the candidate list it governs. */
+.fix-overwrite + .ingest-candidate-list {
+  margin-top: 0.85rem;
 }
 
 /* ---------- Library page ---------- */

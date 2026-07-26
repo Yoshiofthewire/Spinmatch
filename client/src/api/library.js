@@ -67,9 +67,10 @@ export function getFingerprintCandidates(trackId) {
 }
 
 // `overwrite` replaces tags that disagree with the chosen recording instead of
-// only filling empty ones. Reserved for fingerprint matches — see FixTrackPanel.
-export function applyFix({ trackId, recordingMbid, overwrite = false }) {
-  return post('/library/fix', { trackId, recordingMbid, overwrite });
+// only filling empty ones, and `replaceCoverArt` does the same for the embedded
+// picture. Both reserved for fingerprint matches — see FixTrackPanel.
+export function applyFix({ trackId, recordingMbid, overwrite = false, replaceCoverArt = false }) {
+  return post('/library/fix', { trackId, recordingMbid, overwrite, replaceCoverArt });
 }
 
 // What repairing a whole album's tags would write. Read-only — 'path' makes no

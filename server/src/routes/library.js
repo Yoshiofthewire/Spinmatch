@@ -429,13 +429,20 @@ libraryRouter.get('/fingerprint-candidates/:trackId', async (req, res, next) => 
 
 // Writes tags to a file in place. Never moves or renames it, and by default only
 // fills fields that are currently empty. `overwrite` opts into replacing tags
-// that disagree with the chosen recording — see libraryFix.js.
+// that disagree with the chosen recording, and `replaceCoverArt` does the same
+// for the embedded picture — separately, since they're separate decisions.
+// See libraryFix.js.
 libraryRouter.post('/fix', async (req, res, next) => {
   try {
     const trackId = Number(req.body?.trackId);
     if (!trackId) throw new BadRequestError('trackId is required');
     const recordingMbid = assertMbid(str(req.body?.recordingMbid), 'recordingMbid');
-    res.json(await applyFix({ trackId, recordingMbid, overwrite: Boolean(req.body?.overwrite) }));
+    res.json(await applyFix({
+      trackId,
+      recordingMbid,
+      overwrite: Boolean(req.body?.overwrite),
+      replaceCoverArt: Boolean(req.body?.replaceCoverArt),
+    }));
   } catch (err) {
     next(err);
   }

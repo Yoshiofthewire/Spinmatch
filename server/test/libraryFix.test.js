@@ -75,6 +75,7 @@ async function freshFix({ current, recording = RECORDING, coverImage = null, fin
           filePath, desired, filledFields,
           coverImage: opts?.coverImage ?? null,
           overwrite: opts?.overwrite ?? false,
+          replaceCoverArt: opts?.replaceCoverArt ?? false,
         };
         return { filledFields };
       },
@@ -355,7 +356,7 @@ test('a fix that is not overwriting still reports itself as such', async () => {
   db.close();
 });
 
-test('an overwriting fix still leaves existing cover art alone', async () => {
+test('an overwriting fix leaves existing cover art alone unless asked otherwise', async () => {
   const db = openDb(':memory:');
   setDbForTest(db);
   const arted = seedTrack(db, { artist: 'Wrong Band', hasCoverArt: 1 });
@@ -369,7 +370,54 @@ test('an overwriting fix still leaves existing cover art alone', async () => {
     trackId: arted.id, recordingMbid: '77777777-7777-4777-8777-777777777777', overwrite: true,
   });
 
-  assert.equal(written.coverImage, null, 'art belonging to the wrong song is still not replaced');
+  assert.equal(written.coverImage, null, 'correcting tags does not fetch replacement art');
+  assert.equal(written.replaceCoverArt, false);
+  db.close();
+});
+
+// Art is its own opt-in. A file tagged as the wrong song usually carries that
+// song's sleeve too, but the two are separate decisions — and the cover lookup
+// is a Cover Art Archive request that shouldn't be spent unless asked for.
+test('replacing cover art fetches art even for a file that already has some', async () => {
+  const db = openDb(':memory:');
+  setDbForTest(db);
+  const arted = seedTrack(db, { artist: 'Wrong Band', hasCoverArt: 1 });
+  written = null;
+
+  const { applyFix } = await freshFix({
+    current: { artist: 'Wrong Band', title: null, album: null, trackNumber: null, disc: null, year: null },
+    coverImage: { bytes: Buffer.from('img'), mimeType: 'image/jpeg' },
+  });
+  await applyFix({
+    trackId: arted.id,
+    recordingMbid: '77777777-7777-4777-8777-777777777777',
+    replaceCoverArt: true,
+  });
+
+  assert.ok(written.coverImage, 'the replacement is fetched despite the file having art');
+  assert.equal(written.replaceCoverArt, true);
+  db.close();
+});
+
+test('cover art can be replaced without overwriting any tags', async () => {
+  const db = openDb(':memory:');
+  setDbForTest(db);
+  const arted = seedTrack(db, { artist: 'Wrong Band', hasCoverArt: 1 });
+  written = null;
+
+  const { applyFix } = await freshFix({
+    current: { artist: 'Wrong Band', title: null, album: null, trackNumber: null, disc: null, year: null },
+    coverImage: { bytes: Buffer.from('img'), mimeType: 'image/jpeg' },
+  });
+  const result = await applyFix({
+    trackId: arted.id,
+    recordingMbid: '77777777-7777-4777-8777-777777777777',
+    replaceCoverArt: true,
+  });
+
+  assert.equal(written.overwrite, false, 'the two opt-ins are independent');
+  assert.equal(result.overwritten, false);
+  assert.ok(!result.filledFields.includes('artist'), 'the wrong artist tag is left as it was');
   db.close();
 });
 

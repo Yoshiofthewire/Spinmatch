@@ -83,9 +83,16 @@ export async function readCoverArt(filePath) {
 // alone and stays out of filledFields, so applying a match the file already
 // matches honestly reports that nothing changed.
 //
-// Cover art is fill-only in both modes: replacing embedded art is irreversible
-// and this app has no undo.
-export async function writeMissingTags(filePath, desired, { coverImage, overwrite = false } = {}) {
+// `replaceCoverArt` is the same widening for the embedded picture, and is
+// deliberately a separate flag rather than something `overwrite` implies:
+// correcting a file's text tags and swapping its artwork are different
+// decisions, and either is worth making without the other. Without it, art is
+// only ever written to a file that has none.
+export async function writeMissingTags(
+  filePath,
+  desired,
+  { coverImage, overwrite = false, replaceCoverArt = false } = {},
+) {
   const file = File.createFromPath(filePath);
   const filledFields = [];
   try {
@@ -101,8 +108,10 @@ export async function writeMissingTags(filePath, desired, { coverImage, overwrit
       }
     }
 
+    // No coverImage means there's nothing to put there — asking to replace art
+    // must never end up removing the art the file already has.
     const hasCoverArt = Boolean(tag.pictures && tag.pictures.length > 0);
-    if (!hasCoverArt && coverImage) {
+    if (coverImage && (replaceCoverArt || !hasCoverArt)) {
       const picture = Picture.fromFullData(
         ByteVector.fromByteArray(coverImage.bytes),
         PictureType.FrontCover,

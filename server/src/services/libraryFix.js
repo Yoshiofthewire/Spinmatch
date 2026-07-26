@@ -82,7 +82,11 @@ async function positionOnRelease(releaseGroupMbid, recordingMbid) {
 // are the thing that's wrong and filling holes repairs nothing. The UI only
 // offers it for fingerprint-sourced candidates, and only when explicitly
 // ticked, because nothing here can be undone.
-export async function applyFix({ trackId, recordingMbid, overwrite = false }) {
+//
+// `replaceCoverArt` says the same about the picture, and is its own flag: a
+// mis-tagged file usually carries the wrong sleeve too, but plenty of people
+// want the tags corrected and their own artwork kept.
+export async function applyFix({ trackId, recordingMbid, overwrite = false, replaceCoverArt = false }) {
   assertMbid(recordingMbid, 'recordingMbid');
   const { track, real } = await trackOrThrow(trackId);
   const recording = await getRecording(recordingMbid);
@@ -96,9 +100,10 @@ export async function applyFix({ trackId, recordingMbid, overwrite = false }) {
     ? await positionOnRelease(releaseGroupMbid, recordingMbid)
     : {};
 
-  // Only fetched when the file has no art of its own, so a fix on a file that is
-  // already arted costs no Cover Art Archive request.
-  const coverImage = !track.hasCoverArt && releaseGroupMbid
+  // Only fetched when there's somewhere for it to go, so a fix on a file that is
+  // already arted costs no Cover Art Archive request unless the art is what's
+  // being replaced.
+  const coverImage = (replaceCoverArt || !track.hasCoverArt) && releaseGroupMbid
     ? await getFrontCoverImage(releaseGroupMbid)
     : null;
 
@@ -109,7 +114,7 @@ export async function applyFix({ trackId, recordingMbid, overwrite = false }) {
     year: recording.date ? Number(recording.date.slice(0, 4)) || null : null,
     trackNumber: position.trackNumber ?? null,
     disc: position.disc ?? null,
-  }, { coverImage, overwrite });
+  }, { coverImage, overwrite, replaceCoverArt });
 
   await reindexFile(real);
 

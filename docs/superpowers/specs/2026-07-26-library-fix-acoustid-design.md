@@ -32,10 +32,11 @@ Out of scope:
 - **Automatic fingerprinting on panel open.** Fingerprinting costs a subprocess that reads 120
   seconds of audio (30s timeout) plus a rate-limited network call. Browsing the Health tab must
   not spawn that work per expanded row. It stays behind an explicit click.
-- **Replacing embedded cover art.** Art is filled only when the file has none, in both the
-  existing and the new overwrite mode. A corrected file can therefore keep art belonging to the
-  song it was previously mis-tagged as. Deliberate: art replacement is irreversible and this app
-  has no undo.
+Cover art was originally out of scope here — art would have stayed fill-only in both modes,
+leaving a corrected file with the sleeve of the song it was mis-tagged as. That was revised during
+implementation: replacing art is now supported, as its own `replaceCoverArt` opt-in rather than
+something the tag overwrite implies. Correcting a file's text tags and swapping its artwork are
+separate decisions, and either is worth making without the other.
 
 ## Backend
 
@@ -78,7 +79,7 @@ Unlike `getFixCandidates`, this does **not** fall back to a tag search when the 
 nothing — the caller already has the tag candidates on screen. Zero candidates returns an empty
 array.
 
-### `tags.js`: `writeMissingTags(filePath, desired, { coverImage, overwrite = false })`
+### `tags.js`: `writeMissingTags(filePath, desired, { coverImage, overwrite, replaceCoverArt })`
 
 With `overwrite: false` (the default), behaviour is exactly as today: a field is written only when
 the current value is `null`.
@@ -88,18 +89,22 @@ current value. Fields whose value already equals the desired one are not rewritt
 appear in `filledFields`, so applying a match that agrees with the file reports "No changes
 needed" rather than claiming a write.
 
-Cover art handling is identical in both modes: written only when the file has no pictures.
+`replaceCoverArt` is the same widening for the embedded picture, and is independent of `overwrite`:
+with it, art is written whenever there's art to write; without it, only to a file that has none. A
+null `coverImage` writes nothing either way, so asking to replace art can never strip art the file
+already has.
 
 `plannedFills` (the dry-run preview used by bulk fix) is unchanged — nothing calls it with
 overwrite semantics.
 
-### `libraryFix.js`: `applyFix({ trackId, recordingMbid, overwrite = false })`
+### `libraryFix.js`: `applyFix({ trackId, recordingMbid, overwrite, replaceCoverArt })`
 
-`overwrite` is passed through to `writeMissingTags`. One other conditional changes: the
-track/disc position lookup currently runs only when `track.trackNumber == null`, and now runs when
-`overwrite || track.trackNumber == null`, so a wrong track number can be corrected too.
-
-The cover-art fetch condition (`!track.hasCoverArt`) is unchanged, per the scope note above.
+Both flags are passed through to `writeMissingTags`. Two conditionals change: the track/disc
+position lookup ran only when `track.trackNumber == null` and now runs when
+`overwrite || track.trackNumber == null`, so a wrong track number can be corrected too; and the
+Cover Art Archive fetch ran only when `!track.hasCoverArt` and now runs when
+`replaceCoverArt || !track.hasCoverArt`, so a file that already has art costs no request unless the
+art is what's being replaced.
 
 Response gains `overwritten: boolean` alongside the existing `filledFields`, `track`, and
 `recording`, so the UI can distinguish "filled" from "replaced" in its result badge.
@@ -108,8 +113,8 @@ Response gains `overwritten: boolean` alongside the existing `filledFields`, `tr
 
 - `GET /library/fingerprint-candidates/:trackId` → `getFingerprintCandidates`. Read-only GET, no
   CSRF guard, consistent with the neighbouring `fix-candidates` route.
-- `POST /library/fix` additionally reads `overwrite` from the body as `Boolean(req.body?.overwrite)`.
-  Existing `trackId` and `recordingMbid` validation is untouched.
+- `POST /library/fix` additionally reads `overwrite` and `replaceCoverArt` from the body, each as
+  `Boolean(req.body?.…)`. Existing `trackId` and `recordingMbid` validation is untouched.
 
 ### Errors
 
@@ -136,13 +141,15 @@ tag/path candidates, using the same `CandidateRow`. Any tag/path candidate whose
 already appears in the fingerprint list is filtered out, so no recording offers two "Use" buttons
 with two different scores.
 
-When the fingerprint list is non-empty, a checkbox appears with it:
+When the fingerprint list is non-empty, two checkboxes appear above it — above rather than below,
+since they change what "Use this" does and have to be read before the button is reached:
 
 > **Replace existing tags, don't just fill blanks**
+> **Replace existing cover art**
 
-Unchecked by default. It applies only to "Use" on fingerprint-sourced rows — tag/path rows always
-apply with `overwrite: false`, unchanged from today. `handleUse` therefore takes the candidate's
-source alongside the mbid.
+Both unchecked by default, and independent of each other. They apply only to "Use" on
+fingerprint-sourced rows — tag/path rows always apply with both false, unchanged from today.
+`handleUse` therefore takes the candidate's source alongside the mbid.
 
 Errors from the fingerprint request render in the panel's existing error banner.
 
@@ -153,8 +160,8 @@ The post-fix badge reads `Replaced <fields>` when the response has `overwritten:
 
 ### `client/src/api/library.js`
 
-Adds `getFingerprintCandidates(trackId)` hitting the new route, and threads `overwrite` through
-`applyFix`.
+Adds `getFingerprintCandidates(trackId)` hitting the new route, and threads `overwrite` and
+`replaceCoverArt` through `applyFix`.
 
 ## Testing
 
@@ -183,10 +190,16 @@ for `fpcalc`):
   `BadRequestError` when no API key is configured.
 - `applyFix` with `overwrite: true`: replaces a wrong artist and title; corrects a track number
   that disagrees with the recording's position on its release, which the default path skips;
-  leaves existing cover art alone.
+  leaves existing cover art alone, since art is a separate opt-in.
+- `applyFix` with `replaceCoverArt: true`: fetches art even for a file that already has some, and
+  does so without overwriting any tags — the two flags are independent in both directions.
 - `applyFix` default: the existing fill-only tests in `server/test/libraryFix.test.js` must keep
   passing unmodified.
 - `writeMissingTags` unit level: overwrite writes changed fields and reports them in
-  `filledFields`; a field already equal to the desired value is not reported.
-- Route level (`server/test/routes/`): `GET /library/fingerprint-candidates/:trackId` returns
-  candidates, and `POST /library/fix` honours `overwrite` in the body.
+  `filledFields`; a field already equal to the desired value is not reported; `replaceCoverArt`
+  swaps a picture that's already there, doesn't imply a tag overwrite, and with no `coverImage`
+  leaves the existing picture in place rather than clearing it.
+- Route level (`server/test/routes/libraryFix.test.js`, which mocks the service to check wiring
+  rather than behaviour): `GET /library/fingerprint-candidates/:trackId` returns candidates, and
+  `POST /library/fix` passes `overwrite` and `replaceCoverArt` through independently, with an
+  absent flag reading as `false` rather than truthy.

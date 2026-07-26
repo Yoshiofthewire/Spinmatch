@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const { readTags, writeMissingTags, plannedFills } = await import('../src/services/tags.js');
+const { readTags, readCoverArt, writeMissingTags, plannedFills } = await import('../src/services/tags.js');
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURES_DIR = path.join(__dirname, 'fixtures');
@@ -154,7 +154,9 @@ test('writeMissingTags with overwrite does not report a field that already match
   });
 });
 
-test('writeMissingTags with overwrite still leaves existing cover art alone', async () => {
+// Art is its own opt-in: correcting the text tags and swapping the picture are
+// different decisions, and either is useful without the other.
+test('writeMissingTags with overwrite leaves existing cover art alone', async () => {
   await withCopiedFixture('silence.mp3', async (file) => {
     const coverImage = { bytes: Buffer.from([0xff, 0xd8, 0xff, 0xd9]), mimeType: 'image/jpeg' };
     await writeMissingTags(file, { artist: 'A' }, { coverImage });
@@ -162,7 +164,43 @@ test('writeMissingTags with overwrite still leaves existing cover art alone', as
     const secondCover = { bytes: Buffer.from([0xff, 0xd8, 0xff, 0x00, 0xff, 0xd9]), mimeType: 'image/jpeg' };
     const { filledFields } = await writeMissingTags(file, { artist: 'B' }, { coverImage: secondCover, overwrite: true });
     assert.ok(filledFields.includes('artist'), 'the tag is still corrected');
-    assert.ok(!filledFields.includes('coverArt'), 'art is never replaced, in either mode');
+    assert.ok(!filledFields.includes('coverArt'), 'overwriting tags does not imply replacing art');
+  });
+});
+
+test('writeMissingTags with replaceCoverArt swaps art that is already present', async () => {
+  await withCopiedFixture('silence.mp3', async (file) => {
+    const coverImage = { bytes: Buffer.from([0xff, 0xd8, 0xff, 0xd9]), mimeType: 'image/jpeg' };
+    await writeMissingTags(file, { artist: 'A' }, { coverImage });
+
+    const secondCover = { bytes: Buffer.from([0xff, 0xd8, 0xff, 0x00, 0xff, 0xd9]), mimeType: 'image/jpeg' };
+    const { filledFields } = await writeMissingTags(file, {}, { coverImage: secondCover, replaceCoverArt: true });
+    assert.ok(filledFields.includes('coverArt'));
+
+    const after = await readCoverArt(file);
+    assert.deepEqual(Buffer.from(after.bytes), secondCover.bytes, 'the new picture is the one on the file');
+  });
+});
+
+test('writeMissingTags replaces art without touching tags that are already set', async () => {
+  await withCopiedFixture('tagged.mp3', async (file) => {
+    const coverImage = { bytes: Buffer.from([0xff, 0xd8, 0xff, 0xd9]), mimeType: 'image/jpeg' };
+    const { filledFields } = await writeMissingTags(file, { artist: 'Should Not Overwrite' }, { coverImage, replaceCoverArt: true });
+
+    assert.ok(!filledFields.includes('artist'), 'replacing art does not imply overwriting tags');
+    assert.ok(filledFields.includes('coverArt'));
+    assert.equal((await readTags(file)).artist, 'Existing Artist');
+  });
+});
+
+test('writeMissingTags with replaceCoverArt and no art to write leaves the file as it was', async () => {
+  await withCopiedFixture('silence.mp3', async (file) => {
+    const coverImage = { bytes: Buffer.from([0xff, 0xd8, 0xff, 0xd9]), mimeType: 'image/jpeg' };
+    await writeMissingTags(file, { artist: 'A' }, { coverImage });
+
+    const { filledFields } = await writeMissingTags(file, {}, { coverImage: null, replaceCoverArt: true });
+    assert.ok(!filledFields.includes('coverArt'), 'nothing to put there means nothing is removed');
+    assert.equal((await readTags(file)).hasCoverArt, true);
   });
 });
 

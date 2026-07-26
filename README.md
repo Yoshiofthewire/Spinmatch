@@ -176,11 +176,13 @@ The Library page has eight tabs:
   With an `ACOUSTID_API_KEY` set, the panel also offers **Identify by audio**: it fingerprints the
   file with Chromaprint and asks AcoustID what the recording actually is, which is the only way to
   identify a file whose tags and path are both useless. Because a fingerprint doesn't depend on the
-  metadata being repaired, it's also the one source allowed to *replace* tags rather than only fill
-  blanks — that's what fixes a file tagged as the wrong song entirely. It's a separate tick box,
-  unchecked by default, and offered only for fingerprint matches. Embedded cover art is never
-  replaced in either mode. The button is opt-in per track rather than automatic because
-  fingerprinting spawns a subprocess over the audio and spends a rate-limited AcoustID call.
+  metadata being repaired, it's also the one source allowed to *replace* what's already there rather
+  than only fill blanks — that's what fixes a file tagged as the wrong song entirely. Two tick
+  boxes, both unchecked by default and offered only for fingerprint matches: one replaces the text
+  tags, the other replaces the embedded cover art. They're deliberately separate, because wanting
+  the right title and wanting someone else's sleeve are different wishes. The button is opt-in per
+  track rather than automatic because fingerprinting spawns a subprocess over the audio and spends
+  a rate-limited AcoustID call.
 - **Duplicates** — the same artist, album and title indexed at more than one path, with every
   copy's track number, length, format, size and full path side by side, and a play button for each
   so they can be compared. The album is part of the match, so a song that appears on two different

@@ -85,4 +85,14 @@ test('POST /api/library/fix fills only the blanks when overwrite is not asked fo
   assert.equal(res.status, 200);
 
   assert.equal(applyArgs.overwrite, false, 'an absent flag must not read as truthy');
+  assert.equal(applyArgs.replaceCoverArt, false);
+});
+
+test('POST /api/library/fix passes the cover-art opt-in through independently', async () => {
+  applyArgs = null;
+  const res = await postFix({ trackId: 3, recordingMbid: MBID, replaceCoverArt: true });
+  assert.equal(res.status, 200);
+
+  assert.equal(applyArgs.replaceCoverArt, true);
+  assert.equal(applyArgs.overwrite, false, 'replacing art does not silently overwrite tags');
 });

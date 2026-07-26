@@ -31,6 +31,7 @@ export default function FixTrackPanel({ track, onFixed, onCancel }) {
   const [fpCandidates, setFpCandidates] = useState(null);
   const [fingerprinting, setFingerprinting] = useState(false);
   const [overwrite, setOverwrite] = useState(false);
+  const [replaceCoverArt, setReplaceCoverArt] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -38,6 +39,7 @@ export default function FixTrackPanel({ track, onFixed, onCancel }) {
     setLoadError(null);
     setFpCandidates(null);
     setOverwrite(false);
+    setReplaceCoverArt(false);
     getFixCandidates(track.id)
       .then((data) => { if (!cancelled) setCandidates(data.candidates); })
       .catch((err) => { if (!cancelled) setLoadError(err); });
@@ -81,6 +83,7 @@ export default function FixTrackPanel({ track, onFixed, onCancel }) {
         trackId: track.id,
         recordingMbid,
         overwrite: fromFingerprint && overwrite,
+        replaceCoverArt: fromFingerprint && replaceCoverArt,
       }));
     } catch (err) {
       setApplyError(err);
@@ -114,9 +117,11 @@ export default function FixTrackPanel({ track, onFixed, onCancel }) {
       {fpCandidates && fpCandidates.length > 0 && (
         <>
           <h4 className="fix-section-title">AcoustID matches</h4>
-          {/* Above the list, not below it: it changes what "Use this" does, so
-              it has to be read before the button is reached. Off by default,
-              and only ever offered here — nothing in this app can be undone. */}
+          {/* Above the list, not below it: these change what "Use this" does, so
+              they have to be read before the button is reached. Both off by
+              default and offered only here — nothing in this app can be undone.
+              Separate boxes because they're separate decisions: plenty of people
+              want the tags corrected and their own artwork left alone. */}
           <label className="fix-overwrite">
             <input
               type="checkbox"
@@ -124,6 +129,14 @@ export default function FixTrackPanel({ track, onFixed, onCancel }) {
               onChange={(e) => setOverwrite(e.target.checked)}
             />
             Replace existing tags, don&apos;t just fill blanks
+          </label>
+          <label className="fix-overwrite">
+            <input
+              type="checkbox"
+              checked={replaceCoverArt}
+              onChange={(e) => setReplaceCoverArt(e.target.checked)}
+            />
+            Replace existing cover art
           </label>
           <ul className="ingest-candidate-list">
             {fpCandidates.map((c) => (
