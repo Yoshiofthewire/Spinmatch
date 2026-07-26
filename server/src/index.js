@@ -3,8 +3,13 @@ import { createApp } from './app.js';
 import { startLibrarySync } from './services/librarySync.js';
 import { stopScan } from './services/libraryScanner.js';
 import { ingestInProgress } from './services/ingest.js';
+import { assertDbWritable } from './lib/dbPreflight.js';
 
 assertRequiredConfig();
+// Before anything opens a connection. getDb() is lazy, so without this a volume
+// the process cannot write turns into a 500 on every request instead of a
+// message saying which directory is wrong and who owns it.
+assertDbWritable(config.library.dbPath);
 
 // Log and exit, not log and continue.
 //

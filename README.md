@@ -363,24 +363,44 @@ docker compose up --build
 The app will be available at http://localhost:3000. The container builds the client and runs
 the server in a single image — no separate frontend container needed.
 
-### File ownership
+### File ownership (`PUID` / `PGID`)
 
-The container runs as the unprivileged `node` user (uid/gid **1000**), not as root. This process
-shells out to `yt-dlp` and `fpcalc` and parses tags out of files you downloaded from wherever,
-none of which should run as root with your music library mounted read-write — and it means files
-the ingest flow writes land owned by uid 1000 rather than by root, so your media player can still
-write to them.
+The container starts as root, prepares its own database directory, and then drops to an
+unprivileged uid before running the server. It never serves a request as root: this process shells
+out to `yt-dlp` and `fpcalc` and parses tags out of files you downloaded from wherever, none of
+which should run as root with your music library mounted read-write. It also means files the
+ingest flow writes land owned by you rather than by root, so your media player can still write to
+them.
 
-The three bind-mounted paths (`/data/ingest`, `/data/music`, `/data/db`) keep their **host**
-ownership, so they have to be writable by uid 1000. If ingest reports permission errors or the
-database can't be created, that's this:
+Which uid it drops to is `PUID`/`PGID`, defaulting to **1000:1000**:
 
 ```
-sudo chown -R 1000:1000 ./ingest ./music ./db
+PUID=1000     # `id -u` on most Linux hosts; 99 on Unraid (nobody)
+PGID=1000     # `id -g` on most Linux hosts; 100 on Unraid (users)
 ```
 
-To run as a different user — matching your own account, say — set `user:` in
-`docker-compose.yml` (e.g. `user: "1001:1001"`) and chown the mounts to match.
+This matters because a bind mount keeps its **host** ownership — nothing the image does at build
+time can change it. Set these to whatever owns the folders you mounted. The container chowns
+`/data/db` for you on every start, because that directory is the app's own private storage
+(the SQLite index and your login). Your music and ingest directories are deliberately left
+alone: a recursive chown of a music library is slow, isn't the container's call, and can't be
+undone. If either isn't writable, fix it yourself:
+
+```
+sudo chown -R 1000:1000 ./ingest ./music
+```
+
+If the database directory can't be made writable, the server says so on startup and exits rather
+than answering every request with a 500 — check `docker logs` for a message naming the path, the
+uid it's running as, and who owns it.
+
+Running the container with an explicit `--user` (or `user:` in `docker-compose.yml`) still works
+and takes precedence: the entrypoint sees it's already unprivileged and gets out of the way. In
+that case nothing can be chowned for you, so the mounts must already be writable.
+
+> **Upgrading from a version that ran as root?** Your `db` folder is root-owned and the server
+> will refuse to start until it isn't. The entrypoint fixes this automatically; if you've pinned
+> `--user`, run `sudo chown -R 1000:1000 ./db` once.
 
 ## Running on Unraid
 
@@ -407,6 +427,11 @@ described above, and set **AcoustID API Key** as well if you want automatic trac
 point at a persistent appdata path so the
 collection index survives container rebuilds; it's used automatically once **Music Directory** is
 set, no separate toggle needed.
+
+The template sets **PUID**/**PGID** (under **Show more settings**) to Unraid's `nobody:users`,
+**99:100**, which is what owns a standard Unraid share — leave them alone unless you know yours
+are owned by something else. See [File ownership](#file-ownership-puid--pgid) above for what they
+do and what happens if they're wrong.
 
 ## Tests
 

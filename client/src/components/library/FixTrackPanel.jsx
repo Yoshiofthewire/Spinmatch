@@ -19,7 +19,7 @@ import { getFixCandidates, getFingerprintCandidates, applyFix } from '../../api/
 // Only a fingerprint match may overwrite tags the file already has, and only
 // when explicitly ticked: the tag/path candidates are a guess built from the
 // same metadata they'd be replacing.
-export default function FixTrackPanel({ track, onFixed, onCancel }) {
+export default function FixTrackPanel({ track, onFixed, onCancel, onPlay }) {
   const { acoustidConfigured } = useConfig();
   const [candidates, setCandidates] = useState(null);
   const [loadError, setLoadError] = useState(null);
@@ -98,7 +98,25 @@ export default function FixTrackPanel({ track, onFixed, onCancel }) {
 
   return (
     <div className="ingest-match-picker">
-      <p className="muted mono fix-path">{track.path}</p>
+      {/* Playing the file is the other way to answer "what *is* this?", and the
+          cheap one — no fpcalc, no rate-limited lookup, and it works on the
+          files AcoustID has never heard of. A row is here precisely because its
+          tags don't say what it is, so the path and the audio are the only two
+          things that do. */}
+      <div className="fix-identify">
+        {onPlay && (
+          <button
+            type="button"
+            className="play-button"
+            onClick={() => onPlay(track)}
+            aria-label={`Play ${track.title || track.path}`}
+            title="Play this file"
+          >
+            ▶
+          </button>
+        )}
+        <p className="muted mono fix-path">{track.path}</p>
+      </div>
 
       {loadError && <p className="banner banner-error">{loadError.message}</p>}
 

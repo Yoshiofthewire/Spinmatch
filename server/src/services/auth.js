@@ -36,6 +36,26 @@ export function dummyHash() {
   return dummyHashPromise;
 }
 
+// ---- Username matching ----
+
+// Usernames are compared folded, so the admin can type theirs however their
+// keyboard, phone autocapitalise, or password manager felt like spelling it.
+// The stored row keeps the original spelling — that is what the UI shows and
+// what the session token carries — and only the comparison folds.
+//
+// toLowerCase(), not toLocaleLowerCase(): the latter is locale-dependent, and
+// under a Turkish locale 'I' lowercases to dotless 'ı'. That would make a login
+// succeed or fail based on the server process's locale, which is not a property
+// anyone would think to check.
+//
+// NFC first, because two spellings of an accented name can be different byte
+// sequences that render identically, and which one the browser sends depends on
+// the OS and keyboard that composed it. Composing them to one canonical form is
+// what RFC 8265's UsernameCaseMapped profile does, and for the same reason.
+export function foldUsername(username) {
+  return String(username ?? '').trim().normalize('NFC').toLowerCase();
+}
+
 export async function verifyPassword(password, stored) {
   const [scheme, saltHex, hashHex] = String(stored || '').split('$');
   if (scheme !== 'scrypt' || !saltHex || !hashHex) return false;
@@ -150,6 +170,11 @@ export function sessionFromToken(db, token) {
   if (!admin) return null;
   const payload = verifyToken(getSigningSecret(db), token);
   if (!payload) return null;
+  // Exact, deliberately — not foldUsername. Login folds because what arrives
+  // there is a human typing their name; this value was minted by issueToken from
+  // the admin row itself, so anything other than an exact match means the token
+  // is not one we issued for the admin who currently exists. Folding it would
+  // widen what a forged or stale payload can claim, and buy nothing.
   if (payload.username !== admin.username) return null;
   if (payload.epoch !== admin.tokenEpoch) return null;
   return { username: admin.username };

@@ -216,6 +216,7 @@ export default function LibraryPage() {
                   onFixed={refresh}
                   onGoTo={switchTab}
                   onSelectAlbum={openAlbum}
+                  onPlay={(track, queue) => setPlaying({ track, queue })}
                 />
               )}
               {tab === 'duplicates' && (

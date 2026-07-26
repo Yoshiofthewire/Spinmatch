@@ -1281,6 +1281,26 @@ a:hover {
   word-break: break-all;
 }
 
+/* Play button and path on one line in the repair panel. The path wraps at any
+   character (it can be long and has no spaces), so the button is kept from
+   being squashed by the wrap and stays aligned with the first line rather than
+   floating against the middle of a three-line path. */
+.fix-identify {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  margin-bottom: 0.85rem;
+}
+
+.fix-identify .play-button {
+  flex: none;
+}
+
+.fix-identify .fix-path {
+  margin: 0;
+  padding-top: 0.35rem;
+}
+
 .badge-owned {
   background: rgba(47, 217, 196, 0.15);
   color: var(--lock);

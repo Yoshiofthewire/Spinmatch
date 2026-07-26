@@ -49,18 +49,29 @@ COPY server/src server/src
 COPY server/public server/public
 COPY --from=build /app/client/dist client/dist
 
-# Drop root. This process shells out to yt-dlp (which parses hostile HTML off
-# YouTube) and fpcalc, and feeds arbitrary downloaded files into a native tag
-# parser — none of which has any business running as uid 0 with the user's music
-# library mounted read-write. It also stops every ingested file from landing on
-# the host owned by root, which is what made them unwritable by the media player
-# they were ingested for.
+# Drop root — but at runtime, in the entrypoint, not here. This process shells
+# out to yt-dlp (which parses hostile HTML off YouTube) and fpcalc, and feeds
+# arbitrary downloaded files into a native tag parser, none of which has any
+# business running as uid 0 with the user's music library mounted read-write.
 #
-# /data is chowned so the default LIBRARY_DB path stays writable; a bind-mounted
-# volume keeps its host ownership, so the compose/unraid docs note that the
-# mounted dirs need to be writable by uid 1000 (the node user).
+# A baked-in `USER node` did the dropping but picked the uid at build time, which
+# is the one decision the image cannot make: a bind mount keeps its host
+# ownership, so the chown below applies to the image layer and is masked the
+# moment a volume is mounted over it. An install upgraded from a root-era image
+# had a root-owned /data/db, the unprivileged process could not create the
+# -wal/-shm files WAL needs, and every request — including the login the operator
+# was staring at — answered "Internal server error".
+#
+# The entrypoint takes PUID/PGID instead (99:100 on Unraid, 1000:1000 by
+# default), fixes up the database directory, and drops privileges itself.
+# su-exec is Alpine's ~10KB setuid-and-exec helper; it replaces the process
+# rather than forking, so signals and exit codes still reach node directly and
+# the graceful shutdown in index.js keeps working.
+RUN apk add --no-cache su-exec
 RUN mkdir -p /data/db /data/ingest /data/music && chown -R node:node /data /app
-USER node
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 
 EXPOSE 3000
 

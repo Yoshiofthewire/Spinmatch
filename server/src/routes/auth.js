@@ -2,7 +2,8 @@ import { Router } from 'express';
 import { getDb } from '../lib/db.js';
 import {
   hashPassword, verifyPassword, dummyHash, issueToken, getSigningSecret, sessionFromToken,
-  adminExists, getAdmin, createAdmin, updatePassword, revokeSessions, MIN_PASSWORD_LENGTH,
+  adminExists, getAdmin, createAdmin, updatePassword, revokeSessions, foldUsername,
+  MIN_PASSWORD_LENGTH,
 } from '../services/auth.js';
 import { SESSION_COOKIE, requireAuth } from '../middleware/requireAuth.js';
 import { serializeCookie, parseCookies } from '../lib/cookies.js';
@@ -129,7 +130,11 @@ authRouter.post('/login', rateLimitLogin, async (req, res, next) => {
       String(password ?? ''),
       admin ? admin.passwordHash : await dummyHash(),
     );
-    const usernameOk = Boolean(admin) && String(username ?? '').trim() === admin.username;
+    // Folded on both sides — see foldUsername. The admin's own stored spelling
+    // is what gets stamped into the session below, so matching loosely here
+    // never changes what the token or the UI says their name is.
+    const usernameOk = Boolean(admin)
+      && foldUsername(username) === foldUsername(admin.username);
     // Single generic error for any failure so we never reveal which half
     // (username vs. password) was wrong.
     if (!usernameOk || !passwordOk) throw new BadRequestError('Invalid username or password');

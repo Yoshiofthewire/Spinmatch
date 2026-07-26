@@ -5,7 +5,7 @@ process.env.MB_CONTACT_EMAIL = 'test@example.com';
 
 const {
   hashPassword, verifyPassword, issueToken, verifyToken,
-  adminExists, getAdmin, createAdmin, getSigningSecret,
+  adminExists, getAdmin, createAdmin, getSigningSecret, foldUsername,
 } = await import('../src/services/auth.js');
 const { openDb } = await import('../src/lib/db.js');
 
@@ -80,4 +80,39 @@ test('getSigningSecret is stable across calls and non-empty', () => {
   assert.ok(s1 && s1.length >= 32);
   assert.equal(s1, s2);
   db.close();
+});
+
+test('foldUsername folds case so the admin can type their name however they like', () => {
+  assert.equal(foldUsername('Yoshi'), foldUsername('yoshi'));
+  assert.equal(foldUsername('YOSHI'), foldUsername('yoshi'));
+  assert.equal(foldUsername('yOsHi'), foldUsername('yoshi'));
+  assert.notEqual(foldUsername('yoshi'), foldUsername('yoshb'));
+});
+
+test('foldUsername trims, so a trailing space pasted from a password manager still matches', () => {
+  assert.equal(foldUsername('  Yoshi  '), foldUsername('yoshi'));
+});
+
+// Two byte sequences that render identically: NFC composes the second into the
+// first. Without normalizing, an admin whose name carries an accent could be
+// locked out by which keyboard/OS composed it.
+test('foldUsername normalizes so composed and decomposed accents match', () => {
+  const composed = 'Ren\u00e9';    // é as one code point
+  const decomposed = 'Rene\u0301'; // e + combining acute
+  assert.notEqual(composed, decomposed, 'the two spellings must actually differ');
+  assert.equal(foldUsername(composed), foldUsername(decomposed));
+});
+
+// toLocaleLowerCase() is locale-dependent: under a Turkish locale 'I' lowercases
+// to dotless 'ı', so an admin registered as "IVAN" could not log into a server
+// whose locale happened to differ from the one they signed up on. The fold has
+// to be locale-independent.
+test('foldUsername is not locale-dependent', () => {
+  assert.equal(foldUsername('I'), 'i');
+  assert.equal(foldUsername('IVAN'), foldUsername('ivan'));
+});
+
+test('foldUsername handles absent input without throwing', () => {
+  assert.equal(foldUsername(undefined), '');
+  assert.equal(foldUsername(null), '');
 });

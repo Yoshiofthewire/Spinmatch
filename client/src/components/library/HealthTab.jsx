@@ -18,7 +18,7 @@ const ISSUES = [
   ['noCoverArt', 'No embedded cover art', true],
 ];
 
-function IssueTracks({ issue, fixable, onFixed, onSelectAlbum }) {
+function IssueTracks({ issue, fixable, onFixed, onSelectAlbum, onPlay }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [page, setPage] = useState(1);
@@ -140,10 +140,14 @@ function IssueTracks({ issue, fixable, onFixed, onSelectAlbum }) {
               {fixing?.id === track.id && (
                 <tr className="track-row-panel">
                   <td colSpan={fixable ? 5 : 4}>
+                    {/* The play queue is this page of the issue, so skipping
+                        forward walks the list being audited rather than
+                        stopping dead after one file. */}
                     <FixTrackPanel
                       track={fixing}
                       onFixed={handleFixed}
                       onCancel={() => setFixing(null)}
+                      onPlay={onPlay && ((t) => onPlay(t, data.tracks))}
                     />
                   </td>
                 </tr>
@@ -166,7 +170,9 @@ function IssueTracks({ issue, fixable, onFixed, onSelectAlbum }) {
 // gap and discography detection produce false positives: matching is done on
 // artist and title, so an empty artist tag is invisible to both. Each count
 // drills into the tracks behind it so it can be acted on, not just read.
-export default function HealthTab({ health, totalTracks, duplicateCount, onFixed, onGoTo, onSelectAlbum }) {
+export default function HealthTab({
+  health, totalTracks, duplicateCount, onFixed, onGoTo, onSelectAlbum, onPlay,
+}) {
   const [issue, setIssue] = useState(null);
   const active = ISSUES.find(([key]) => key === issue);
 
@@ -226,6 +232,7 @@ export default function HealthTab({ health, totalTracks, duplicateCount, onFixed
             fixable={active[2]}
             onFixed={onFixed}
             onSelectAlbum={onSelectAlbum}
+            onPlay={onPlay}
           />
         </>
       )}

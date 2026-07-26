@@ -111,6 +111,48 @@ test('login succeeds with correct credentials and sets a fresh cookie', async ()
   assert.match(res.headers.get('set-cookie'), /spinmatch_session=/);
 });
 
+// The admin registered as 'yoshi' in the setup test above.
+test('login accepts the username in any case', async () => {
+  const res = await fetch(`${baseUrl}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Sec-Fetch-Site': 'same-origin' },
+    body: JSON.stringify({ username: 'YoShI', password: 'hunter2hunter2' }),
+  });
+  assert.equal(res.status, 200, await res.text());
+  assert.match(res.headers.get('set-cookie'), /spinmatch_session=/);
+});
+
+// Folding the case must not fold the name into a different one.
+test('login still rejects a genuinely different username', async () => {
+  const res = await fetch(`${baseUrl}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Sec-Fetch-Site': 'same-origin' },
+    body: JSON.stringify({ username: 'yoshii', password: 'hunter2hunter2' }),
+  });
+  assert.equal(res.status, 400);
+  assert.match((await res.json()).error.message, /Invalid username or password/);
+});
+
+// Case-insensitive matching, but the stored spelling is what the app shows and
+// what the session token carries — logging in as YOSHI must not rename the
+// admin, or the token's username stops matching the row it names.
+test('logging in with different case keeps the stored spelling', async () => {
+  const res = await fetch(`${baseUrl}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Sec-Fetch-Site': 'same-origin' },
+    body: JSON.stringify({ username: 'YOSHI', password: 'hunter2hunter2' }),
+  });
+  assert.equal(res.status, 200);
+  assert.equal((await res.json()).username, 'yoshi');
+
+  const status = await fetch(`${baseUrl}/api/auth/status`, {
+    headers: { Cookie: sessionCookie(res) },
+  });
+  const body = await status.json();
+  assert.equal(body.authenticated, true, 'the session issued under a folded name must verify');
+  assert.equal(body.username, 'yoshi');
+});
+
 test('logout clears the session cookie', async () => {
   const res = await fetch(`${baseUrl}/api/auth/logout`, {
     method: 'POST',
