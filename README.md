@@ -411,11 +411,11 @@ In the Unraid **Docker** tab, click **Add Container**, switch the template dropd
 **Enter URL**, and paste:
 
 ```
-https://raw.githubusercontent.com/Yoshiofthewire/Spinmatch/main/unraid-template.xml
+https://raw.githubusercontent.com/Yoshiofthewire/Spinmatch/main/Spinmatch.xml
 ```
 
 This fills in the repository, port, paths, and environment variables from
-[`unraid-template.xml`](unraid-template.xml). At minimum, set **MB Contact Email**. The mapped
+[`Spinmatch.xml`](Spinmatch.xml). At minimum, set **MB Contact Email**. The mapped
 paths (**Ingest Directory**, **Music Directory**, and **Library DB Directory**) are the host folders
 bind-mounted at the container paths `/data/ingest`, `/data/music`, and `/data/db`. A path mapping on
 its own doesn't tell the app anything, so the template also ships the matching `INGEST_DIR`,
