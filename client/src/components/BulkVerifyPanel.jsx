@@ -3,6 +3,7 @@ import VerifyResultsTable from './VerifyResultsTable.jsx';
 import EqualizerLoader from './EqualizerLoader.jsx';
 import CopyButton from './CopyButton.jsx';
 import { addEntry } from '../lib/history.js';
+import { streamEvents } from '../lib/eventStream.js';
 
 // The YouTube-matching run for a list of tracks, streamed one result at a time.
 //
@@ -28,12 +29,11 @@ export default function BulkVerifyPanel({
   // any whose tracklist couldn't be read.
   const [currentAlbum, setCurrentAlbum] = useState(null);
   const [skipped, setSkipped] = useState([]);
-  const esRef = useRef(null);
-  const doneRef = useRef(false);
+  const abortRef = useRef(null);
 
   // Close any open stream if the component unmounts mid-run (also tells the
   // server to abort via its req 'close' handler).
-  useEffect(() => () => esRef.current?.close(), []);
+  useEffect(() => () => abortRef.current?.abort(), []);
 
   function logVerified(list) {
     // The artist sweep spans many records, so each result carries its own album;
@@ -52,58 +52,56 @@ export default function BulkVerifyPanel({
     setSkipped([]);
 
     // There was a non-streaming fallback here for "environments without
-    // EventSource". No such environment runs this client — EventSource predates
-    // every browser feature the app already depends on — and the endpoint behind
-    // it held one HTTP request open for the whole multi-minute run, which is the
-    // shape streaming exists to avoid. Both are gone.
-    doneRef.current = false;
+    // EventSource". No such environment runs this client — and the endpoint
+    // behind it held one HTTP request open for the whole multi-minute run, which
+    // is the shape streaming exists to avoid. Both are gone.
+    //
+    // The stream is read with fetch rather than EventSource so that a failure to
+    // open it can say what happened — see lib/eventStream.js.
     const acc = [];
-    const es = new EventSource(streamUrl);
-    esRef.current = es;
+    const controller = new AbortController();
+    abortRef.current = controller;
 
-    // Three shapes reach this handler. The release-group stream announces a
-    // track total up front. The library album stream sends nothing, because its
-    // caller already knows the count. The artist sweep sends one per record it
-    // starts on, with no total — walking every tracklist to compute one would
-    // cost as much again as the run — so it reports which album it is on
-    // instead, which is the honest progress signal at that scale.
-    es.addEventListener('album', (e) => {
-      const data = JSON.parse(e.data);
-      if (data.total != null) setTotal(data.total);
-      if (data.albumIndex != null) setCurrentAlbum(data);
-    });
-    // An album whose release can't be read is reported and stepped past rather
-    // than ending a run over twenty others.
-    es.addEventListener('album_error', (e) => {
-      setSkipped((prev) => [...prev, JSON.parse(e.data)]);
-    });
-    es.addEventListener('result', (e) => {
-      acc.push(JSON.parse(e.data));
-      setResults([...acc]);
-    });
-    es.addEventListener('rate_limited', (e) => {
-      doneRef.current = true;
-      es.close();
-      setError(JSON.parse(e.data));
-      setState('error');
-    });
-    es.addEventListener('done', () => {
-      doneRef.current = true;
-      es.close();
-      setState('done');
-      logVerified(acc);
-    });
-    es.addEventListener('error', (e) => {
-      if (doneRef.current) return; // normal close right after a terminal event
-      es.close();
-      let message = 'The verification stream failed.';
-      let code;
-      try {
-        if (e.data) ({ message, code } = JSON.parse(e.data));
-      } catch {
-        /* connection-level error carries no data */
+    // Exactly one terminal event ends a run: `done`, or one of the two failures.
+    let terminal = null;
+
+    streamEvents(streamUrl, {
+      // Three shapes reach this handler. The release-group stream announces a
+      // track total up front. The library album stream sends nothing, because
+      // its caller already knows the count. The artist sweep sends one per
+      // record it starts on, with no total — walking every tracklist to compute
+      // one would cost as much again as the run — so it reports which album it
+      // is on instead, which is the honest progress signal at that scale.
+      album: (data) => {
+        if (data.total != null) setTotal(data.total);
+        if (data.albumIndex != null) setCurrentAlbum(data);
+      },
+      // An album whose release can't be read is reported and stepped past
+      // rather than ending a run over twenty others.
+      album_error: (data) => setSkipped((prev) => [...prev, data]),
+      result: (data) => {
+        acc.push(data);
+        setResults([...acc]);
+      },
+      rate_limited: (data) => { terminal = { failure: data }; },
+      error: (data) => { terminal = { failure: data }; },
+      done: () => { terminal = { ok: true }; },
+    }, { signal: controller.signal }).then(() => {
+      if (terminal?.ok) {
+        setState('done');
+        logVerified(acc);
+        return;
       }
-      setError({ message, code });
+      // A stream that ends without a terminal event was cut off — the server
+      // restarted, or something in front of it dropped the connection. Said
+      // plainly, because the results already on screen are still good.
+      setError(terminal?.failure ?? {
+        message: 'The verification stream ended before it finished. Any results below are still good.',
+      });
+      setState('error');
+    }).catch((err) => {
+      if (controller.signal.aborted) return; // unmounted mid-run; nothing to report to
+      setError({ message: err.message, code: err.code });
       setState('error');
     });
   }
