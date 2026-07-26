@@ -185,7 +185,11 @@ test('security headers are set on every response', async () => {
   assert.equal(res.headers.get('x-content-type-options'), 'nosniff');
   assert.equal(res.headers.get('x-frame-options'), 'DENY');
   assert.match(res.headers.get('content-security-policy') ?? '', /default-src 'self'/);
-  assert.equal(res.headers.get('referrer-policy'), 'no-referrer');
+  // Not 'no-referrer': the CSRF guard needs Referer as its last resort on an
+  // insecure origin, where browsers send no Sec-Fetch-Site and no Origin on a
+  // GET. 'same-origin' keeps the referrer inside this origin — a cross-origin
+  // request still carries none — so nothing leaks and the guard has a signal.
+  assert.equal(res.headers.get('referrer-policy'), 'same-origin');
 });
 
 // A file's embedded art carries its own mime type, straight out of a tag written
@@ -269,16 +273,49 @@ test('a state-changing request identifying its origin in no way at all is refuse
     body: JSON.stringify({ username: 'someone-else', password: 'brandnewpassword' }),
   }));
 
-  // No Sec-Fetch-Site, no Origin. This used to be allowed on the grounds that
-  // "older browsers, curl, our own tests" send neither — a guard an attacker
-  // could disarm by omitting a field.
+  // No Sec-Fetch-Site, no Origin, no Referer. This used to be allowed on the
+  // grounds that "older browsers, curl, our own tests" send none — a guard an
+  // attacker could disarm by omitting a field.
   const res = await fetch(`${baseUrl}/api/library/owned`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Cookie: cookie },
     body: '{}',
   });
   assert.equal(res.status, 400);
-  assert.match((await res.json()).error.message, /Sec-Fetch-Site or Origin/);
+  assert.match((await res.json()).error.message, /Sec-Fetch-Site, Origin, or Referer/);
+});
+
+// The bug this exists for: a browser only attaches Sec-Fetch-* headers to a
+// potentially trustworthy URL, and it never sends Origin on a same-origin GET.
+// So on the deployment this app documents — plain HTTP on a LAN address, port
+// 3000 — an EventSource carries *neither*, and every SSE stream answered 400
+// while every POST kept working (a POST always sends Origin). Referer is the one
+// signal a browser still attaches there, and it cannot be forged cross-origin.
+test('an SSE GET is identified by Referer when it has no other header', async () => {
+  // Minted rather than logged in for: /auth/login allows 10 attempts per window
+  // per caller, this file already sits on that ceiling, and spending one more
+  // makes a later unrelated test fail with a 401. The subject here is the CSRF
+  // guard, not the login flow.
+  const { issueToken, getSigningSecret, getAdmin } = await import('../../src/services/auth.js');
+  const admin = getAdmin(db);
+  const cookie = `spinmatch_session=${issueToken(getSigningSecret(db), admin.username, admin.tokenEpoch)}`;
+
+  // No Sec-Fetch-Site, no Origin — exactly what an EventSource sends on an
+  // insecure origin. The stream itself then rejects the missing releaseGroup as
+  // an SSE event, which is how we know the guard let it through.
+  const ours = await fetch(`${baseUrl}/api/library/missing/stream`, {
+    headers: { Cookie: cookie, Referer: `${baseUrl}/release-group/x` },
+  });
+  const body = await ours.text();
+  assert.equal(ours.status, 200, body);
+  assert.match(ours.headers.get('content-type') ?? '', /text\/event-stream/);
+  assert.match(body, /a valid releaseGroup is required/);
+
+  const theirs = await fetch(`${baseUrl}/api/library/missing/stream`, {
+    headers: { Cookie: cookie, Referer: 'http://evil.example/page' },
+  });
+  assert.equal(theirs.status, 400);
+  assert.match((await theirs.json()).error.message, /[Cc]ross-origin/);
 });
 
 test('a same-origin request identified only by Origin is still accepted', async () => {

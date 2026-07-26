@@ -2,17 +2,26 @@ import { BadRequestError } from '../lib/httpErrors.js';
 
 // CSRF guard for state-changing routes. The app is cookie-authenticated and
 // same-origin only, so we reject anything a browser doesn't affirmatively mark
-// as same-site. `Sec-Fetch-Site` is set by the browser on every request
-// (including EventSource, which can't send custom headers); `Origin` is the
-// fallback for the handful of clients that don't send it.
+// as same-site. Three signals, in descending order of how much they tell us:
+// `Sec-Fetch-Site`, then `Origin`, then `Referer`.
 //
-// Fails closed. It used to allow a request carrying neither header on the
-// grounds that "older browsers, curl, our own tests" send neither — which is a
-// control that permits the request whenever the evidence is missing, weakened so
-// the test suite wouldn't have to set a header. Every browser released in the
-// last five years sends Sec-Fetch-Site, so the only thing that leniency bought
-// was a guard that an attacker could disarm by omitting a field. The tests now
-// send the header a real browser would.
+// Fails closed. It used to allow a request carrying none of them on the grounds
+// that "older browsers, curl, our own tests" send none — which is a control that
+// permits the request whenever the evidence is missing, weakened so the test
+// suite wouldn't have to set a header. The tests now send the headers a real
+// browser would.
+//
+// Why Referer is here, and it is not belt-and-braces. This used to claim
+// Sec-Fetch-Site arrives "on every request (including EventSource)". It does
+// not: browsers attach Fetch Metadata headers only to a *potentially
+// trustworthy* URL, so on plain HTTP to anything but localhost — which is the
+// deployment this project documents, port 3000 on a LAN address — there is no
+// Sec-Fetch-Site at all. And no browser sends Origin on a same-origin GET. An
+// EventSource therefore arrived carrying neither and was refused, which took out
+// every SSE stream in the app (album verify, library gap sweeps) on every
+// non-localhost HTTP install, while POSTs kept working because a POST always
+// sends Origin. Referer is the one signal left there, a browser won't let a page
+// forge it, and a cross-origin request can't produce one that matches this host.
 export function sameOriginOnly(req, res, next) {
   const site = req.get('Sec-Fetch-Site');
   if (site) {
@@ -25,20 +34,28 @@ export function sameOriginOnly(req, res, next) {
     return next();
   }
 
+  // Origin, then Referer. Named separately in the errors because which one was
+  // consulted is the difference between a misconfigured proxy and a cross-site
+  // request, and an operator reading a 400 needs to be able to tell.
   const origin = req.get('Origin');
-  if (!origin) {
-    return next(new BadRequestError(
-      'This endpoint requires a Sec-Fetch-Site or Origin header identifying the caller'
-    ));
-  }
+  if (origin) return checkHost(req, next, origin, 'Origin');
 
-  let originHost;
+  const referer = req.get('Referer');
+  if (referer) return checkHost(req, next, referer, 'Referer');
+
+  return next(new BadRequestError(
+    'This endpoint requires a Sec-Fetch-Site, Origin, or Referer header identifying the caller'
+  ));
+}
+
+function checkHost(req, next, value, label) {
+  let host;
   try {
-    originHost = new URL(origin).host;
+    host = new URL(value).host;
   } catch {
-    return next(new BadRequestError('Invalid Origin header'));
+    return next(new BadRequestError(`Invalid ${label} header`));
   }
-  if (originHost !== req.get('Host')) {
+  if (host !== req.get('Host')) {
     return next(new BadRequestError('Cross-origin requests are not allowed for this endpoint'));
   }
   next();

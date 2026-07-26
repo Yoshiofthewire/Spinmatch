@@ -28,7 +28,13 @@ export function securityHeaders(req, res, next) {
   // potential script host.
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
-  res.setHeader('Referrer-Policy', 'no-referrer');
+  // 'same-origin', not 'no-referrer': the CSRF guard's last-resort signal is
+  // Referer, and it is the only one a browser still sends on an insecure origin
+  // (no Fetch Metadata headers there, and no Origin on a same-origin GET) — see
+  // sameOriginOnly. This policy sends a referrer only to this origin and none to
+  // any other, so nothing leaves the app that didn't before. Outbound links to
+  // YouTube carry rel="noreferrer" in the client and are unaffected either way.
+  res.setHeader('Referrer-Policy', 'same-origin');
   res.setHeader('Content-Security-Policy', CSP);
   next();
 }
