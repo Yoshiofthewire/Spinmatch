@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const { readTags, readCoverArt, writeMissingTags, plannedFills } = await import('../src/services/tags.js');
+const { readTags, readCoverArt, writeTags, plannedFills } = await import('../src/services/tags.js');
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURES_DIR = path.join(__dirname, 'fixtures');
@@ -47,9 +47,9 @@ test('readTags reports empty fields on an untagged fixture', async () => {
   });
 });
 
-test('writeMissingTags fills blank fields on an untagged fixture', async () => {
+test('writeTags fills blank fields on an untagged fixture', async () => {
   await withCopiedFixture('silence.mp3', async (file) => {
-    const { filledFields } = await writeMissingTags(file, {
+    const { filledFields } = await writeTags(file, {
       artist: 'New Artist',
       title: 'New Title',
       album: 'New Album',
@@ -81,12 +81,12 @@ test('plannedFills returns nothing when every desired field is already present',
   assert.deepEqual(plannedFills(current, desired), []);
 });
 
-test('writeMissingTags fills a blank disc number and reads it back', async () => {
+test('writeTags fills a blank disc number and reads it back', async () => {
   await withCopiedFixture('silence.mp3', async (file) => {
     const before = await readTags(file);
     assert.equal(before.disc, null);
 
-    const { filledFields } = await writeMissingTags(file, { artist: 'A', title: 'T', album: 'B', disc: 2 });
+    const { filledFields } = await writeTags(file, { artist: 'A', title: 'T', album: 'B', disc: 2 });
     assert.ok(filledFields.includes('disc'));
 
     const after = await readTags(file);
@@ -94,10 +94,10 @@ test('writeMissingTags fills a blank disc number and reads it back', async () =>
   });
 });
 
-test('writeMissingTags never overwrites an existing disc number', async () => {
+test('writeTags never overwrites an existing disc number', async () => {
   await withCopiedFixture('silence.mp3', async (file) => {
-    await writeMissingTags(file, { artist: 'A', title: 'T', album: 'B', disc: 1 });
-    const { filledFields } = await writeMissingTags(file, { artist: 'A', title: 'T', album: 'B', disc: 2 });
+    await writeTags(file, { artist: 'A', title: 'T', album: 'B', disc: 1 });
+    const { filledFields } = await writeTags(file, { artist: 'A', title: 'T', album: 'B', disc: 2 });
     assert.ok(!filledFields.includes('disc'));
 
     const after = await readTags(file);
@@ -105,9 +105,9 @@ test('writeMissingTags never overwrites an existing disc number', async () => {
   });
 });
 
-test('writeMissingTags never overwrites a field that already has a value', async () => {
+test('writeTags never overwrites a field that already has a value', async () => {
   await withCopiedFixture('tagged.mp3', async (file) => {
-    const { filledFields } = await writeMissingTags(file, {
+    const { filledFields } = await writeTags(file, {
       artist: 'Should Not Overwrite',
       title: 'Should Not Overwrite',
       album: 'Should Fill This In',
@@ -126,9 +126,9 @@ test('writeMissingTags never overwrites a field that already has a value', async
 // The overwrite mode exists for one case: a fingerprint has identified the file
 // as a different recording than its tags claim, so the existing values are the
 // thing that's wrong. Off by default — see libraryFix.js.
-test('writeMissingTags with overwrite replaces a field that already has a value', async () => {
+test('writeTags with overwrite replaces a field that already has a value', async () => {
   await withCopiedFixture('tagged.mp3', async (file) => {
-    const { filledFields } = await writeMissingTags(file, {
+    const { filledFields } = await writeTags(file, {
       artist: 'Corrected Artist',
       title: 'Corrected Title',
     }, { overwrite: true });
@@ -143,9 +143,9 @@ test('writeMissingTags with overwrite replaces a field that already has a value'
 
 // So that applying a match the file already agrees with reports "no changes
 // needed" instead of claiming a write it didn't make.
-test('writeMissingTags with overwrite does not report a field that already matches', async () => {
+test('writeTags with overwrite does not report a field that already matches', async () => {
   await withCopiedFixture('tagged.mp3', async (file) => {
-    const { filledFields } = await writeMissingTags(file, {
+    const { filledFields } = await writeTags(file, {
       artist: 'Existing Artist',
       title: 'Corrected Title',
     }, { overwrite: true });
@@ -156,25 +156,25 @@ test('writeMissingTags with overwrite does not report a field that already match
 
 // Art is its own opt-in: correcting the text tags and swapping the picture are
 // different decisions, and either is useful without the other.
-test('writeMissingTags with overwrite leaves existing cover art alone', async () => {
+test('writeTags with overwrite leaves existing cover art alone', async () => {
   await withCopiedFixture('silence.mp3', async (file) => {
     const coverImage = { bytes: Buffer.from([0xff, 0xd8, 0xff, 0xd9]), mimeType: 'image/jpeg' };
-    await writeMissingTags(file, { artist: 'A' }, { coverImage });
+    await writeTags(file, { artist: 'A' }, { coverImage });
 
     const secondCover = { bytes: Buffer.from([0xff, 0xd8, 0xff, 0x00, 0xff, 0xd9]), mimeType: 'image/jpeg' };
-    const { filledFields } = await writeMissingTags(file, { artist: 'B' }, { coverImage: secondCover, overwrite: true });
+    const { filledFields } = await writeTags(file, { artist: 'B' }, { coverImage: secondCover, overwrite: true });
     assert.ok(filledFields.includes('artist'), 'the tag is still corrected');
     assert.ok(!filledFields.includes('coverArt'), 'overwriting tags does not imply replacing art');
   });
 });
 
-test('writeMissingTags with replaceCoverArt swaps art that is already present', async () => {
+test('writeTags with replaceCoverArt swaps art that is already present', async () => {
   await withCopiedFixture('silence.mp3', async (file) => {
     const coverImage = { bytes: Buffer.from([0xff, 0xd8, 0xff, 0xd9]), mimeType: 'image/jpeg' };
-    await writeMissingTags(file, { artist: 'A' }, { coverImage });
+    await writeTags(file, { artist: 'A' }, { coverImage });
 
     const secondCover = { bytes: Buffer.from([0xff, 0xd8, 0xff, 0x00, 0xff, 0xd9]), mimeType: 'image/jpeg' };
-    const { filledFields } = await writeMissingTags(file, {}, { coverImage: secondCover, replaceCoverArt: true });
+    const { filledFields } = await writeTags(file, {}, { coverImage: secondCover, replaceCoverArt: true });
     assert.ok(filledFields.includes('coverArt'));
 
     const after = await readCoverArt(file);
@@ -182,10 +182,10 @@ test('writeMissingTags with replaceCoverArt swaps art that is already present', 
   });
 });
 
-test('writeMissingTags replaces art without touching tags that are already set', async () => {
+test('writeTags replaces art without touching tags that are already set', async () => {
   await withCopiedFixture('tagged.mp3', async (file) => {
     const coverImage = { bytes: Buffer.from([0xff, 0xd8, 0xff, 0xd9]), mimeType: 'image/jpeg' };
-    const { filledFields } = await writeMissingTags(file, { artist: 'Should Not Overwrite' }, { coverImage, replaceCoverArt: true });
+    const { filledFields } = await writeTags(file, { artist: 'Should Not Overwrite' }, { coverImage, replaceCoverArt: true });
 
     assert.ok(!filledFields.includes('artist'), 'replacing art does not imply overwriting tags');
     assert.ok(filledFields.includes('coverArt'));
@@ -193,21 +193,21 @@ test('writeMissingTags replaces art without touching tags that are already set',
   });
 });
 
-test('writeMissingTags with replaceCoverArt and no art to write leaves the file as it was', async () => {
+test('writeTags with replaceCoverArt and no art to write leaves the file as it was', async () => {
   await withCopiedFixture('silence.mp3', async (file) => {
     const coverImage = { bytes: Buffer.from([0xff, 0xd8, 0xff, 0xd9]), mimeType: 'image/jpeg' };
-    await writeMissingTags(file, { artist: 'A' }, { coverImage });
+    await writeTags(file, { artist: 'A' }, { coverImage });
 
-    const { filledFields } = await writeMissingTags(file, {}, { coverImage: null, replaceCoverArt: true });
+    const { filledFields } = await writeTags(file, {}, { coverImage: null, replaceCoverArt: true });
     assert.ok(!filledFields.includes('coverArt'), 'nothing to put there means nothing is removed');
     assert.equal((await readTags(file)).hasCoverArt, true);
   });
 });
 
-test('writeMissingTags embeds cover art only when none is present', async () => {
+test('writeTags embeds cover art only when none is present', async () => {
   await withCopiedFixture('silence.mp3', async (file) => {
     const coverImage = { bytes: Buffer.from([0xff, 0xd8, 0xff, 0xd9]), mimeType: 'image/jpeg' };
-    const { filledFields } = await writeMissingTags(file, { artist: 'A', title: 'T', album: 'B' }, { coverImage });
+    const { filledFields } = await writeTags(file, { artist: 'A', title: 'T', album: 'B' }, { coverImage });
     assert.ok(filledFields.includes('coverArt'));
 
     const after = await readTags(file);
@@ -215,20 +215,20 @@ test('writeMissingTags embeds cover art only when none is present', async () => 
   });
 });
 
-test('writeMissingTags does not overwrite cover art that is already present', async () => {
+test('writeTags does not overwrite cover art that is already present', async () => {
   await withCopiedFixture('silence.mp3', async (file) => {
     const coverImage = { bytes: Buffer.from([0xff, 0xd8, 0xff, 0xd9]), mimeType: 'image/jpeg' };
-    await writeMissingTags(file, { artist: 'A', title: 'T', album: 'B' }, { coverImage });
+    await writeTags(file, { artist: 'A', title: 'T', album: 'B' }, { coverImage });
 
     const secondCover = { bytes: Buffer.from([0xff, 0xd8, 0xff, 0x00, 0xff, 0xd9]), mimeType: 'image/jpeg' };
-    const { filledFields } = await writeMissingTags(file, {}, { coverImage: secondCover });
+    const { filledFields } = await writeTags(file, {}, { coverImage: secondCover });
     assert.ok(!filledFields.includes('coverArt'));
   });
 });
 
-test('writeMissingTags writes a genre when none is present', async () => {
+test('writeTags writes a genre when none is present', async () => {
   await withCopiedFixture('silence.mp3', async (file) => {
-    const { filledFields } = await writeMissingTags(file, { genre: 'Electronic' });
+    const { filledFields } = await writeTags(file, { genre: 'Electronic' });
     assert.ok(filledFields.includes('genre'));
 
     const after = await readTags(file);
@@ -236,7 +236,7 @@ test('writeMissingTags writes a genre when none is present', async () => {
   });
 });
 
-test('readTags/writeMissingTags work across MP3, FLAC, M4A, and OGG', async () => {
+test('readTags/writeTags work across MP3, FLAC, M4A, and OGG', async () => {
   for (const name of ['silence.mp3', 'silence.flac', 'silence.m4a', 'silence.ogg']) {
     await withCopiedFixture(name, async (file) => {
       const before = await readTags(file);
@@ -245,7 +245,7 @@ test('readTags/writeMissingTags work across MP3, FLAC, M4A, and OGG', async () =
 
       const desired = { artist: 'A', title: 'T', album: 'B', trackNumber: 5, year: 1999, genre: 'Rock' };
       const coverImage = { bytes: Buffer.from([0xff, 0xd8, 0xff, 0xd9]), mimeType: 'image/jpeg' };
-      const { filledFields } = await writeMissingTags(file, desired, { coverImage });
+      const { filledFields } = await writeTags(file, desired, { coverImage });
       assert.deepEqual(
         new Set(filledFields),
         new Set(['artist', 'title', 'album', 'trackNumber', 'year', 'genre', 'coverArt']),

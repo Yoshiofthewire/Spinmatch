@@ -178,7 +178,7 @@ async function identifyFile(filePath) {
 // filled — computed from the already-read `current` tags, nothing written.
 async function applyOrPreviewTags(filePath, current, desired, coverImage, dryRun) {
   if (!dryRun) {
-    return tags.writeMissingTags(filePath, desired, { coverImage });
+    return tags.writeTags(filePath, desired, { coverImage });
   }
   const filledFields = tags.plannedFills(current, desired);
   if (coverImage && !current.hasCoverArt) filledFields.push('coverArt');

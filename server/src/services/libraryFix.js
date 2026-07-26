@@ -6,7 +6,7 @@ import { candidatesFromFingerprint } from './fingerprintMatch.js';
 import { tagsFromPath } from './libraryPathTags.js';
 import { getRecording, resolvePrimaryReleaseForGroup, getReleaseWithTracks } from './musicbrainz.js';
 import { getFrontCoverImage } from './coverArt.js';
-import { writeMissingTags } from './tags.js';
+import { writeTags } from './tags.js';
 import { reindexFile } from './libraryScanner.js';
 import { assertReadableInsideMusicDir } from '../lib/paths.js';
 import { NotFoundError, BadRequestError } from '../lib/httpErrors.js';
@@ -73,9 +73,9 @@ async function positionOnRelease(releaseGroupMbid, recordingMbid) {
 
 // Applies one candidate: fills the tags the file is missing and re-indexes it.
 //
-// By default writeMissingTags only writes fields that are currently empty,
-// which is the contract the Health report implies — a "fix" must never
-// overwrite metadata the user already has, only fill the holes it flagged.
+// By default writeTags only writes fields that are currently empty, which is
+// the contract the Health report implies — a "fix" must never overwrite
+// metadata the user already has, only fill the holes it flagged.
 //
 // `overwrite` is the exception the fingerprint path earns: when the audio says
 // the file is a different recording than its tags claim, the existing values
@@ -107,7 +107,7 @@ export async function applyFix({ trackId, recordingMbid, overwrite = false, repl
     ? await getFrontCoverImage(releaseGroupMbid)
     : null;
 
-  const { filledFields } = await writeMissingTags(real, {
+  const { filledFields } = await writeTags(real, {
     artist: recording.artist ?? null,
     title: recording.title ?? null,
     album: albumTitle,

@@ -123,7 +123,7 @@ test('processIngest tags a confirmed loose file, moves it into the library, and 
         readTags: async () => ({
           artist: null, title: null, album: null, trackNumber: null, disc: null, year: null, genre: null, hasCoverArt: false,
         }),
-        writeMissingTags: async () => ({ filledFields: ['artist', 'title', 'album'] }),
+        writeTags: async () => ({ filledFields: ['artist', 'title', 'album'] }),
       },
     });
     t.mock.module('../src/services/coverArt.js', {
@@ -178,7 +178,7 @@ test('a confirmed loose file with no release group is filed under Singles with n
         readTags: async () => ({
           artist: null, title: null, album: null, trackNumber: null, disc: null, year: null, genre: null, hasCoverArt: false,
         }),
-        writeMissingTags: async (filePath, desired) => {
+        writeTags: async (filePath, desired) => {
           writtenDesired = desired;
           return { filledFields: ['artist', 'title'] };
         },
@@ -232,7 +232,7 @@ test('a confirmed loose file whose move fails is reported as tagged-but-not-move
         readTags: async () => ({
           artist: null, title: null, album: null, trackNumber: null, disc: null, year: null, genre: null, hasCoverArt: false,
         }),
-        writeMissingTags: async () => ({ filledFields: ['artist', 'title', 'album'] }),
+        writeTags: async () => ({ filledFields: ['artist', 'title', 'album'] }),
       },
     });
     t.mock.module('../src/services/coverArt.js', {
@@ -284,7 +284,7 @@ test('a byte-identical duplicate is left in place and reported as needsReview', 
         readTags: async () => ({
           artist: null, title: null, album: null, trackNumber: null, disc: null, year: null, genre: null, hasCoverArt: false,
         }),
-        writeMissingTags: async () => ({ filledFields: [] }),
+        writeTags: async () => ({ filledFields: [] }),
       },
     });
     t.mock.module('../src/services/coverArt.js', {
@@ -405,7 +405,7 @@ test('processIngest matches a loose file from its tags when ACOUSTID_API_KEY is 
             artist: 'Tagged Artist', title: 'Tagged Title', album: null, trackNumber: null,
             disc: null, year: null, genre: null, durationMs: 200000, hasCoverArt: false,
           }),
-          writeMissingTags: async () => ({ filledFields: ['album'] }),
+          writeTags: async () => ({ filledFields: ['album'] }),
         },
       });
       t.mock.module('../src/services/coverArt.js', { exports: { getFrontCoverImage: async () => null } });
@@ -500,7 +500,7 @@ test('an album folder is matched from its tags when ACOUSTID_API_KEY is unset', 
             artist: null, title: null, album: 'An Album', trackNumber: null,
             disc: null, year: null, genre: null, durationMs: 180000, hasCoverArt: false,
           }),
-          writeMissingTags: async () => ({ filledFields: ['title'] }),
+          writeTags: async () => ({ filledFields: ['title'] }),
         },
       });
       t.mock.module('../src/services/coverArt.js', { exports: { getFrontCoverImage: async () => null } });
@@ -572,7 +572,7 @@ test('a coherent single-disc album folder tags and moves every track', async (t)
     t.mock.module('../src/services/tags.js', {
       exports: {
         readTags: async () => ({}),
-        writeMissingTags: async (filePath, desired) => {
+        writeTags: async (filePath, desired) => {
           written.push(desired);
           return { filledFields: ['artist', 'title', 'album', 'trackNumber'] };
         },
@@ -641,7 +641,7 @@ test('a coherent two-disc album folder writes disc numbers and disc-aware move m
     t.mock.module('../src/services/tags.js', {
       exports: {
         readTags: async () => ({}),
-        writeMissingTags: async (filePath, desired) => {
+        writeTags: async (filePath, desired) => {
           written.push(desired);
           return { filledFields: ['artist', 'title', 'album', 'trackNumber', 'disc'] };
         },
@@ -708,7 +708,7 @@ test('an incoherent album folder (track count mismatch) is left untouched and re
       },
     });
     t.mock.module('../src/services/tags.js', {
-      exports: { readTags: async () => ({}), writeMissingTags: async () => ({ filledFields: [] }) },
+      exports: { readTags: async () => ({}), writeTags: async () => ({ filledFields: [] }) },
     });
     t.mock.module('../src/services/coverArt.js', {
       exports: { getFrontCoverImage: async () => null },
@@ -761,7 +761,7 @@ test('a dry-run previews planned tags and target path without writing or moving 
           artist: null, title: null, album: null, trackNumber: null, disc: null, year: null, genre: null, hasCoverArt: false,
         }),
         plannedFills: (current, desired) => Object.keys(desired).filter((k) => desired[k] != null && current[k] == null),
-        writeMissingTags: async () => {
+        writeTags: async () => {
           wrote = true;
           return { filledFields: [] };
         },
@@ -828,7 +828,7 @@ test('a dry-run previews an album without writing or moving any track', async (t
           artist: null, title: null, album: null, trackNumber: null, disc: null, year: null, genre: null, hasCoverArt: false,
         }),
         plannedFills: (current, desired) => Object.keys(desired).filter((k) => desired[k] != null && current[k] == null),
-        writeMissingTags: async () => {
+        writeTags: async () => {
           wrote = true;
           return { filledFields: [] };
         },
@@ -885,7 +885,7 @@ test('processIngest calls onItem once per completed item, in order', async (t) =
           artist: null, title: null, album: null, trackNumber: null, disc: null, year: null, genre: null, hasCoverArt: false,
         }),
         plannedFills: () => [],
-        writeMissingTags: async () => ({ filledFields: ['artist'] }),
+        writeTags: async () => ({ filledFields: ['artist'] }),
       },
     });
     t.mock.module('../src/services/coverArt.js', {
@@ -946,7 +946,7 @@ test('a non-rate-limit error on one item is caught, reported as needsReview, and
         readTags: async () => ({
           artist: null, title: null, album: null, trackNumber: null, disc: null, year: null, genre: null, hasCoverArt: false,
         }),
-        writeMissingTags: async () => ({ filledFields: ['artist', 'title', 'album'] }),
+        writeTags: async () => ({ filledFields: ['artist', 'title', 'album'] }),
       },
     });
     t.mock.module('../src/services/coverArt.js', {
@@ -1112,7 +1112,7 @@ test('resolveLooseFileOverride tags and moves the file using the chosen recordin
         readTags: async () => ({
           artist: null, title: null, album: null, trackNumber: null, disc: null, year: null, genre: null, hasCoverArt: false,
         }),
-        writeMissingTags: async () => ({ filledFields: ['artist', 'title', 'album'] }),
+        writeTags: async () => ({ filledFields: ['artist', 'title', 'album'] }),
       },
     });
     t.mock.module('../src/services/coverArt.js', { exports: { getFrontCoverImage: async () => null } });
@@ -1214,7 +1214,7 @@ test('an album folder is track-ordered by natural sort, not lexicographically', 
       },
     });
     t.mock.module('../src/services/tags.js', {
-      exports: { readTags: async () => ({}), writeMissingTags: async () => ({ filledFields: [] }) },
+      exports: { readTags: async () => ({}), writeTags: async () => ({ filledFields: [] }) },
     });
     t.mock.module('../src/services/coverArt.js', {
       exports: { getFrontCoverImage: async () => null },

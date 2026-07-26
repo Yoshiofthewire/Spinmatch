@@ -45,10 +45,10 @@ let counter = 0;
 // suffix, so the cached copy stays bound to whichever musicbrainz mock was
 // registered first. How an album resolves to a release group is
 // libraryDiscography's own contract and is tested there.
-// `writeMissingTags` is an explicit option rather than part of the rest spread,
+// `writeTags` is an explicit option rather than part of the rest spread,
 // which goes to the musicbrainz mock — the failure-isolation test needs one file
 // to fail to write while the others succeed.
-async function freshBulkFix({ resolveAlbum, writeMissingTags, ...mbMocks } = {}) {
+async function freshBulkFix({ resolveAlbum, writeTags, ...mbMocks } = {}) {
   counter += 1;
   const { mock } = await import('node:test');
   mock.reset();
@@ -72,7 +72,7 @@ async function freshBulkFix({ resolveAlbum, writeMissingTags, ...mbMocks } = {})
       readCoverArt: async () => null,
       plannedFills: (current, desired) => Object.keys(desired)
         .filter((k) => desired[k] != null && current[k] == null),
-      writeMissingTags: writeMissingTags ?? (async (filePath, desired) => {
+      writeTags: writeTags ?? (async (filePath, desired) => {
         const current = onDisk[filePath] ?? {};
         const filledFields = Object.keys(desired)
           .filter((k) => desired[k] != null && current[k] == null);
@@ -505,7 +505,7 @@ test('one unwritable file is reported without abandoning the rest of the album',
   writes = [];
 
   const { applyBulkFix } = await freshBulkFix({
-    writeMissingTags: async (filePath, desired) => {
+    writeTags: async (filePath, desired) => {
       if (filePath.endsWith('01 First.mp3')) throw new Error('EACCES: permission denied');
       writes.push({ filePath, desired });
       return { filledFields: Object.keys(desired).filter((k) => desired[k] != null) };

@@ -3,7 +3,7 @@ import { getAlbumTracksForRepair } from './libraryRepo.js';
 import { tagsFromPath } from './libraryPathTags.js';
 import { resolveAlbum } from './libraryDiscography.js';
 import { resolvePrimaryReleaseForGroup, getReleaseWithTracks } from './musicbrainz.js';
-import { readTags, writeMissingTags, plannedFills } from './tags.js';
+import { readTags, writeTags, plannedFills } from './tags.js';
 import { reindexFile } from './libraryScanner.js';
 import { assertReadableInsideMusicDir } from '../lib/paths.js';
 import { BadRequestError } from '../lib/httpErrors.js';
@@ -21,9 +21,10 @@ import { BadRequestError } from '../lib/httpErrors.js';
 //   'path'        — read the tags implied by where the file sits. No network.
 //   'musicbrainz' — resolve the album once, align local files to its tracklist.
 //
-// Nothing here moves or renames a file, and writeMissingTags still only fills
-// fields that are empty, so the never-overwrite contract the single-track repair
-// makes is unchanged. The preview exists so a proposal is seen before it lands.
+// Nothing here moves or renames a file, and writeTags is called without either
+// of its widening flags, so it fills empty fields only — the never-overwrite
+// contract holds for every file an album-wide repair touches. The preview exists
+// so a proposal is seen before it lands.
 
 // A hard ceiling on one request, alongside the route's other caps. An album is
 // tens of tracks; anything near this is a client bug, not a big record.
@@ -226,7 +227,7 @@ export async function applyBulkFix({
   for (const track of chosen) {
     try {
       const real = await assertReadableInsideMusicDir(track.path);
-      const { filledFields } = await writeMissingTags(real, track.proposed);
+      const { filledFields } = await writeTags(real, track.proposed);
       await reindexFile(real);
       applied.push({ trackId: track.trackId, filledFields });
     } catch (err) {

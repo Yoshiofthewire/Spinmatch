@@ -32,6 +32,7 @@ Out of scope:
 - **Automatic fingerprinting on panel open.** Fingerprinting costs a subprocess that reads 120
   seconds of audio (30s timeout) plus a rate-limited network call. Browsing the Health tab must
   not spawn that work per expanded row. It stays behind an explicit click.
+
 Cover art was originally out of scope here — art would have stayed fill-only in both modes,
 leaving a corrected file with the sleeve of the song it was mis-tagged as. That was revised during
 implementation: replacing art is now supported, as its own `replaceCoverArt` opt-in rather than
@@ -79,7 +80,7 @@ Unlike `getFixCandidates`, this does **not** fall back to a tag search when the 
 nothing — the caller already has the tag candidates on screen. Zero candidates returns an empty
 array.
 
-### `tags.js`: `writeMissingTags(filePath, desired, { coverImage, overwrite, replaceCoverArt })`
+### `tags.js`: `writeTags(filePath, desired, { coverImage, overwrite, replaceCoverArt })`
 
 With `overwrite: false` (the default), behaviour is exactly as today: a field is written only when
 the current value is `null`.
@@ -99,7 +100,7 @@ overwrite semantics.
 
 ### `libraryFix.js`: `applyFix({ trackId, recordingMbid, overwrite, replaceCoverArt })`
 
-Both flags are passed through to `writeMissingTags`. Two conditionals change: the track/disc
+Both flags are passed through to `writeTags`. Two conditionals change: the track/disc
 position lookup ran only when `track.trackNumber == null` and now runs when
 `overwrite || track.trackNumber == null`, so a wrong track number can be corrected too; and the
 Cover Art Archive fetch ran only when `!track.hasCoverArt` and now runs when
@@ -195,7 +196,7 @@ for `fpcalc`):
   does so without overwriting any tags — the two flags are independent in both directions.
 - `applyFix` default: the existing fill-only tests in `server/test/libraryFix.test.js` must keep
   passing unmodified.
-- `writeMissingTags` unit level: overwrite writes changed fields and reports them in
+- `writeTags` unit level: overwrite writes changed fields and reports them in
   `filledFields`; a field already equal to the desired value is not reported; `replaceCoverArt`
   swaps a picture that's already there, doesn't imply a tag overwrite, and with no `coverImage`
   leaves the existing picture in place rather than clearing it.

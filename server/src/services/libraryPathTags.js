@@ -10,8 +10,9 @@ import { config } from '../config.js';
 // Deliberately conservative: every field is nullable and anything ambiguous
 // comes back null rather than guessed. A wrong tag written into a file is worse
 // than no tag, and the layouts below are the ones that are unambiguous enough to
-// act on. Callers preview before writing, and writeMissingTags only ever fills
-// empty fields, so a bad read is recoverable — but it still shouldn't happen.
+// act on. Callers preview before writing, and the callers these tags reach ask
+// writeTags to fill empty fields only, so a bad read is recoverable — but it
+// still shouldn't happen.
 
 // "CD1", "CD 1", "Disc 2", "Disk-3". A folder like this sits between the album
 // folder and the files, so it has to be recognised and stepped over or the disc

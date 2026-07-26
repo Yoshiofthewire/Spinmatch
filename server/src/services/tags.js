@@ -29,7 +29,7 @@ function writeField(tag, field, value) {
   }
 }
 
-// Pure preview of what writeMissingTags would fill: the fields desired provides
+// Pure preview of what writeTags would fill: the fields desired provides
 // (non-null) that are currently empty. Used by the dry-run path so a preview can
 // report planned fills without touching the file.
 export function plannedFills(current, desired) {
@@ -76,6 +76,10 @@ export async function readCoverArt(filePath) {
   }
 }
 
+// Writes `desired` into the file's tags. Fills only empty fields by default —
+// the contract every caller but one relies on — and the two flags below each
+// widen that, separately.
+//
 // `overwrite` widens the contract from "fill the blanks" to "correct the file":
 // a field is written when it differs from what's desired, not only when it's
 // empty. Reserved for the fingerprint path, where the audio itself says the
@@ -88,7 +92,7 @@ export async function readCoverArt(filePath) {
 // correcting a file's text tags and swapping its artwork are different
 // decisions, and either is worth making without the other. Without it, art is
 // only ever written to a file that has none.
-export async function writeMissingTags(
+export async function writeTags(
   filePath,
   desired,
   { coverImage, overwrite = false, replaceCoverArt = false } = {},

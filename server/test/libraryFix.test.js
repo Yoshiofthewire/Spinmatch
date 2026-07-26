@@ -1,6 +1,6 @@
 // The tag-repair path. The behaviour worth pinning down is that it repairs in
-// place: it must fill only the empty fields, must never move or rename the file,
-// and must refresh the index afterwards.
+// place: it fills only the empty fields unless explicitly told otherwise, must
+// never move or rename the file, and must refresh the index afterwards.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -65,9 +65,9 @@ async function freshFix({ current, recording = RECORDING, coverImage = null, fin
     namedExports: {
       readTags: async () => ({ ...current, hasCoverArt: false }),
       readCoverArt: async () => null,
-      // Mirrors the real writeMissingTags contract: fills what's empty, or with
+      // Mirrors the real writeTags contract: fills what's empty, or with
       // overwrite, whatever disagrees with what's wanted.
-      writeMissingTags: async (filePath, desired, opts) => {
+      writeTags: async (filePath, desired, opts) => {
         const filledFields = Object.keys(desired).filter((k) => (
           desired[k] != null && (opts?.overwrite ? current[k] !== desired[k] : current[k] == null)
         ));
