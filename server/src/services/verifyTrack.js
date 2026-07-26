@@ -6,8 +6,16 @@ const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 
 const cache = new TTLCache({ maxEntries: 2000 });
 
+// ASCII 31 (unit separator), constructed rather than written as a literal so no
+// invisible control character ends up in the source — the same separator, for
+// the same reason, as libraryRepo.js and client/src/lib/albumKey.js. '|' was a
+// character that can legitimately appear in a track or artist name, which made
+// two different tracks share one cache entry and hand back each other's YouTube
+// match.
+const UNIT_SEPARATOR = String.fromCharCode(31);
+
 function cacheKey({ artist, title, album, lengthMs }) {
-  return `${artist}|${title}|${album || ''}|${lengthMs}`.toLowerCase();
+  return [artist, title, album || '', lengthMs].join(UNIT_SEPARATOR).toLowerCase();
 }
 
 async function fetchRankedCandidates(query, lengthMs) {

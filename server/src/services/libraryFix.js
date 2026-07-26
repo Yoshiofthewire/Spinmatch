@@ -9,6 +9,7 @@ import { getFrontCoverImage } from './coverArt.js';
 import { writeTags } from './tags.js';
 import { reindexFile } from './libraryScanner.js';
 import { assertReadableInsideMusicDir } from '../lib/paths.js';
+import { withFileLock } from '../lib/fileLock.js';
 import { NotFoundError, BadRequestError } from '../lib/httpErrors.js';
 import { assertMbid } from '../lib/mbid.js';
 
@@ -107,16 +108,27 @@ export async function applyFix({ trackId, recordingMbid, overwrite = false, repl
     ? await getFrontCoverImage(releaseGroupMbid)
     : null;
 
-  const { filledFields } = await writeTags(real, {
-    artist: recording.artist ?? null,
-    title: recording.title ?? null,
-    album: albumTitle,
-    year: recording.date ? Number(recording.date.slice(0, 4)) || null : null,
-    trackNumber: position.trackNumber ?? null,
-    disc: position.disc ?? null,
-  }, { coverImage, overwrite, replaceCoverArt });
-
-  await reindexFile(real);
+  // Write and re-index under one lock on this path. Everything above is lookups
+  // and can safely overlap; from here down it is a whole-file rewrite, and two
+  // of those at once corrupts the file rather than losing an edit. A
+  // double-clicked Apply button is enough to produce the overlap, because both
+  // clicks await the same MusicBrainz call and are released together.
+  //
+  // The re-index is inside the lock too: it stats and re-reads the file, and
+  // doing that while the next queued write has already started would index a
+  // half-written file.
+  const filledFields = await withFileLock(real, async () => {
+    const written = await writeTags(real, {
+      artist: recording.artist ?? null,
+      title: recording.title ?? null,
+      album: albumTitle,
+      year: recording.date ? Number(recording.date.slice(0, 4)) || null : null,
+      trackNumber: position.trackNumber ?? null,
+      disc: position.disc ?? null,
+    }, { coverImage, overwrite, replaceCoverArt });
+    await reindexFile(real);
+    return written.filledFields;
+  });
 
   return {
     filledFields,

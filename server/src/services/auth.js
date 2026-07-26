@@ -23,7 +23,16 @@ export async function hashPassword(password) {
 let dummyHashPromise = null;
 
 export function dummyHash() {
-  dummyHashPromise ??= hashPassword(randomBytes(32).toString('hex'));
+  // A rejection must not be what gets memoized. scrypt can fail transiently
+  // (it allocates, and this runs under exactly the memory pressure a login flood
+  // creates), and caching the rejected promise made every subsequent failed
+  // login throw a 500 instead of returning "Invalid username or password" —
+  // turning the timing-attack mitigation into a louder behavioural oracle than
+  // the timing difference it exists to hide.
+  dummyHashPromise ??= hashPassword(randomBytes(32).toString('hex')).catch((err) => {
+    dummyHashPromise = null;
+    throw err;
+  });
   return dummyHashPromise;
 }
 

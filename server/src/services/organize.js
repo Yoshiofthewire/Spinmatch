@@ -38,15 +38,6 @@ export function targetPathFor(meta, ext) {
   return path.join(config.ingest.musicDir, artist, album, filename);
 }
 
-async function fileExists(p) {
-  try {
-    await fs.access(p);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 async function sha256(filePath) {
   const hash = createHash('sha256');
   for await (const chunk of createReadStream(filePath)) hash.update(chunk);
@@ -68,19 +59,39 @@ function withSuffix(destPath, n) {
   return `${base} (${n})${ext}`;
 }
 
-// Returns the final destination path, or null if an identical file already
-// exists there (caller leaves the source untouched in that case).
-async function resolveCollision(srcPath, destPath) {
-  if (!(await fileExists(destPath))) return destPath;
-  if (await filesAreIdentical(srcPath, destPath)) return null;
+// How many " (n)" suffixes to try before giving up. Bounded because the loop
+// that finds a free name is otherwise unbounded, and a directory that somehow
+// contains thousands of collisions is a fault to report, not to grind through.
+const MAX_COLLISION_SUFFIX = 999;
 
-  let n = 2;
-  let candidate = withSuffix(destPath, n);
-  while (await fileExists(candidate)) {
-    n += 1;
-    candidate = withSuffix(destPath, n);
+// Claims `destPath` for `srcPath`, or reports that an identical file is already
+// there. Returns the path actually claimed (an empty file now exists at it), or
+// null for the duplicate case.
+//
+// The claim is what makes this safe. It used to test `fileExists(dest)` and then
+// `rename(src, dest)` two awaits later — and rename() overwrites silently, so
+// anything that appeared at that path in the gap (a concurrent ingest of the
+// same album from a second drop folder, a file manager, a sync client) was
+// destroyed with no error. `wx` fails if the path exists, which turns the race
+// into an EEXIST we retry rather than a deleted track.
+async function claimDestination(srcPath, destPath) {
+  for (let n = 1; n <= MAX_COLLISION_SUFFIX; n += 1) {
+    const candidate = n === 1 ? destPath : withSuffix(destPath, n);
+    let handle;
+    try {
+      handle = await fs.open(candidate, 'wx');
+    } catch (err) {
+      if (err.code !== 'EEXIST') throw err;
+      // Something is already there. If it's byte-identical to what we're
+      // holding, this is a re-ingest of a file the library already has and the
+      // source is left alone; otherwise try the next suffix.
+      if (await filesAreIdentical(srcPath, candidate)) return null;
+      continue;
+    }
+    await handle.close();
+    return candidate;
   }
-  return candidate;
+  throw new Error(`could not find a free filename for ${path.basename(destPath)} after ${MAX_COLLISION_SUFFIX} attempts`);
 }
 
 export async function moveIntoLibrary(srcPath, meta, ext) {
@@ -91,21 +102,41 @@ export async function moveIntoLibrary(srcPath, meta, ext) {
   // to sanitization logic letting a MusicBrainz-sourced value escape MUSIC_DIR.
   assertInsideMusicDir(initialDest);
 
-  const dest = await resolveCollision(srcPath, initialDest);
+  // The directory has to exist before the destination can be claimed.
+  await fs.mkdir(path.dirname(initialDest), { recursive: true });
+
+  const dest = await claimDestination(srcPath, initialDest);
   if (dest === null) {
     return { movedTo: null, duplicate: true };
   }
 
-  await fs.mkdir(path.dirname(dest), { recursive: true });
-
   try {
+    // rename() over our own zero-byte placeholder, which is exactly what we want
+    // it to replace — and nothing else can have taken the name in the meantime,
+    // because we are holding it.
     await fs.rename(srcPath, dest);
   } catch (err) {
-    if (err.code !== 'EXDEV') throw err;
+    if (err.code !== 'EXDEV') {
+      // Don't leave the placeholder behind as a 0-byte "track" for the scanner
+      // to index (it has an audio extension, so it would be indexed).
+      await fs.unlink(dest).catch(() => {});
+      throw err;
+    }
+    // Cross-device: copy through a temp name in the destination directory, then
+    // rename over the placeholder. The temp file is cleaned up on failure —
+    // previously a copy that died part-way (a full disk, which is the common
+    // cause of a cross-device copy failing) left a `.partial` file behind
+    // forever, invisible to the scanner and accumulating on every retry.
     const partial = `${dest}.partial`;
-    await fs.copyFile(srcPath, partial);
-    await fs.rename(partial, dest);
-    await fs.unlink(srcPath);
+    try {
+      await fs.copyFile(srcPath, partial);
+      await fs.rename(partial, dest);
+      await fs.unlink(srcPath);
+    } catch (copyErr) {
+      await fs.unlink(partial).catch(() => {});
+      await fs.unlink(dest).catch(() => {});
+      throw copyErr;
+    }
   }
 
   return { movedTo: dest, duplicate: false };

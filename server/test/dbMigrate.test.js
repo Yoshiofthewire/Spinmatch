@@ -108,7 +108,7 @@ test('a fresh database is created at the current version with no migration work'
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'spinmatch-fresh-'));
   const db = openDb(path.join(dir, 'library.db'));
   const version = db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get();
-  assert.equal(version.value, '5');
+  assert.equal(version.value, '6');
   db.close();
   fs.rmSync(dir, { recursive: true, force: true });
 });
@@ -125,21 +125,51 @@ test('the unused verified_tracks table is dropped on upgrade', () => {
   });
 });
 
-test('upgrading past v2 does not trigger another full re-tag', () => {
-  // The v2 step clears change_key to force one re-read of every file. A later
-  // version bump must not re-run it, or every upgrade costs a full rescan.
+test('a forced re-tag happens once per version that needs one, not on every upgrade', () => {
+  // Two version steps clear change_key to force a re-read of every file: v2
+  // (which added columns) and v6 (which records whether album/title came from a
+  // tag or from the path, and which stores the folded duplicate key — neither
+  // recoverable from an existing row). Each must fire exactly once. A bump that
+  // needs no re-read must not cost a full rescan, which is what this guards.
   withV1Db((dbPath) => {
     const first = openDb(dbPath);
     first.prepare("UPDATE meta SET value = '2' WHERE key = 'schema_version'").run();
     first.prepare("UPDATE local_tracks SET change_key = '10:1'").run();
     first.close();
 
+    // v2 -> current crosses v6, so this one re-tag is expected.
     const second = openDb(dbPath);
-    assert.equal(second.prepare('SELECT change_key FROM local_tracks').get().change_key, '10:1');
+    assert.equal(second.prepare('SELECT change_key FROM local_tracks').get().change_key, '');
     assert.equal(
       second.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value,
-      '5',
+      '6',
     );
+    second.prepare("UPDATE local_tracks SET change_key = '20:2'").run();
+    second.close();
+
+    // Already at current: no further migration work, so the key survives.
+    const third = openDb(dbPath);
+    assert.equal(third.prepare('SELECT change_key FROM local_tracks').get().change_key, '20:2');
+    third.close();
+  });
+});
+
+test('v6 clears out-of-range numeric tags that predate the clamp', () => {
+  // A track number stored before rowFor clamped it is the value that turned
+  // findIncompleteAlbums into a RangeError. The rescan v6 forces would fix it
+  // eventually, but the Library page has to survive being opened before that
+  // scan finishes — so the existing rows are corrected by the migration itself.
+  withV1Db((dbPath) => {
+    const first = openDb(dbPath);
+    first.prepare("UPDATE meta SET value = '5' WHERE key = 'schema_version'").run();
+    first.prepare('UPDATE local_tracks SET track_number = 2000000000, disc = 500, year = 99999').run();
+    first.close();
+
+    const second = openDb(dbPath);
+    const row = second.prepare('SELECT track_number, disc, year FROM local_tracks').get();
+    assert.equal(row.track_number, null);
+    assert.equal(row.disc, null);
+    assert.equal(row.year, null);
     second.close();
   });
 });

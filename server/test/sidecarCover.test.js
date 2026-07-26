@@ -50,3 +50,24 @@ test('a directory with no images, and a missing directory, both return null', as
   assert.equal(await readSidecarCover(path.join(dir, 'nope')), null);
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+// The Cover Art Archive path has refused oversized images all along; this one
+// read whatever was on disk. GET /api/library/cover/:trackId reaches it, and an
+// album grid fires two dozen of those in parallel — so one big cover.jpg in one
+// folder was two dozen simultaneous unbounded allocations.
+test('an oversized sidecar image is refused rather than buffered', async () => {
+  const { MAX_IMAGE_BYTES } = await import('../src/lib/imageBytes.js');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'spinmatch-cover-big-'));
+  fs.writeFileSync(path.join(dir, 'cover.jpg'), Buffer.alloc(MAX_IMAGE_BYTES + 1));
+  assert.equal(await readSidecarCover(dir), null);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('an image right at the limit is still served', async () => {
+  const { MAX_IMAGE_BYTES } = await import('../src/lib/imageBytes.js');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'spinmatch-cover-edge-'));
+  fs.writeFileSync(path.join(dir, 'cover.jpg'), Buffer.alloc(MAX_IMAGE_BYTES));
+  const cover = await readSidecarCover(dir);
+  assert.equal(cover.bytes.length, MAX_IMAGE_BYTES);
+  fs.rmSync(dir, { recursive: true, force: true });
+});

@@ -1,3 +1,4 @@
+import fs from 'node:fs/promises';
 import { getDb } from '../lib/db.js';
 import { getAlbumTracksForRepair } from './libraryRepo.js';
 import { tagsFromPath } from './libraryPathTags.js';
@@ -6,6 +7,7 @@ import { resolvePrimaryReleaseForGroup, getReleaseWithTracks } from './musicbrai
 import { readTags, writeTags, plannedFills } from './tags.js';
 import { reindexFile } from './libraryScanner.js';
 import { assertReadableInsideMusicDir } from '../lib/paths.js';
+import { withFileLock } from '../lib/fileLock.js';
 import { BadRequestError } from '../lib/httpErrors.js';
 
 // Repairing a whole album's tags in one pass.
@@ -29,6 +31,49 @@ import { BadRequestError } from '../lib/httpErrors.js';
 // A hard ceiling on one request, alongside the route's other caps. An album is
 // tens of tracks; anything near this is a client bug, not a big record.
 export const MAX_BULK_FIX = 500;
+
+// Hands the event loop back between files.
+//
+// node-taglib-sharp is synchronous: readTags and writeTags each read and rewrite
+// a whole file with no await inside them, so `async` around them buys nothing.
+// The scanner was moved into a worker thread for exactly this reason, and then
+// this module ran the same calls in a 500-iteration loop on the main thread —
+// freezing the server, the healthcheck and every other request for the length of
+// a bulk repair of a lossless album.
+//
+// A worker would be the thorough fix; a yield per file is the cheap one that
+// makes the freeze interruptible, which is the part that actually mattered. The
+// tag IO still costs what it costs, but it no longer costs it all at once.
+function yieldToEventLoop() {
+  return new Promise((resolve) => { setImmediate(resolve); });
+}
+
+// Turns a filesystem failure into something safe to send to the browser.
+// An errno message carries the absolute path it failed on, and these responses
+// are rendered in a page — the same reason paths.js logs the path and returns a
+// generic string. The code is enough for the UI to say something useful.
+function describeFailure(err) {
+  // Written by this module for the browser, so it passes through verbatim.
+  if (err?.code === 'STALE_PREVIEW') return { code: 'stale', message: err.message };
+  switch (err?.code) {
+    case 'ENOENT':
+      return { code: 'missing', message: 'The file is no longer there.' };
+    case 'EACCES':
+    case 'EPERM':
+    case 'EROFS':
+      return { code: 'unwritable', message: 'The file could not be written to.' };
+    case 'EIO':
+    case 'ESTALE':
+    case 'ENOTCONN':
+      return { code: 'unreadable', message: 'The storage holding this file stopped responding.' };
+    default:
+      // A BadRequestError from the containment check already carries a message
+      // written for the browser; anything else stays deliberately vague.
+      return err?.status === 400
+        ? { code: 'rejected', message: err.message }
+        : { code: 'failed', message: 'The file could not be repaired — see the server logs.' };
+  }
+}
 
 // Track numbers parsed out of filenames are the one field that can be confidently
 // wrong: "99 Problems.mp3" reads as track 99. A real position is bounded by how
@@ -111,13 +156,51 @@ function proposeFromUpstream(upstream, release) {
 // A preview built from the index would report nothing to fill.
 async function currentTagsOf(track) {
   const real = await assertReadableInsideMusicDir(track.path);
+  // Stamped into the preview so the apply can tell whether it is still applying
+  // to the file it previewed. Best-effort: an unstattable file is already going
+  // to fail its read below.
+  let mtimeMs = null;
   try {
-    return { real, current: await readTags(real) };
+    ({ mtimeMs } = await fs.stat(real));
+  } catch { /* reported via `current: null` below */ }
+  try {
+    return { real, mtimeMs, current: await readTags(real) };
   } catch {
     // A file that can't be read is reported rather than skipped silently — it's
     // the same "this is a file problem, not a tag problem" case the Health tab
     // makes for a missing duration.
-    return { real, current: null };
+    return { real, mtimeMs, current: null };
+  }
+}
+
+// Refuses to write a file that has changed since the preview was taken.
+//
+// The route hands an apply the preview it is applying, cached for ten minutes,
+// on the reasoning that "what gets written is what was on screen and approved".
+// That is only true if the file didn't move underneath it — and in ten minutes
+// the single-track fix, an external tagger, or a re-rip can all have touched it.
+// Nothing validated that, so the honest-looking hand-off could write a proposal
+// derived from tags that no longer existed.
+//
+// A preview with no recorded mtime (an older cached entry) is allowed through
+// rather than failing every apply after a deploy: that is the behaviour this had
+// before the check existed.
+async function assertUnchangedSincePreview(track) {
+  if (track.mtimeMs == null) return;
+  let stat;
+  try {
+    stat = await fs.stat(track.path);
+  } catch {
+    const err = new BadRequestError('The file is no longer there.');
+    err.code = 'STALE_PREVIEW';
+    throw err;
+  }
+  if (Math.trunc(stat.mtimeMs) !== Math.trunc(track.mtimeMs)) {
+    const err = new BadRequestError(
+      'This file changed after the preview was taken — re-run the preview to see what it needs now.'
+    );
+    err.code = 'STALE_PREVIEW';
+    throw err;
   }
 }
 
@@ -163,7 +246,8 @@ export async function previewBulkFix({ artist = null, album, source = 'path', db
 
   const tracks = [];
   for (const track of localTracks) {
-    const { current } = await currentTagsOf(track);
+    await yieldToEventLoop();
+    const { current, mtimeMs } = await currentTagsOf(track);
     const proposed = source === 'path'
       ? proposeFromPath(track, localTracks.length)
       : proposeFromUpstream(aligned.get(track.id), release);
@@ -171,6 +255,9 @@ export async function previewBulkFix({ artist = null, album, source = 'path', db
     tracks.push({
       trackId: track.id,
       path: track.path,
+      // What the apply re-checks this preview against. See
+      // assertUnchangedSincePreview.
+      mtimeMs,
       current,
       proposed,
       // The fields this would actually change. A proposal that fills nothing is
@@ -225,16 +312,35 @@ export async function applyBulkFix({
   const applied = [];
   const failed = [];
   for (const track of chosen) {
+    await yieldToEventLoop();
     try {
       const real = await assertReadableInsideMusicDir(track.path);
-      const { filledFields } = await writeTags(real, track.proposed);
-      await reindexFile(real);
+      const filledFields = await withFileLock(real, async () => {
+        // Re-checked under the lock, not at preview time. The preview this is
+        // applying can be up to ten minutes old (see the cache in the route),
+        // and in that window the file may have been repaired by the single-track
+        // fix, re-tagged externally, or replaced. Writing a proposal derived
+        // from tags that no longer exist is the one way this flow can overwrite
+        // something the user never saw, so a file whose mtime has moved since
+        // the preview is skipped rather than written.
+        await assertUnchangedSincePreview(track);
+        const written = await writeTags(real, track.proposed);
+        await reindexFile(real);
+        return written.filledFields;
+      });
       applied.push({ trackId: track.trackId, filledFields });
     } catch (err) {
       // A file that vanished, went read-only, or sits on a mount that dropped
       // out mid-run. Routine on the network storage these libraries live on, and
       // no reason for the other 200 tracks to go unrepaired.
-      failed.push({ trackId: track.trackId, message: err.message });
+      //
+      // The raw message is logged, not returned. `err.message` from a failed fs
+      // call is "EACCES: permission denied, open '/mnt/nas/music/…'" — the
+      // server's absolute directory layout, sent to the browser, which is
+      // precisely what paths.js refuses to do in its own errors. Reported as a
+      // code the UI can phrase instead.
+      console.warn(`libraryBulkFix: track ${track.trackId} failed: ${err.message}`);
+      failed.push({ trackId: track.trackId, ...describeFailure(err) });
     }
   }
 

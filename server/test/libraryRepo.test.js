@@ -361,3 +361,57 @@ test('purgeRemoved deletes only long-gone tombstones', () => {
   assert.equal(db.prepare('SELECT path FROM local_tracks').get().path, '/m/here.mp3');
   db.close();
 });
+
+// A row that predates the clamp in libraryScanner.rowFor — or one written by any
+// future path that bypasses it — must not be able to take this endpoint down.
+// The Library page loads /incomplete on open, so a throw here left no way to
+// reach the UI that would show you the offending file.
+test('findIncompleteAlbums survives an out-of-range track number already in the table', () => {
+  const db = openDb(':memory:');
+  db.prepare(`
+    INSERT INTO local_tracks (path, artist, album, title, track_number, change_key, updated_at)
+    VALUES ('/m/x.mp3', 'A', 'Al', 'T', 2000000000, 'k', 0)
+  `).run();
+  let found;
+  assert.doesNotThrow(() => { found = repo.findIncompleteAlbums(db); });
+  const album = found.find((f) => f.album === 'Al');
+  assert.ok(album.missingPositions.length <= 999, 'the gap list is bounded');
+  db.close();
+});
+
+test('duplicate grouping is case-insensitive beyond ASCII', () => {
+  // The count and the listing must agree, and both must fold the same way.
+  // SQLite's LOWER() is ASCII-only, which is why the fold happens in JS and is
+  // stored — a group built one way and queried the other came back empty.
+  const db = openDb(':memory:');
+  repo.upsertLocalTrack(db, { path: '/m/1.mp3', artist: 'Ärzte', album: 'Al', title: 'Dup', durationMs: 1000, changeKey: '1:1' });
+  repo.upsertLocalTrack(db, { path: '/m/2.mp3', artist: 'ärzte', album: 'al', title: 'dup', durationMs: 1000, changeKey: '2:1' });
+  assert.equal(repo.findHealthIssues(db).duplicateCount, 1);
+  const groups = repo.findDuplicateGroups(db);
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].copies.length, 2, 'the listing has the copies the count promised');
+  db.close();
+});
+
+test('the duplicate count and the duplicate listing never disagree', () => {
+  const db = openDb(':memory:');
+  for (let i = 0; i < 5; i += 1) {
+    repo.upsertLocalTrack(db, { path: `/m/a${i}.mp3`, artist: 'A', album: 'Al', title: 'Same', durationMs: 1000, changeKey: `a${i}` });
+  }
+  repo.upsertLocalTrack(db, { path: '/m/b.mp3', artist: 'B', album: 'Bl', title: 'Solo', durationMs: 1000, changeKey: 'b' });
+  repo.upsertLocalTrack(db, { path: '/m/c1.mp3', artist: 'C', album: null, title: 'NoAlbum', durationMs: 1000, changeKey: 'c1' });
+  repo.upsertLocalTrack(db, { path: '/m/c2.mp3', artist: 'C', album: null, title: 'NoAlbum', durationMs: 1000, changeKey: 'c2' });
+
+  assert.equal(repo.findHealthIssues(db).duplicateCount, 2);
+  assert.equal(repo.findDuplicateGroups(db).length, 2);
+  db.close();
+});
+
+test('a track with no artist or title is not a duplicate candidate', () => {
+  const db = openDb(':memory:');
+  repo.upsertLocalTrack(db, { path: '/m/1.mp3', artist: null, album: 'Al', title: null, durationMs: 1000, changeKey: '1' });
+  repo.upsertLocalTrack(db, { path: '/m/2.mp3', artist: null, album: 'Al', title: null, durationMs: 1000, changeKey: '2' });
+  assert.equal(repo.findHealthIssues(db).duplicateCount, 0);
+  assert.equal(repo.findDuplicateGroups(db).length, 0);
+  db.close();
+});

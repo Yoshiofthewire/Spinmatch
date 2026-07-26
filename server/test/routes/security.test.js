@@ -293,3 +293,34 @@ test('a same-origin request identified only by Origin is still accepted', async 
   });
   assert.equal(res.status, 200);
 });
+
+// A cookie value is attacker-controlled: any page on a sibling subdomain can set
+// one scoped to the parent domain. decodeURIComponent throws URIError on a
+// malformed escape, and parseCookies runs inside requireAuth on every protected
+// route — so an unguarded decode turned one junk cookie into a 500 on the whole
+// app, including the status endpoint the client uses to decide whether to render
+// login. There was no way back from inside the app.
+test('a malformed session cookie does not take the app down', async () => {
+  for (const value of ['%', '%zz', '%E0%A4%A']) {
+    const junk = `spinmatch_session=${value}`;
+
+    const status = await fetch(`${baseUrl}/api/auth/status`, { headers: { Cookie: junk } });
+    assert.equal(status.status, 200, `status endpoint survived: ${value}`);
+    assert.equal((await status.json()).authenticated, false);
+
+    const protectedRoute = await fetch(`${baseUrl}/api/library/stats`, { headers: { Cookie: junk } });
+    assert.equal(protectedRoute.status, 401, `protected route rejected rather than 500: ${value}`);
+    assert.equal((await protectedRoute.json()).error.code, 'UNAUTHENTICATED');
+  }
+});
+
+test('a malformed cookie beside a valid session does not invalidate it', async () => {
+  const cookie = cookieOf(await fetch(`${baseUrl}/api/auth/login`, {
+    method: 'POST', headers: { ...asJson, 'Sec-Fetch-Site': 'same-origin' },
+    body: JSON.stringify({ username: 'someone-else', password: 'brandnewpassword' }),
+  }));
+  const res = await fetch(`${baseUrl}/api/library/stats`, {
+    headers: { Cookie: `junk=%; ${cookie}; other=%zz` },
+  });
+  assert.equal(res.status, 200);
+});

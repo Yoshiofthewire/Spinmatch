@@ -26,6 +26,7 @@ import { sameOriginOnly } from '../middleware/sameOriginOnly.js';
 import { NotFoundError, BadRequestError } from '../lib/httpErrors.js';
 import { assertMbid, isMbid } from '../lib/mbid.js';
 import { TTLCache } from '../lib/cache.js';
+import { sseStream, STREAM_HANDLED } from '../lib/sse.js';
 
 export const libraryRouter = Router();
 
@@ -114,6 +115,25 @@ libraryRouter.get('/album-tracks', (req, res, next) => {
 // claims is served as an opaque download.
 const IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/bmp']);
 
+// Extracted art, keyed on the file identity the ETag is already built from.
+//
+// The ETag alone only helps a client that has seen the image before. A first
+// paint of a 24-card album grid is 24 cold requests, and each one ran a
+// synchronous taglib parse of a whole audio file on the main thread — they do
+// not overlap, they queue, so the grid's covers arrive serialized behind each
+// other while every other request waits its turn too.
+//
+// Bounded by bytes rather than entries, for the same reason the cover-art
+// download cache is: these values are Buffers of wildly different sizes. A null
+// is cached too — "this track has no art" costs a tag parse *and* a directory
+// scan to rediscover, which is the most wasteful miss of the three.
+const coverCache = new TTLCache({
+  maxEntries: 512,
+  maxBytes: 64 * 1024 * 1024,
+  sizeOf: (value) => value?.bytes?.length ?? 0,
+});
+const COVER_TTL_MS = 60 * 60 * 1000;
+
 // Album art, read on demand rather than extracted to disk during the scan. Only
 // the covers actually on screen are ever read, so a 2,000-album grid costs one
 // tag read per visible card. Cached hard: the art can only change if the file
@@ -134,23 +154,31 @@ libraryRouter.get('/cover/:trackId', async (req, res, next) => {
     // freshness checking (only res.send() does), so every repeat request
     // re-parsed the file and re-scanned its folder to rediscover that there is
     // still no cover.
-    res.set('ETag', `"${track.mtimeMs ?? 0}-${track.sizeBytes ?? 0}"`);
+    const identity = `${track.mtimeMs ?? 0}-${track.sizeBytes ?? 0}`;
+    res.set('ETag', `"${identity}"`);
     res.set('Cache-Control', 'private, max-age=86400');
     if (req.fresh) {
       res.status(304).end();
       return;
     }
 
-    const real = await assertReadableInsideMusicDir(track.path);
-    // Embedded art first, then a cover/folder/front image beside the audio —
-    // plenty of libraries store art that way and would otherwise show nothing.
-    // A file taglib can't parse (truncated, corrupt, or mislabelled) throws
-    // rather than returning null. That must not fail the request: art is
-    // best-effort, and a broken file is exactly the case where the cover image
-    // beside it is the only art available. The Health tab is where unreadable
-    // files get reported.
-    const embedded = await readCoverArt(real).catch(() => null);
-    const cover = embedded ?? (await readSidecarCover(dirname(real)));
+    // Keyed on the same identity as the ETag: art can only change if the file
+    // does, and a changed file has a new mtime, so a hit here is never stale.
+    const cacheKey = `${track.id}:${identity}`;
+    let cover = coverCache.get(cacheKey);
+    if (cover === undefined) {
+      const real = await assertReadableInsideMusicDir(track.path);
+      // Embedded art first, then a cover/folder/front image beside the audio —
+      // plenty of libraries store art that way and would otherwise show nothing.
+      // A file taglib can't parse (truncated, corrupt, or mislabelled) throws
+      // rather than returning null. That must not fail the request: art is
+      // best-effort, and a broken file is exactly the case where the cover image
+      // beside it is the only art available. The Health tab is where unreadable
+      // files get reported.
+      const embedded = await readCoverArt(real).catch(() => null);
+      cover = embedded ?? (await readSidecarCover(dirname(real)));
+      coverCache.set(cacheKey, cover, COVER_TTL_MS);
+    }
     if (!cover) {
       // 204 rather than 404: "this album has no art" is a normal answer, not an
       // error. The client's <img> falls back to the placeholder either way, but
@@ -235,65 +263,6 @@ libraryRouter.get('/missing', sameOriginOnly, async (req, res, next) => {
     next(err);
   }
 });
-
-// Shared lifecycle for the two server-sent-event streams below.
-//
-// Both had the same three problems, so both get the same fix in one place:
-//
-//   - `send` wrote to the response without checking whether it was still there.
-//     The client hangs up, `req.on('close')` aborts, and if the in-flight work
-//     then surfaces a non-abort error (a yt-dlp rate limit landing a second
-//     later) the handler wrote an event to a destroyed socket.
-//   - `return res.end()` inside the try, with a `finally` that also calls
-//     `res.end()`, ended the response twice on every early return. Harmless on
-//     today's Node, which no-ops a second end() with no callback, but it is
-//     load-bearing on a detail of a stdlib internal.
-//   - the heartbeat was cleared in two places and could be missed in a third.
-//
-// The handler now just does work and emits events; closing is not its problem.
-function sseStream(handler) {
-  return async (req, res) => {
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-    res.flushHeaders?.();
-
-    const alive = () => !res.writableEnded && !res.destroyed;
-    const send = (event, data) => {
-      if (!alive()) return;
-      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-    };
-    const ac = new AbortController();
-    // A comment line keeps the connection warm. Each result takes about a
-    // second, but two concurrent streams share one global 1-req/s yt-dlp queue,
-    // so the gap between events can exceed a reverse proxy's idle timeout and
-    // get the stream killed mid-run.
-    const heartbeat = setInterval(() => { if (alive()) res.write(': keep-alive\n\n'); }, 15_000);
-    heartbeat.unref?.();
-    req.on('close', () => ac.abort());
-
-    try {
-      // The handler's return value is the `done` payload: undefined for the
-      // streams that just say "finished", a summary object for the one that has
-      // totals to report. Returning STREAM_HANDLED means it already emitted its
-      // own terminal event (a validation error) and no `done` should follow.
-      const summary = await handler({ req, send, signal: ac.signal });
-      if (!ac.signal.aborted && summary !== STREAM_HANDLED) send('done', summary ?? {});
-    } catch (err) {
-      if (!ac.signal.aborted) {
-        if (err.code === 'RATE_LIMITED') send('rate_limited', { code: err.code, message: err.message });
-        else send('error', { code: err.code || 'INTERNAL', message: err.message });
-      }
-    } finally {
-      clearInterval(heartbeat);
-      if (!res.writableEnded) res.end();
-    }
-  };
-}
-
-// Returned by a stream handler that has already emitted its own terminal event
-// and wants the wrapper to stop without adding a `done` on top of it.
-const STREAM_HANDLED = Symbol('stream-handled');
 
 // Streaming counterpart to /missing?verify=1: emits one `result` per missing
 // track as its ~1/sec YouTube lookup lands. Same shape as

@@ -1,4 +1,6 @@
 import { File, Picture, PictureType, ByteVector } from 'node-taglib-sharp';
+import { MAX_IMAGE_BYTES } from '../lib/imageBytes.js';
+import { noteWrite } from '../lib/recentWrites.js';
 
 const FIELD_TO_TAG_PROP = {
   artist: 'performers',
@@ -67,6 +69,15 @@ export async function readCoverArt(filePath) {
     const pictures = file.tag.pictures || [];
     if (!pictures.length) return null;
     const picture = pictures.find((p) => p.type === PictureType.FrontCover) || pictures[0];
+    // The length is checked before toByteArray(), which is what actually
+    // materializes the copy. A tag can embed a picture of any size the container
+    // allows, and this is served over HTTP — an unbounded copy per request on a
+    // route the album grid calls in parallel.
+    const length = picture.data?.length ?? 0;
+    if (length > MAX_IMAGE_BYTES) {
+      console.warn(`tags: embedded cover in ${filePath} is ${length} bytes, over the ${MAX_IMAGE_BYTES} limit — skipping`);
+      return null;
+    }
     return {
       bytes: Buffer.from(picture.data.toByteArray()),
       mimeType: picture.mimeType || 'image/jpeg',
@@ -130,5 +141,10 @@ export async function writeTags(
   } finally {
     file.dispose();
   }
+  // Recorded so the MUSIC_DIR watcher doesn't mistake our own write for an
+  // external change and schedule a full library rescan for it — see
+  // lib/recentWrites.js. Noted here rather than at each call site so no future
+  // writer can forget.
+  noteWrite(filePath);
   return { filledFields };
 }

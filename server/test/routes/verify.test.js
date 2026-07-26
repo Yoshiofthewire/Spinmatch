@@ -101,7 +101,13 @@ test('POST /api/verify surfaces a rate-limited message and 429 status', async (t
   assert.equal(body.error.code, 'RATE_LIMITED');
 });
 
-test('POST /api/verify/album/:mbid returns partial results plus a rate-limited error mid-batch', async (t) => {
+// The non-streaming POST /album/:mbid this used to exercise is gone: it held one
+// request open for the whole multi-minute run, which is what the streaming route
+// was built to replace, and its "fallback for browsers without EventSource"
+// justification described no browser that can run the client. The behaviour
+// worth keeping is this one — partial results survive a rate limit landing
+// mid-run — so it moved to the route that still exists.
+test('GET /api/verify/album/:mbid/stream keeps earlier results when a rate limit lands mid-run', async (t) => {
   const agent = mockMusicBrainzAgent();
   const mb = agent.get('https://musicbrainz.org');
 
@@ -133,16 +139,22 @@ test('POST /api/verify/album/:mbid returns partial results plus a rate-limited e
     }
   });
 
-  const res = await fetch(`${baseUrl}/api/verify/album/c5c5c5c5-c5c5-4c5c-8c5c-c5c5c5c5c5c5`, {
-    method: 'POST', headers: { 'Sec-Fetch-Site': 'same-origin' },
+  const res = await fetch(`${baseUrl}/api/verify/album/c5c5c5c5-c5c5-4c5c-8c5c-c5c5c5c5c5c5/stream`, {
+    headers: { 'Sec-Fetch-Site': 'same-origin' },
   });
   assert.equal(res.status, 200);
-  const body = await res.json();
 
-  assert.equal(body.results.length, 1, 'only the first track should have completed before the rate limit hit');
-  assert.equal(body.results[0].title, 'Bulk Track One');
-  assert.equal(body.results[0].status, 'confirmed');
-  assert.equal(body.error.code, 'RATE_LIMITED');
+  const events = parseSse(await res.text());
+  const results = events.filter((e) => e.event === 'result');
+  assert.equal(results.length, 1, 'only the first track should have completed before the rate limit hit');
+  assert.equal(results[0].data.title, 'Bulk Track One');
+  assert.equal(results[0].data.status, 'confirmed');
+
+  const limited = events.find((e) => e.event === 'rate_limited');
+  assert.ok(limited, 'the run reports the rate limit as its own terminal event');
+  assert.equal(limited.data.code, 'RATE_LIMITED');
+  // A rate limit ends the run — it is not a completed run, so no `done`.
+  assert.ok(!events.some((e) => e.event === 'done'));
 });
 
 test('GET /api/verify/album/:mbid/stream emits an album header, a result per track, then done', async (t) => {

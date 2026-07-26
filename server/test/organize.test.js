@@ -160,3 +160,69 @@ test('moveIntoLibrary reports a duplicate and leaves the source in place when co
     await fs.rm(srcDir, { recursive: true, force: true });
   });
 });
+
+// The move used to check "does dest exist?" and then rename() two awaits later.
+// rename() overwrites silently, so anything that appeared at that path in the
+// gap — a second drop folder, a file manager, a sync client — was destroyed with
+// no error. The destination is now claimed with an exclusive create first.
+test('a file that appears at the destination between check and move is not overwritten', async () => {
+  await withMusicDir(async (dir) => {
+    const src = path.join(dir, 'incoming.mp3');
+    await fs.writeFile(src, 'new content');
+
+    const dest = path.join(dir, 'Artist', 'Album', 'Title.mp3');
+    await fs.mkdir(path.dirname(dest), { recursive: true });
+    await fs.writeFile(dest, 'PRE-EXISTING AND DIFFERENT');
+
+    const result = await moveIntoLibrary(src, { artist: 'Artist', album: 'Album', title: 'Title' }, '.mp3');
+
+    assert.equal(await fs.readFile(dest, 'utf8'), 'PRE-EXISTING AND DIFFERENT', 'the existing file survived');
+    assert.equal(result.duplicate, false);
+    assert.equal(result.movedTo, path.join(dir, 'Artist', 'Album', 'Title (2).mp3'));
+    assert.equal(await fs.readFile(result.movedTo, 'utf8'), 'new content');
+  });
+});
+
+test('a byte-identical file already in place is reported as a duplicate and the source is left alone', async () => {
+  await withMusicDir(async (dir) => {
+    const src = path.join(dir, 'incoming.mp3');
+    await fs.writeFile(src, 'same bytes');
+    const dest = path.join(dir, 'Artist', 'Album', 'Title.mp3');
+    await fs.mkdir(path.dirname(dest), { recursive: true });
+    await fs.writeFile(dest, 'same bytes');
+
+    const result = await moveIntoLibrary(src, { artist: 'Artist', album: 'Album', title: 'Title' }, '.mp3');
+    assert.equal(result.duplicate, true);
+    assert.equal(result.movedTo, null);
+    assert.ok(fsSync.existsSync(src), 'the source is left in place for review');
+  });
+});
+
+test('successive collisions keep counting up rather than reusing a suffix', async () => {
+  await withMusicDir(async (dir) => {
+    const meta = { artist: 'Artist', album: 'Album', title: 'Title' };
+    const moved = [];
+    for (let i = 0; i < 3; i += 1) {
+      const src = path.join(dir, `in-${i}.mp3`);
+      await fs.writeFile(src, `content ${i}`);
+      moved.push((await moveIntoLibrary(src, meta, '.mp3')).movedTo);
+    }
+    assert.deepEqual(moved.map((p) => path.basename(p)), ['Title.mp3', 'Title (2).mp3', 'Title (3).mp3']);
+  });
+});
+
+test('a failed move leaves no placeholder or .partial file behind', async () => {
+  await withMusicDir(async (dir) => {
+    // A source that vanishes after the destination has been claimed is the
+    // cheapest way to fail the rename; a half-finished cross-device copy used to
+    // leave a .partial sitting in the library forever, invisible to the scanner
+    // because it has no audio extension.
+    const src = path.join(dir, 'ghost.mp3');
+    await assert.rejects(
+      moveIntoLibrary(src, { artist: 'Artist', album: 'Album', title: 'Title' }, '.mp3'),
+    );
+    const albumDir = path.join(dir, 'Artist', 'Album');
+    const left = fsSync.existsSync(albumDir) ? await fs.readdir(albumDir) : [];
+    assert.deepEqual(left, [], 'no zero-byte placeholder and no .partial remain');
+  });
+});
