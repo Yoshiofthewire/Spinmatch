@@ -136,6 +136,36 @@ body {
   line-height: 1.6;
 }
 
+.about-page h2 {
+  font-family: var(--font-display);
+  font-size: 0.85rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  margin: 2rem 0 0.6rem;
+}
+
+.about-page a {
+  color: var(--lock);
+}
+
+.about-callout {
+  border-left: 2px solid var(--signal);
+  padding-left: 0.9rem;
+  font-weight: 600;
+}
+
+.about-license summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.about-license p {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
 h1 {
   font-family: var(--font-display);
   font-size: 1.6rem;

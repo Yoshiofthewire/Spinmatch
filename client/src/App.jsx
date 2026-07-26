@@ -1,4 +1,4 @@
-import { Routes, Route, NavLink } from 'react-router-dom';
+import { Routes, Route, NavLink, Link } from 'react-router-dom';
 import SearchPage from './pages/SearchPage.jsx';
 import ArtistPage from './pages/ArtistPage.jsx';
 import AlbumPage from './pages/AlbumPage.jsx';
@@ -22,11 +22,13 @@ export default function App() {
   return (
     <div className="app">
       <header className="app-header">
-        <a href="/" className="app-brand">
+        {/* A router link, not an <a href>: a full page reload would throw away
+            the history the Back button walks. */}
+        <Link to="/" className="app-brand">
           <Logo />
           <span className="app-title">Spinmatch</span>
-        </a>
-        <p className="app-subtitle">Track down the right take — matched against MusicBrainz, verified by length</p>
+        </Link>
+        <p className="app-subtitle">Track down the right take</p>
         <nav className="app-nav">
           <NavLink to="/" end className={navLinkClass}>Search</NavLink>
           {ingestEnabled && <NavLink to="/ingest" className={navLinkClass}>Ingest</NavLink>}

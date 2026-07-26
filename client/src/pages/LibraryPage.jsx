@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import EqualizerLoader from '../components/EqualizerLoader.jsx';
 import Breadcrumbs from '../components/Breadcrumbs.jsx';
 import OverviewTab from '../components/library/OverviewTab.jsx';
@@ -28,11 +29,29 @@ const TABS = [
 ];
 
 export default function LibraryPage() {
-  const [tab, setTab] = useState('overview');
-  // Drill-down state, kept here rather than in the router: artist and album
-  // names routinely contain slashes, which path params handle badly.
-  const [selectedArtist, setSelectedArtist] = useState(null);
-  const [selectedAlbum, setSelectedAlbum] = useState(null);
+  // Which tab is open and how far the user has drilled into it lives in the
+  // query string, not in component state: that is what makes the browser Back
+  // button step back through the library instead of leaving the app entirely.
+  // Query params rather than path params because artist and album names
+  // routinely contain slashes, which path params handle badly.
+  const [params, setParams] = useSearchParams();
+  const tab = params.get('tab') ?? 'overview';
+  const selectedArtist = params.get('artist');
+  const albumTitle = params.get('album');
+  const albumArtist = params.get('albumArtist');
+
+  // The grids hand over a whole album row (cover, year); the URL can only carry
+  // its identity. Remember the last one clicked so a normal click keeps the
+  // extras, and fall back to the bare identity on a reload or a Back into the
+  // page — AlbumDetail only needs artist and album to fetch the rest.
+  const [albumMeta, setAlbumMeta] = useState(null);
+  const selectedAlbum = useMemo(() => {
+    if (!albumTitle) return null;
+    const matches = albumMeta
+      && albumMeta.album === albumTitle
+      && (albumMeta.artist ?? null) === albumArtist;
+    return matches ? albumMeta : { artist: albumArtist, album: albumTitle };
+  }, [albumTitle, albumArtist, albumMeta]);
 
   const [stats, setStats] = useState(null);
   const [incomplete, setIncomplete] = useState([]);
@@ -96,23 +115,33 @@ export default function LibraryPage() {
     [incomplete],
   );
 
+  // Every move within the page is a push onto the history stack, so Back undoes
+  // exactly one step of it: album → artist → tab.
+  function go({ tab: nextTab = tab, artist = null, album = null }) {
+    const next = { tab: nextTab };
+    if (artist) next.artist = artist;
+    if (album) {
+      next.album = album.album;
+      if (album.artist) next.albumArtist = album.artist;
+    }
+    setParams(next);
+  }
+
   function openArtist(artist) {
-    setSelectedAlbum(null);
-    setSelectedArtist(artist);
+    go({ artist });
   }
 
   function openAlbum(album) {
-    setSelectedAlbum(album);
+    setAlbumMeta(album);
+    go({ artist: selectedArtist, album });
   }
 
   function clearSelection() {
-    setSelectedArtist(null);
-    setSelectedAlbum(null);
+    go({});
   }
 
   function switchTab(next) {
-    clearSelection();
-    setTab(next);
+    go({ tab: next });
   }
 
   const crumbs = [{ label: 'Library', to: null }];
