@@ -9,9 +9,11 @@ import {
 } from '../services/libraryRepo.js';
 import {
   getArtistDiscography, saveArtistLink, deleteArtistLink, checkAlbumAgainstMusicBrainz,
+  resolveMissingTrack,
 } from '../services/libraryDiscography.js';
 import { getFixCandidates, getFingerprintCandidates, applyFix } from '../services/libraryFix.js';
 import { previewBulkFix, applyBulkFix, MAX_BULK_FIX } from '../services/libraryBulkFix.js';
+import { editTrackTags, editAlbumTags } from '../services/tagEdit.js';
 import {
   getSimilarArtists, getRecommendations, reconstructPlaylist,
 } from '../services/libraryDiscovery.js';
@@ -26,6 +28,7 @@ import { sameOriginOnly } from '../middleware/sameOriginOnly.js';
 import { NotFoundError, BadRequestError } from '../lib/httpErrors.js';
 import { assertMbid, isMbid } from '../lib/mbid.js';
 import { TTLCache } from '../lib/cache.js';
+import { MAX_TRACK_NUMBER, MAX_DISC_NUMBER } from '../lib/tagLimits.js';
 import { sseStream, STREAM_HANDLED } from '../lib/sse.js';
 
 export const libraryRouter = Router();
@@ -374,6 +377,30 @@ libraryRouter.get('/album-gaps', async (req, res, next) => {
   }
 });
 
+// Names the track at one (disc, position) of an album, so a gap row in the local
+// tracklist can be looked up. Resolve only — the YouTube half is POST /api/verify,
+// which the client already drives from VerifyButton.
+//
+// Two endpoints rather than one on purpose: the two halves sit behind separate
+// 1-req/s limiters, so combining them would make one request wait on both and
+// fail for two unrelated reasons. Cheap to call per row because mbFetch caches on
+// the request URL for an hour — the second and third gap row of the same album
+// cost no upstream call at all.
+libraryRouter.get('/missing-track', async (req, res, next) => {
+  try {
+    const album = str(req.query.album);
+    if (!album) throw new BadRequestError('album is required');
+    const position = positiveInt(req.query.position, null, MAX_TRACK_NUMBER);
+    if (!position) throw new BadRequestError('a positive position is required');
+    res.json(await resolveMissingTrack(str(req.query.artist) ?? null, album, {
+      disc: positiveInt(req.query.disc, 1, MAX_DISC_NUMBER),
+      position,
+    }));
+  } catch (err) {
+    next(err);
+  }
+});
+
 // Tag repair for a file already in the library. MusicBrainz-backed, so opt-in
 // per track like the panels above.
 libraryRouter.get('/fix-candidates/:trackId', async (req, res, next) => {
@@ -411,6 +438,48 @@ libraryRouter.post('/fix', async (req, res, next) => {
       recordingMbid,
       overwrite: Boolean(req.body?.overwrite),
       replaceCoverArt: Boolean(req.body?.replaceCoverArt),
+    }));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Tag values a person typed, which makes these the two endpoints where the
+// browser does dictate what gets written — the deliberate exception to the rule
+// stated above /bulk-fix/apply below. services/tagEdit.validateTagEdit is the
+// whole of the control, and it lives inside the service rather than here so a
+// future caller can't arrive and skip it.
+//
+// PATCH because this is a partial update: a field absent from `fields` is left
+// alone. A blank field is also left alone — editing cannot remove a tag.
+libraryRouter.patch('/track/:id/tags', async (req, res, next) => {
+  try {
+    const trackId = Number(req.params.id);
+    if (!trackId) throw new BadRequestError('a track id is required');
+    res.json(await editTrackTags({ trackId, fields: req.body?.fields }));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// The same, applied across one album: `fields` on every chosen track, `perTrack`
+// for the fields that are per-row. Capped here as well as in the service, so the
+// ceiling is visible alongside the other request caps in this file.
+libraryRouter.post('/album/tags', async (req, res, next) => {
+  try {
+    const album = str(req.body?.album);
+    if (!album) throw new BadRequestError('album is required');
+    const trackIds = Array.isArray(req.body?.trackIds) ? req.body.trackIds : null;
+    const perTrack = Array.isArray(req.body?.perTrack) ? req.body.perTrack : [];
+    if ((trackIds?.length ?? 0) > MAX_BULK_FIX || perTrack.length > MAX_BULK_FIX) {
+      throw new BadRequestError(`at most ${MAX_BULK_FIX} tracks per request`);
+    }
+    res.json(await editAlbumTags({
+      artist: str(req.body?.artist) ?? null,
+      album,
+      fields: req.body?.fields ?? {},
+      perTrack,
+      trackIds,
     }));
   } catch (err) {
     next(err);
@@ -456,8 +525,13 @@ libraryRouter.post('/bulk-fix/preview', async (req, res, next) => {
 });
 
 // Applies a previewed repair to the chosen tracks. The tag values are not taken
-// from the request — only which tracks to repair — so the server re-derives what
-// to write and a caller can't use this to set arbitrary tags.
+// from THIS request — only which tracks to repair — so the server re-derives what
+// to write and a caller can't use this endpoint to set arbitrary tags.
+//
+// That is a property of the repair endpoints, not of the API as a whole: the two
+// manual-edit endpoints above do take their values from the request, because
+// typing a value is the entire point of them. Their control is
+// services/tagEdit.validateTagEdit rather than server-side derivation.
 libraryRouter.post('/bulk-fix/apply', async (req, res, next) => {
   try {
     const album = str(req.body?.album);

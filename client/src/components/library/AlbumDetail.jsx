@@ -1,8 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import EqualizerLoader from '../EqualizerLoader.jsx';
 import LocalCover from './LocalCover.jsx';
 import AlbumGapPanel from './AlbumGapPanel.jsx';
 import BulkFixPanel from './BulkFixPanel.jsx';
+import AlbumTagEditPanel from './AlbumTagEditPanel.jsx';
+import TagEditPanel from './TagEditPanel.jsx';
+import MissingTrackCell from './MissingTrackCell.jsx';
 import RescanButton from './RescanButton.jsx';
 import { getAlbumTracks } from '../../api/library.js';
 import { formatDuration, formatLongDuration } from '../../lib/format.js';
@@ -26,12 +29,16 @@ function rowsWithGaps(tracks) {
   return rows.concat(unnumbered.map((t) => ({ kind: 'track', track: t })));
 }
 
-export default function AlbumDetail({ album, onPlay, onSelectArtist, onLibraryChanged }) {
+export default function AlbumDetail({
+  album, onPlay, onSelectArtist, onLibraryChanged, onAlbumRenamed,
+}) {
   const [tracks, setTracks] = useState([]);
   const [state, setState] = useState('loading'); // loading | ready | error
   const [error, setError] = useState(null);
-  // Bumped by a rescan to re-run the load below.
+  // Bumped by a rescan or a tag edit to re-run the load below.
   const [reload, setReload] = useState(0);
+  const [editing, setEditing] = useState(null); // track id whose panel is open
+  const [editingAlbum, setEditingAlbum] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -90,6 +97,13 @@ export default function AlbumDetail({ album, onPlay, onSelectArtist, onLibraryCh
               album={album.album}
               onDone={() => { setReload((n) => n + 1); onLibraryChanged?.(); }}
             />
+            <button
+              type="button"
+              className="chip-button"
+              onClick={() => setEditingAlbum((open) => !open)}
+            >
+              {editingAlbum ? 'Close editor' : 'Edit album tags'}
+            </button>
           </p>
         </div>
       </div>
@@ -104,6 +118,7 @@ export default function AlbumDetail({ album, onPlay, onSelectArtist, onLibraryCh
             <thead>
               <tr>
                 <th aria-label="Play" /><th>#</th><th>Title</th><th>Length</th><th>Format</th>
+                <th aria-label="Edit" />
               </tr>
             </thead>
             <tbody>
@@ -112,31 +127,91 @@ export default function AlbumDetail({ album, onPlay, onSelectArtist, onLibraryCh
                   <tr key={`gap-${disc}-${row.position}`} className="track-row-missing">
                     <td />
                     <td className="mono">{row.position}</td>
-                    <td colSpan="3" className="muted">missing</td>
+                    <td colSpan="4">
+                      {/* The hole is the one row that can't be edited — there is
+                          no file. What it can do is name itself. */}
+                      <MissingTrackCell
+                        artist={album.artist}
+                        album={album.album}
+                        disc={disc}
+                        position={row.position}
+                      />
+                    </td>
                   </tr>
                 ) : (
-                  <tr key={row.track.id}>
-                    <td>
-                      <button
-                        type="button"
-                        className="play-button"
-                        onClick={() => onPlay(row.track, discTracks)}
-                        aria-label={`Play ${row.track.title}`}
-                      >
-                        ▶
-                      </button>
-                    </td>
-                    <td className="mono">{row.track.trackNumber ?? '—'}</td>
-                    <td>{row.track.title}</td>
-                    <td className="mono">{formatDuration(row.track.durationMs)}</td>
-                    <td className="mono">{row.track.ext ?? '—'}</td>
-                  </tr>
+                  <Fragment key={row.track.id}>
+                    <tr>
+                      <td>
+                        <button
+                          type="button"
+                          className="play-button"
+                          onClick={() => onPlay(row.track, discTracks)}
+                          aria-label={`Play ${row.track.title}`}
+                        >
+                          ▶
+                        </button>
+                      </td>
+                      <td className="mono">{row.track.trackNumber ?? '—'}</td>
+                      <td>{row.track.title}</td>
+                      <td className="mono">{formatDuration(row.track.durationMs)}</td>
+                      <td className="mono">{row.track.ext ?? '—'}</td>
+                      <td>
+                        <button
+                          type="button"
+                          className="chip-button"
+                          onClick={() => setEditing(editing === row.track.id ? null : row.track.id)}
+                        >
+                          {editing === row.track.id ? 'Close' : 'Edit'}
+                        </button>
+                      </td>
+                    </tr>
+                    {/* Opened as a row of its own directly beneath the one that
+                        was clicked, the way the Health tab does it. Rendered after
+                        the table instead, it lands a screen away and reads as the
+                        button doing nothing. */}
+                    {editing === row.track.id && (
+                      <tr className="track-row-panel">
+                        <td colSpan="6">
+                          <TagEditPanel
+                            track={row.track}
+                            onSaved={() => {
+                              setEditing(null);
+                              setReload((n) => n + 1);
+                              onLibraryChanged?.();
+                            }}
+                            onCancel={() => setEditing(null)}
+                            onPlay={(t) => onPlay(t, discTracks)}
+                          />
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
                 )
               ))}
             </tbody>
           </table>
         </div>
       ))}
+
+      {/* Above BulkFixPanel so the two write paths sit together: this one writes
+          exactly what you type, that one fills only what's empty from a source it
+          derives itself. Seeing the contrast is the point. */}
+      {state === 'ready' && editingAlbum && (
+        <AlbumTagEditPanel
+          artist={album.artist}
+          album={album.album}
+          tracks={tracks}
+          onSaved={(result) => {
+            setReload((n) => n + 1);
+            onLibraryChanged?.();
+            // The album's identity IS its (artist, album) pair, so a rename means
+            // the view's own query string now names an album that doesn't exist.
+            // The page has to move with it or the tracklist comes back empty.
+            if (result.renamed) onAlbumRenamed?.(result.renamed);
+          }}
+          onCancel={() => setEditingAlbum(false)}
+        />
+      )}
 
       {/* Repairs what's here; AlbumGapPanel below finds what isn't. Applying a
           repair re-reads the tracklist, because the tags it just wrote are what

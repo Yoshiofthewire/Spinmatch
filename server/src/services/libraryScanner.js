@@ -9,6 +9,9 @@ import {
   purgeRemoved,
 } from './libraryRepo.js';
 import { assertInsideMusicDir } from '../lib/paths.js';
+import {
+  MAX_TRACK_NUMBER, MAX_DISC_NUMBER, MIN_YEAR, MAX_YEAR,
+} from '../lib/tagLimits.js';
 
 const AUDIO_EXTENSIONS = new Set(['.mp3', '.flac', '.m4a', '.aac', '.ogg']);
 // Write in batches so the SQLite write lock is released periodically (letting a
@@ -23,22 +26,12 @@ export function changeKeyFor(stat) {
   return `${stat.size}:${Math.trunc(stat.mtimeMs)}`;
 }
 
-// Ceilings for the numeric tags. These values come out of a binary frame in a
-// file the user downloaded from a stranger, and nothing downstream expected
-// them to be hostile: findIncompleteAlbums iterates 1..maxTrackNumber to find
-// gaps, so a single file tagged `track = 2000000000` was a RangeError (or, at
-// values just below the array limit, a multi-gigabyte allocation on the main
-// thread) on GET /api/library/incomplete — which the Library page loads on open,
-// leaving no way to reach the UI that would show you the offending file.
+// The ceilings come from lib/tagLimits.js, which explains why this path clamps
+// to them while the manual-edit path rejects against them.
 //
 // Clamped at the point a file becomes a row, so every reader downstream is safe
 // by construction rather than each having to remember. Out-of-range means null
 // ("this file has no usable number"), not a substituted guess.
-const MAX_TRACK_NUMBER = 999;
-const MAX_DISC_NUMBER = 99;
-const MIN_YEAR = 1;
-const MAX_YEAR = 2999;
-
 function boundedInt(value, min, max) {
   const n = Number(value);
   if (!Number.isFinite(n)) return null;

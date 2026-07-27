@@ -1365,3 +1365,100 @@ a:hover {
 .rescan-control .link-button {
   color: var(--signal);
 }
+
+/* ---------- Manual tag editing ---------- */
+
+/* Shares the panel shell with the repair pickers, so opening either from a track
+   row looks like the same kind of thing. */
+.tag-edit-panel {
+  padding: 1rem;
+}
+
+.track-row-panel .tag-edit-panel {
+  border: 0;
+  border-radius: 0;
+  margin: 0;
+}
+
+.tag-edit-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-bottom: 0.85rem;
+}
+
+/* Label, input, then whatever the row currently means. The consequence text sits
+   on the same line as the field it describes — read as a column of warnings under
+   the form it would be attached to nothing. */
+.tag-edit-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+}
+
+.tag-edit-row label {
+  flex: 0 0 7rem;
+  color: var(--muted);
+}
+
+.tag-edit-row input {
+  flex: 1 1 12rem;
+  min-width: 8rem;
+}
+
+.tag-edit-row input[type='number'],
+.tag-edit-number {
+  flex: 0 0 6rem;
+  min-width: 5rem;
+}
+
+/* What this row will do if saved. Same colour as a bulk-fix proposal, because it
+   is the same kind of statement: this value is going to be written. */
+.tag-edit-change {
+  color: var(--lock);
+  font-weight: 600;
+}
+
+/* An overwrite of a value that was already there, and an album-wide field that
+   applies to every selected file. Both destroy something, so they don't get to
+   look like the benign case of filling a blank. */
+.tag-edit-destructive {
+  color: var(--signal);
+}
+
+/* A field blanked out. Editing cannot remove a tag, so this says the value was
+   kept — stated on the row rather than left for the user to discover when the
+   value reappears after saving. */
+.tag-edit-kept {
+  color: var(--signal);
+  font-style: italic;
+}
+
+/* An album-wide field whose tracks disagree, so there is no single current value
+   to show and the box starts empty. */
+.tag-edit-varies {
+  color: var(--muted);
+  font-style: italic;
+}
+
+/* The last thing before the write. Nothing in this app can be undone, and this is
+   the one path whose values came from a keyboard rather than a lookup, so the
+   pending changes get read back in plain words. */
+.tag-edit-confirm {
+  padding: 0.85rem 1rem;
+  margin-bottom: 0.85rem;
+  background: var(--bg);
+  border: 1px solid var(--signal);
+  border-radius: 8px;
+}
+
+.tag-edit-confirm ul {
+  margin: 0.5rem 0 0.85rem;
+  padding-left: 1.2rem;
+}
+
+.tag-edit-confirm li {
+  margin-bottom: 0.25rem;
+}

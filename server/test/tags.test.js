@@ -263,3 +263,85 @@ test('readTags/writeTags work across MP3, FLAC, M4A, and OGG', async () => {
     });
   }
 });
+
+// The manual-edit path (services/tagEdit.js) needs no function of its own here:
+// a PARTIAL `desired` plus overwrite is exactly "write these fields, leave the
+// rest alone". These pin down the half of that contract the fill-only tests above
+// never exercised — what happens to the fields a caller DIDN'T name.
+
+test('writeTags with overwrite leaves fields the patch does not name alone', async () => {
+  await withCopiedFixture('tagged.mp3', async (file) => {
+    const { filledFields } = await writeTags(file, { title: 'Renamed' }, { overwrite: true });
+    assert.deepEqual(filledFields, ['title']);
+
+    const after = await readTags(file);
+    assert.equal(after.title, 'Renamed');
+    // The guarantee the whole manual-edit feature rests on: editing one field
+    // must not disturb any other.
+    assert.equal(after.artist, 'Existing Artist');
+  });
+});
+
+// A null in a patch means "no opinion", not "clear" — nothing in this module
+// gives it a second meaning, which is what makes it impossible for an edit to
+// remove a tag.
+test('writeTags with overwrite treats a null as no opinion, not as a clear', async () => {
+  await withCopiedFixture('tagged.mp3', async (file) => {
+    const { filledFields } = await writeTags(
+      file,
+      { title: null, artist: null },
+      { overwrite: true },
+    );
+    assert.deepEqual(filledFields, []);
+
+    const after = await readTags(file);
+    assert.equal(after.title, 'Existing Title');
+    assert.equal(after.artist, 'Existing Artist');
+  });
+});
+
+test('writeTags reports only the fields that actually differed', async () => {
+  await withCopiedFixture('tagged.mp3', async (file) => {
+    const { filledFields } = await writeTags(
+      file,
+      { title: 'Existing Title', artist: 'Someone Else' },
+      { overwrite: true },
+    );
+    assert.deepEqual(filledFields, ['artist'], 'the matching title is not claimed as a change');
+  });
+});
+
+// A save() is a whole-container rewrite: it bumps mtime, which wakes the
+// MUSIC_DIR watcher and schedules a rescan. Pressing Save on a form with nothing
+// dirty must therefore not touch the file at all.
+test('writeTags does not rewrite the file when nothing would change', async () => {
+  for (const name of ['tagged.mp3', 'silence.flac', 'silence.m4a', 'silence.ogg']) {
+    await withCopiedFixture(name, async (file) => {
+      // Give every fixture something to already agree with. overwrite, because
+      // tagged.mp3 arrives with values of its own that a fill-only write skips.
+      await writeTags(file, { artist: 'A', title: 'T' }, { overwrite: true });
+      const before = await fs.stat(file);
+
+      const { filledFields } = await writeTags(
+        file,
+        { artist: 'A', title: 'T' },
+        { overwrite: true },
+      );
+      assert.deepEqual(filledFields, [], `${name} should report no changes`);
+
+      const after = await fs.stat(file);
+      assert.equal(after.mtimeMs, before.mtimeMs, `${name} should not have been rewritten`);
+      assert.equal(after.size, before.size, `${name} should be byte-identical in size`);
+    });
+  }
+});
+
+// The watcher suppression window is keyed on the write attempt, not on whether
+// bytes moved: a spurious note costs nothing, a missing one costs a full rescan.
+test('writeTags notes the write even when the save was skipped', async () => {
+  const { wasWrittenByUs } = await import('../src/lib/recentWrites.js');
+  await withCopiedFixture('tagged.mp3', async (file) => {
+    await writeTags(file, { title: 'Existing Title' }, { overwrite: true });
+    assert.equal(wasWrittenByUs(file), true);
+  });
+});

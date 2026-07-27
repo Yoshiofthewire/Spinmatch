@@ -53,6 +53,10 @@ export async function detectAlbumGaps(releaseGroupMbid, {
   const missing = [];
 
   const album = { mbid: releaseGroupMbid, title: release.title, artist: release.artist };
+  // Every missing entry carries its recordingMbid, including the ones no YouTube
+  // lookup was made for. It is what lets a per-row "find on YouTube" click
+  // persist its answer in verified_links rather than only caching it in memory —
+  // the unverified entries are precisely the rows that get clicked later.
   const record = (entry) => {
     missing.push(entry);
     onMissing?.(entry);
@@ -65,11 +69,11 @@ export async function detectAlbumGaps(releaseGroupMbid, {
       continue;
     }
     if (track.lengthMs == null) {
-      record({ position: track.position, title: track.title, lengthMs: null, status: 'no_length', video: null, deltaSeconds: null });
+      record({ position: track.position, title: track.title, lengthMs: null, recordingMbid: track.recordingMbid, status: 'no_length', video: null, deltaSeconds: null });
       continue;
     }
     if (!verify) {
-      record({ position: track.position, title: track.title, lengthMs: track.lengthMs, status: 'unchecked', video: null, deltaSeconds: null });
+      record({ position: track.position, title: track.title, lengthMs: track.lengthMs, recordingMbid: track.recordingMbid, status: 'unchecked', video: null, deltaSeconds: null });
       continue;
     }
     // verifyRecording rather than verifyTrack: this is the one place that knows
@@ -83,7 +87,7 @@ export async function detectAlbumGaps(releaseGroupMbid, {
       album: release.title,
       lengthMs: track.lengthMs,
     });
-    record({ position: track.position, title: track.title, lengthMs: track.lengthMs, ...verified });
+    record({ position: track.position, title: track.title, lengthMs: track.lengthMs, recordingMbid: track.recordingMbid, ...verified });
   }
 
   return { album, owned, missing };

@@ -2,6 +2,7 @@ import { Fragment, useEffect, useState } from 'react';
 import Pagination from '../Pagination.jsx';
 import EqualizerLoader from '../EqualizerLoader.jsx';
 import FixTrackPanel from './FixTrackPanel.jsx';
+import TagEditPanel from './TagEditPanel.jsx';
 import { getHealthTracks } from '../../api/library.js';
 
 const PAGE_SIZE = 50;
@@ -22,7 +23,8 @@ function IssueTracks({ issue, fixable, onFixed, onSelectAlbum, onPlay }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [page, setPage] = useState(1);
-  const [fixing, setFixing] = useState(null); // track being fixed
+  const [fixing, setFixing] = useState(null); // track being matched against MusicBrainz
+  const [editing, setEditing] = useState(null); // track being edited by hand
   const [fixed, setFixed] = useState({}); // trackId -> filled field list
   // Bumped after a repair to refetch the current page. A repaired track no
   // longer matches the issue it was listed under, so without this it sits in the
@@ -35,6 +37,7 @@ function IssueTracks({ issue, fixable, onFixed, onSelectAlbum, onPlay }) {
   useEffect(() => { setPage(1); }, [issue]);
   useEffect(() => {
     setFixing(null);
+    setEditing(null);
     setFixed({});
   }, [issue, page]);
 
@@ -54,6 +57,18 @@ function IssueTracks({ issue, fixable, onFixed, onSelectAlbum, onPlay }) {
       [fixing.id]: { fields: result.filledFields, overwritten: result.overwritten },
     }));
     setFixing(null);
+    setReloadToken((n) => n + 1);
+    onFixed();
+  }
+
+  // A hand edit reports the same way, so the row badge reads identically whether
+  // the values came from MusicBrainz or from the keyboard.
+  function handleEdited(result) {
+    setFixed((prev) => ({
+      ...prev,
+      [editing.id]: { fields: result.changedFields, overwritten: true },
+    }));
+    setEditing(null);
     setReloadToken((n) => n + 1);
     onFixed();
   }
@@ -115,9 +130,28 @@ function IssueTracks({ issue, fixable, onFixed, onSelectAlbum, onPlay }) {
                       <>
                         <button
                           type="button"
-                          onClick={() => setFixing(fixing?.id === track.id ? null : track)}
+                          onClick={() => {
+                            setEditing(null);
+                            setFixing(fixing?.id === track.id ? null : track);
+                          }}
                         >
                           {fixing?.id === track.id ? 'Close' : 'Fix tags'}
+                        </button>
+                        {/* The other way to answer "what is this file?", and often
+                            the faster one here. Every row in this tab is a file
+                            whose tags are missing, which is exactly what the
+                            MusicBrainz search above has nothing to search on — but
+                            you may well be able to read the answer off the sleeve
+                            or the folder and simply type it. */}
+                        <button
+                          type="button"
+                          className="chip-button"
+                          onClick={() => {
+                            setFixing(null);
+                            setEditing(editing?.id === track.id ? null : track);
+                          }}
+                        >
+                          {editing?.id === track.id ? 'Close' : 'Edit tags'}
                         </button>
                         {/* One file with an empty tag usually means the whole
                             folder has one, and repairing them one at a time is
@@ -147,6 +181,18 @@ function IssueTracks({ issue, fixable, onFixed, onSelectAlbum, onPlay }) {
                       track={fixing}
                       onFixed={handleFixed}
                       onCancel={() => setFixing(null)}
+                      onPlay={onPlay && ((t) => onPlay(t, data.tracks))}
+                    />
+                  </td>
+                </tr>
+              )}
+              {editing?.id === track.id && (
+                <tr className="track-row-panel">
+                  <td colSpan={fixable ? 5 : 4}>
+                    <TagEditPanel
+                      track={editing}
+                      onSaved={handleEdited}
+                      onCancel={() => setEditing(null)}
                       onPlay={onPlay && ((t) => onPlay(t, data.tracks))}
                     />
                   </td>
@@ -208,8 +254,10 @@ export default function HealthTab({
 
       {!active && (
         <p className="muted">
-          Pick a category to see the tracks behind it. Most can be repaired in place —
-          Spinmatch fills only the tags that are empty and never overwrites what you have.
+          Pick a category to see the tracks behind it. Most can be repaired in place, two ways:
+          <strong> Fix tags</strong> takes the values from MusicBrainz and fills only what is
+          empty, and <strong> Edit tags</strong> lets you type them yourself, over whatever is
+          there. Neither ever removes a tag, and neither moves or renames a file.
         </p>
       )}
 
@@ -218,8 +266,11 @@ export default function HealthTab({
           <h3>{active[1]}</h3>
           {active[2] ? (
             <p className="muted">
-              Matching a track fills its empty tags from MusicBrainz and re-indexes it.
-              The file is never moved or renamed, and existing tags are left alone.
+              <strong>Fix tags</strong> matches the track against MusicBrainz, fills its empty
+              tags and re-indexes it, leaving existing tags alone. <strong>Edit tags</strong>
+              {' '}writes what you type instead, replacing what is there — the one path where you
+              are the source of truth. A field you leave blank keeps its current value either
+              way, and the file is never moved or renamed.
             </p>
           ) : (
             <p className="muted">

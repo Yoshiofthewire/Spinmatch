@@ -1,3 +1,9 @@
+// The one import this module has. It is deliberately SQL-only otherwise, and the
+// bound below used to be redeclared here rather than shared, on the grounds that
+// importing it would close a cycle — true of the scanner, which imports this
+// file, but not of a constants-only leaf module that imports nothing itself.
+import { MAX_TRACK_NUMBER } from '../lib/tagLimits.js';
+
 export function upsertLocalTrack(db, {
   path, artist, album, title, durationMs, changeKey,
   trackNumber = null, disc = null, year = null, genre = null,
@@ -310,13 +316,20 @@ export function listTracks(db, {
 
 // Full tracklist of one album in playing order. Not paged: an album is small,
 // and the album view needs every position to spot the gaps.
+//
+// The artist clause matches getAlbumTracksForRepair's, and for the same reason:
+// SQL never matches NULL by equality, so `artist = ?` returned nothing at all for
+// an album whose files carry no artist tag — which listAlbums does group as its
+// own album, so the grid offered a row that opened onto an empty tracklist.
 export function getAlbumTracks(db, { artist, album }) {
+  const artistClause = artist == null ? 'artist IS NULL' : 'artist = ? COLLATE NOCASE';
+  const params = artist == null ? [album] : [artist, album];
   return db.prepare(`
     SELECT ${TRACK_COLUMNS}
     FROM local_tracks
-    WHERE removed = 0 AND artist = ? COLLATE NOCASE AND album = ? COLLATE NOCASE
+    WHERE removed = 0 AND ${artistClause} AND album = ? COLLATE NOCASE
     ORDER BY disc, track_number, title COLLATE NOCASE
-  `).all(artist, album);
+  `).all(...params);
 }
 
 // Whether this exact artist is in the collection under its own name. Used by
@@ -365,11 +378,6 @@ export function getTrackById(db, id) {
 // Library page, node:sqlite is synchronous, and a query per album meant a
 // thousand-album collection blocked the event loop a thousand times to open a
 // tab. The track numbers come back in one pass and are grouped here.
-// Matches the clamp in libraryScanner.rowFor. Kept as its own constant here
-// rather than imported: this module is deliberately SQL-only and importing the
-// scanner would close a cycle (the scanner imports this file).
-const MAX_TRACK_POSITION = 999;
-
 export function findIncompleteAlbums(db) {
   const albums = db.prepare(`
     SELECT artist, album,
@@ -408,7 +416,7 @@ export function findIncompleteAlbums(db) {
     // depend on an upstream guarantee: a row written before that clamp existed,
     // or by any future path that bypasses rowFor, would otherwise turn one bad
     // ID3 frame into a RangeError on the endpoint the Library page opens with.
-    const highest = Math.min(a.maxTrackNumber ?? 0, MAX_TRACK_POSITION);
+    const highest = Math.min(a.maxTrackNumber ?? 0, MAX_TRACK_NUMBER);
     for (let n = 1; n <= highest; n += 1) {
       if (!owned.has(n)) missingPositions.push(n);
     }

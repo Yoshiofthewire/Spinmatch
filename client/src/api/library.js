@@ -1,5 +1,5 @@
 // client/src/api/library.js
-import { get, post, del } from './client.js';
+import { get, post, patch, del } from './client.js';
 
 function qs(params) {
   const search = new URLSearchParams();
@@ -83,6 +83,28 @@ export function previewBulkFix({ artist, album, source }) {
 // what to write, so the browser never dictates tag values.
 export function applyBulkFix({ artist, album, source, trackIds }) {
   return post('/library/bulk-fix/apply', { artist, album, source, trackIds });
+}
+
+// Tag values typed by hand. Unlike applyFix and applyBulkFix above, these are the
+// two calls where the browser does say what to write.
+//
+// A field absent from `fields` is left alone, and so is a field sent blank —
+// editing overwrites, but never removes a tag.
+export function editTrackTags({ trackId, fields }) {
+  return patch(`/library/track/${trackId}/tags`, { fields });
+}
+
+// `fields` applies to every chosen track; `perTrack` carries the per-row fields
+// (title, track number) as `[{trackId, fields}]`. Omitting `trackIds` means every
+// track on the album.
+export function editAlbumTags({ artist, album, fields, perTrack, trackIds }) {
+  return post('/library/album/tags', { artist, album, fields, perTrack, trackIds });
+}
+
+// Names the track at one position of an album so a gap row can be looked up. One
+// MusicBrainz resolve; the YouTube half is VerifyButton's POST /verify.
+export function getMissingTrack({ artist, album, disc, position }) {
+  return get(`/library/missing-track${qs({ artist, album, disc, position })}`);
 }
 
 // Rescans only one artist's or album's folders. The library-wide scan is

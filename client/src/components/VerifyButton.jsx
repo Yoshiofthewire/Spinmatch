@@ -11,7 +11,12 @@ function StatusBadge({ status }) {
   return <span className="badge badge-none">No results</span>;
 }
 
-export default function VerifyButton({ artist, title, album, lengthMs }) {
+// `recordingMbid` is optional and only affects how long the answer is remembered:
+// with it the server persists the result in verified_links (30 days for a hit, 7
+// for a miss) instead of caching it in memory for an hour. Callers that know which
+// MusicBrainz recording they are asking about pass it; a free-text search result
+// has none to pass.
+export default function VerifyButton({ artist, title, album, lengthMs, recordingMbid }) {
   const [state, setState] = useState('idle'); // idle | loading | done | error
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
@@ -20,7 +25,7 @@ export default function VerifyButton({ artist, title, album, lengthMs }) {
     setState('loading');
     setError(null);
     try {
-      const res = await post('/verify', { artist, title, album, lengthMs });
+      const res = await post('/verify', { artist, title, album, lengthMs, recordingMbid });
       setResult(res);
       setState('done');
       if (res.video) addEntry({ track: title, artist, album, action: 'verified' });
