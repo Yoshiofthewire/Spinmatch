@@ -381,3 +381,29 @@ test('the health report still carries paths, because that is how you find the fi
   assert.ok(body.tracks.length > 0);
   assert.ok(body.tracks[0].path, 'a file with no tags is only identifiable by its path');
 });
+
+test('POST /api/library/track/:id/trash refuses an unknown track', async () => {
+  const res = await fetch(`${baseUrl}/api/library/track/9999/trash`, { method: 'POST', headers: { 'Sec-Fetch-Site': 'same-origin' } });
+  assert.equal(res.status, 404);
+});
+
+// The two seeded tracks have different titles, so neither is part of a
+// duplicate group and neither may be moved aside. That is the guard's whole
+// job, and asserting it here proves the route reaches it.
+test('POST /api/library/track/:id/trash refuses a track with no duplicate', async () => {
+  const { id } = db.prepare("SELECT id FROM local_tracks WHERE title = 'One'").get();
+  const res = await fetch(`${baseUrl}/api/library/track/${id}/trash`, { method: 'POST', headers: { 'Sec-Fetch-Site': 'same-origin' } });
+  assert.equal(res.status, 409);
+  assert.equal((await res.json()).error.code, 'CONFLICT');
+});
+
+test('POST /api/library/track/:id/restore refuses a track that is not in the trash', async () => {
+  const { id } = db.prepare("SELECT id FROM local_tracks WHERE title = 'One'").get();
+  const res = await fetch(`${baseUrl}/api/library/track/${id}/restore`, { method: 'POST', headers: { 'Sec-Fetch-Site': 'same-origin' } });
+  assert.equal(res.status, 404);
+});
+
+test('POST /api/library/track/:id/trash rejects a non-numeric id', async () => {
+  const res = await fetch(`${baseUrl}/api/library/track/abc/trash`, { method: 'POST', headers: { 'Sec-Fetch-Site': 'same-origin' } });
+  assert.equal(res.status, 400);
+});

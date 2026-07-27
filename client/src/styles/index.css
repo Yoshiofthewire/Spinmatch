@@ -1355,6 +1355,15 @@ a:hover {
   max-width: 28rem;
 }
 
+/* A copy that has been moved aside stays on screen rather than vanishing: a row
+   that disappears the instant it is clicked offers nothing to undo and no
+   confirmation of what happened. Dimmed rather than struck through — the path
+   in that row is the file's new home, not a dead link, and striking it out
+   would say the opposite of what happened. */
+.duplicate-copy-trashed {
+  opacity: 0.55;
+}
+
 .rescan-control {
   display: inline-flex;
   align-items: center;

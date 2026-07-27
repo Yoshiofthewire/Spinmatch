@@ -223,8 +223,19 @@ The Library page has eight tabs:
   also gets a play button, so you can compare them. The album is part of the match. A song on two
   different releases is therefore not a duplicate, and Spinmatch does not list it. An album track
   that is also on a compilation is the common example. What remains is real redundancy: a FLAC and a 128k MP3
-  of the same album track, or a directory copied twice. **Spinmatch never deletes a file.** This
-  view reports what you have and leaves the decision to you.
+  of the same album track, or a directory copied twice.
+
+  Each copy also gets a **Move aside** button. It moves that file into a `.spinmatch-trash` folder
+  inside your music folder, keeping the same artist and album layout, so
+  `Music/Nick Cave/Tender Prey/01 - The Mercy Seat.flac` becomes
+  `Music/.spinmatch-trash/Nick Cave/Tender Prey/01 - The Mercy Seat.flac`. **Spinmatch never deletes
+  a file.** The move frees no space, which is the point: you clean up now, check the folder later,
+  and delete it yourself when you are sure. Spinmatch has no button that empties the trash.
+
+  Spinmatch refuses to move aside the last copy of a track, so a group can never be emptied by
+  accident. An **Undo** appears next to a copy you have just moved and puts it straight back. Undo
+  is there while the page is open; after that, moving the file back by hand is easy, because the
+  trash mirrors your library.
 - **Discover** — the one view that looks outward. It shows artists and records connected to the ones
   that you own the most of, and it rebuilds a playlist. See below.
 

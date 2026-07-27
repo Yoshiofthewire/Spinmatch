@@ -13,6 +13,14 @@
 // locks and no protection, which is why every call site locks *after*
 // assertReadableInsideMusicDir has resolved the path.
 //
+// The key doesn't have to be a path. duplicateTrash.js locks a whole group of
+// duplicate copies against each other by passing a namespaced key built from
+// dup_key instead — otherwise two requests trashing two *different* copies of
+// the same track could both read "2 live copies" before either write lands,
+// and both proceed. A namespaced key (`dup:...`) can't collide with a
+// realpath: a resolved path is always absolute and so always starts with
+// `/`, which `dup:` does not.
+//
 // Not a filesystem lock: it holds within this process only. That covers every
 // writer the app has (the scan worker only reads), and a second process pointed
 // at the same library was never coordinated anyway.

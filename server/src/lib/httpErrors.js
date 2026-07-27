@@ -33,3 +33,15 @@ export class RateLimitedError extends Error {
     this.status = 429;
   }
 }
+
+// The request was understood and refused because of the state of things, not
+// because of anything wrong with the request. Used by the duplicate trash to
+// refuse moving aside a track's last live copy.
+export class ConflictError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'ConflictError';
+    this.code = 'CONFLICT';
+    this.status = 409;
+  }
+}
