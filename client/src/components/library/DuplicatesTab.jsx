@@ -25,8 +25,11 @@ export default function DuplicatesTab({ onPlay }) {
   // which rows are struck through, what each group's live count is, and which
   // rows can still be moved.
   const [trashed, setTrashed] = useState({});
-  // The row with a request in flight, so one click can't be double-fired.
-  const [busy, setBusy] = useState(null);
+  // trackId -> true while that row has a request in flight, so one click can't
+  // be double-fired. Keyed per row rather than a single value — a single value
+  // would un-busy row A the moment row B was clicked, letting a still-in-flight
+  // move-aside on A be re-fired.
+  const [busy, setBusy] = useState({});
   // Group key -> message. Per group rather than per page, so one group's failure
   // doesn't blank the rest of the list.
   const [groupErrors, setGroupErrors] = useState({});
@@ -43,14 +46,18 @@ export default function DuplicatesTab({ onPlay }) {
   const keyFor = (group) => `${group.artist}-${group.album}-${group.title}`;
 
   async function run(group, copy, action) {
-    setBusy(copy.id);
+    setBusy((prev) => ({ ...prev, [copy.id]: true }));
     setGroupErrors((prev) => ({ ...prev, [keyFor(group)]: null }));
     try {
       await action();
     } catch (err) {
       setGroupErrors((prev) => ({ ...prev, [keyFor(group)]: err.message }));
     } finally {
-      setBusy(null);
+      setBusy((prev) => {
+        const next = { ...prev };
+        delete next[copy.id];
+        return next;
+      });
     }
   }
 
@@ -137,7 +144,7 @@ export default function DuplicatesTab({ onPlay }) {
                               type="button"
                               className="link-button"
                               onClick={() => undo(group, copy)}
-                              disabled={busy === copy.id}
+                              disabled={Boolean(busy[copy.id])}
                             >
                               Undo
                             </button>
@@ -147,12 +154,12 @@ export default function DuplicatesTab({ onPlay }) {
                             type="button"
                             className="copy-button"
                             onClick={() => moveAside(group, copy)}
-                            disabled={busy === copy.id || liveCopies < 2}
+                            disabled={Boolean(busy[copy.id]) || liveCopies < 2}
                             title={liveCopies < 2
                               ? 'This is the only copy left — Spinmatch will not move it aside.'
                               : 'Move this copy into .spinmatch-trash'}
                           >
-                            {busy === copy.id ? 'Moving…' : 'Move aside'}
+                            {busy[copy.id] ? 'Moving…' : 'Move aside'}
                           </button>
                         )}
                       </td>
