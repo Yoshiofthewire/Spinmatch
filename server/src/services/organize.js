@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { config } from '../config.js';
 import { assertInsideMusicDir } from '../lib/paths.js';
+import { withSuffix, MAX_COLLISION_SUFFIX, moveOnto } from '../lib/moveFile.js';
 
 const UNSAFE_CHARS = /[/\\:*?"<>|\x00-\x1f]/g;
 const MAX_SEGMENT_LENGTH = 200;
@@ -53,27 +54,14 @@ async function filesAreIdentical(a, b) {
   return hashA === hashB;
 }
 
-function withSuffix(destPath, n) {
-  const ext = path.extname(destPath);
-  const base = destPath.slice(0, ext.length ? -ext.length : undefined);
-  return `${base} (${n})${ext}`;
-}
-
-// How many " (n)" suffixes to try before giving up. Bounded because the loop
-// that finds a free name is otherwise unbounded, and a directory that somehow
-// contains thousands of collisions is a fault to report, not to grind through.
-const MAX_COLLISION_SUFFIX = 999;
-
 // Claims `destPath` for `srcPath`, or reports that an identical file is already
 // there. Returns the path actually claimed (an empty file now exists at it), or
 // null for the duplicate case.
 //
-// The claim is what makes this safe. It used to test `fileExists(dest)` and then
-// `rename(src, dest)` two awaits later — and rename() overwrites silently, so
-// anything that appeared at that path in the gap (a concurrent ingest of the
-// same album from a second drop folder, a file manager, a sync client) was
-// destroyed with no error. `wx` fails if the path exists, which turns the race
-// into an EEXIST we retry rather than a deleted track.
+// The claim is what makes this safe; lib/moveFile.js explains the race it
+// closes. What is specific to ingest is the branch below: a colliding file with
+// identical bytes is a re-ingest of something the library already has, so the
+// source is left alone for review rather than filed a second time.
 async function claimDestination(srcPath, destPath) {
   for (let n = 1; n <= MAX_COLLISION_SUFFIX; n += 1) {
     const candidate = n === 1 ? destPath : withSuffix(destPath, n);
@@ -110,34 +98,7 @@ export async function moveIntoLibrary(srcPath, meta, ext) {
     return { movedTo: null, duplicate: true };
   }
 
-  try {
-    // rename() over our own zero-byte placeholder, which is exactly what we want
-    // it to replace — and nothing else can have taken the name in the meantime,
-    // because we are holding it.
-    await fs.rename(srcPath, dest);
-  } catch (err) {
-    if (err.code !== 'EXDEV') {
-      // Don't leave the placeholder behind as a 0-byte "track" for the scanner
-      // to index (it has an audio extension, so it would be indexed).
-      await fs.unlink(dest).catch(() => {});
-      throw err;
-    }
-    // Cross-device: copy through a temp name in the destination directory, then
-    // rename over the placeholder. The temp file is cleaned up on failure —
-    // previously a copy that died part-way (a full disk, which is the common
-    // cause of a cross-device copy failing) left a `.partial` file behind
-    // forever, invisible to the scanner and accumulating on every retry.
-    const partial = `${dest}.partial`;
-    try {
-      await fs.copyFile(srcPath, partial);
-      await fs.rename(partial, dest);
-      await fs.unlink(srcPath);
-    } catch (copyErr) {
-      await fs.unlink(partial).catch(() => {});
-      await fs.unlink(dest).catch(() => {});
-      throw copyErr;
-    }
-  }
+  await moveOnto(srcPath, dest);
 
   return { movedTo: dest, duplicate: false };
 }
