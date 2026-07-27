@@ -58,7 +58,12 @@ edited.
   track's identity in this app — `local_tracks` is keyed on it — so restoring is the same move with
   its two arguments swapped, and a person reading the folder in a file manager can act on it without
   instructions. Relative paths are unique within `MUSIC_DIR`, so collisions are near-impossible; the
-  residual case takes a ` (2)` suffix, the way ingest already handles it.
+  residual case is refused rather than suffixed, unlike ingest. Restore recomputes the mirrored path
+  fresh rather than remembering which name trash actually claimed, so a suffix here would break the
+  swapped-arguments symmetry the paragraph above depends on — Undo would recompute the *canonical*
+  mirror path, find some unrelated file sitting at it, and move that file's bytes into the library
+  instead of the ones that were trashed. Trash and restore have to be exact inverses or Undo cannot
+  be trusted, so the collision refuses instead.
 
   Rejected: dated batch folders (`.spinmatch-trash/2026-07-27/…`) and flattened mangled filenames.
   The first complicates restore to enable curation nobody asked for; the second makes
@@ -94,10 +99,13 @@ up both the partial and the placeholder on any failure. It is the subtle, alread
 it should exist once.
 
 - `moveOnto(src, claimedDest)` — the extracted logic, unchanged in behaviour.
-- `claimFreeName(destPath)` — opens `wx` to reserve a name, suffixing ` (2)`, ` (3)`… on `EEXIST`,
-  bounded like the ingest loop. Reserving before renaming is what stops a rename silently destroying
-  a file that appeared in the gap; see the comment at `organize.js:71-76` for the incident this
-  guards against.
+
+`duplicateTrash.js` does not use a shared "claim a free name" helper: both directions of the move
+reserve their destination with a plain `wx` open and refuse on `EEXIST` rather than suffixing, so
+trash and restore stay exact inverses of each other (see the `trashDuplicate` and `restoreDuplicate`
+steps below). Reserving before renaming is still what stops a rename silently destroying a file that
+appeared in the gap; see the comment at `organize.js:71-76` for the incident this guards against —
+`claimDestination` there keeps its own suffixing loop for ingest's different policy.
 
 `claimDestination` stays in `organize.js`. Its "an identical file is already there, so leave the
 source alone" behaviour is an ingest idea and would be wrong here: a user who clicks *Move aside*
@@ -126,22 +134,23 @@ No behavioural change; `organize.test.js` passing unchanged is the regression pr
   3. `assertReadableInsideMusicDir(track.path)` → `real`. Symlink-safe containment, the same guard
      the cover, stream and repair routes use.
   4. `dest = trashPathFor(real)`, then `assertInsideMusicDir(dest)` as defence in depth.
-  5. `mkdir` the destination directory, `claimFreeName(dest)`.
+  5. `mkdir` the destination directory, then claim `dest` exactly with `fs.open(dest, 'wx')`. On
+     `EEXIST`, `ConflictError` — the trash already holds a file at the mirrored path, and the
+     occupant is not necessarily this track's own history, so it is refused rather than suffixed
+     aside. See `restoreDuplicate` below for why: a suffix here is a promise this feature can't keep.
   6. `withFileLock(real, …)` around `moveOnto`. A tag write and a move racing on one file is the
      collision that matters, and `tagEdit` and `libraryBulkFix` already take that lock.
-  7. `noteWrite(real)` so the recursive `fs.watch` does not debounce a full library rescan out of the
-     app's own move. `recentWrites` is keyed on basename and the mirror preserves the basename, so
-     one call covers both the disappearance and the appearance — the suffixed-collision case notes
-     both names.
+  7. `noteWrite(real)` and `noteWrite(dest)` so the recursive `fs.watch` does not debounce a full
+     library rescan out of the app's own move.
   8. `reindexFile(real)` — it stats, finds nothing, and marks the row removed inside a transaction
      with `recomputeStats`. Exactly the path `libraryScanner.js:249-256` was written for; no new
      index code.
   9. Returns `{ trackId, trashedPath, remainingCopies }`, where `remainingCopies` is the live count
-     *after* the move, so the client can render the group header without a refetch. The path
-     returned is the one actually claimed, which differs from the derived one in the suffixed
-     case. The absolute path is returned
-     rather than logged, unlike elsewhere in the app: this view already shows full paths by design,
-     and the user is going to go and look at that folder.
+     *after* the move, so the client can render the group header without a refetch. `trashedPath` is
+     always the mirrored path exactly — never a suffixed one — which is what makes `restoreDuplicate`
+     able to derive it back from `track.path` alone. The absolute path is returned rather than
+     logged, unlike elsewhere in the app: this view already shows full paths by design, and the user
+     is going to go and look at that folder.
 - `restoreDuplicate({ trackId, db })`: `getRemovedTrackById` → derive the trash path from the stored
   original path → claim the original path **exactly** (plain `wx`, no suffixing) → `moveOnto` back →
   `noteWrite` → `reindexFile(original)`, which re-reads the tags and restores the row. If the
@@ -236,11 +245,14 @@ trick `libraryFix.test.js:32` already uses so no real audio file is needed.
 2. Refuses the last live copy, and the file is still where it was afterwards. This is the
    requirement, stated directly.
 3. Refuses a path outside `MUSIC_DIR`.
-4. A name collision in the trash takes a ` (2)` suffix instead of overwriting.
+4. A name collision in the trash is refused (409), not suffixed or overwritten; the file stays in
+   the library and the older trashed file is untouched.
 5. Undo puts the file back at its original path and re-indexes the row.
 6. Undo refuses when something occupies the original path, and the trash copy is still there.
-7. A failed move leaves the index untouched — no phantom removed row.
-8. `.spinmatch-trash` is invisible to a scan. This pins the dot-skip in `walk()` as something the
+7. Undo returns the exact bytes that were trashed — the property the refuse-don't-suffix rule in
+   step 4 exists to guarantee.
+8. A failed move leaves the index untouched — no phantom removed row.
+9. `.spinmatch-trash` is invisible to a scan. This pins the dot-skip in `walk()` as something the
    feature now *depends* on rather than incidentally benefits from.
 
 `server/test/routes/library.test.js` gains coverage of the two endpoints' status codes, including

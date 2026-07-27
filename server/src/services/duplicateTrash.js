@@ -8,7 +8,7 @@ import {
 import { reindexFile } from './libraryScanner.js';
 import { assertInsideMusicDir, assertReadableInsideMusicDir } from '../lib/paths.js';
 import { withFileLock } from '../lib/fileLock.js';
-import { claimFreeName, moveOnto } from '../lib/moveFile.js';
+import { moveOnto } from '../lib/moveFile.js';
 import { noteWrite } from '../lib/recentWrites.js';
 import { NotFoundError, BadRequestError, ConflictError } from '../lib/httpErrors.js';
 
@@ -108,19 +108,38 @@ async function trashLockedCopy({ trackId, db }) {
 
   try {
     await fs.mkdir(path.dirname(dest), { recursive: true });
-    const claimed = await claimFreeName(dest);
+
+    // Claimed exactly, not suffixed. A suffix used to be offered here when the
+    // mirrored path was already occupied, but that occupant is not necessarily
+    // this track's own history — it can be an unrelated file, and restoring
+    // later recomputes the *canonical* mirror path rather than remembering
+    // which suffix was claimed. That combination silently moved the wrong
+    // bytes into the library on Undo, with no error, and no scan ever catches
+    // it. Refusing instead of suffixing makes trash and restore exact
+    // inverses, which is the property that makes Undo trustworthy at all.
+    let handle;
+    try {
+      handle = await fs.open(dest, 'wx');
+    } catch (err) {
+      if (err.code === 'EEXIST') {
+        console.warn(`duplicateTrash: ${dest} already exists, refusing to trash over it`);
+        throw new ConflictError('The trash already holds a file at that path. Restore or remove it first.');
+      }
+      throw err;
+    }
+    await handle.close();
 
     // Locked on the resolved path too, so this queues behind (and ahead of) a
     // tag write to the same file rather than racing it — see lib/fileLock.js.
     // A different key from the dup_key lock this function is already running
     // inside: that one is per group, this one is per file, and both apply.
-    await withFileLock(real, () => moveOnto(real, claimed));
+    await withFileLock(real, () => moveOnto(real, dest));
 
     // Both ends of the move, so the recursive MUSIC_DIR watcher doesn't debounce
     // a full library rescan out of work the app just did itself. recentWrites is
     // keyed on basename, so these usually collapse into one entry.
     noteWrite(real);
-    noteWrite(claimed);
+    noteWrite(dest);
 
     // Stats the (now absent) file, marks the row removed and recomputes stats,
     // all in one transaction — libraryScanner.js:249 was written for exactly
@@ -132,7 +151,7 @@ async function trashLockedCopy({ trackId, db }) {
     // scan, which finds the path gone and marks the row removed itself.
     await reindexFile(real);
 
-    return { trackId, trashedPath: claimed, remainingCopies: copies - 1 };
+    return { trackId, trashedPath: dest, remainingCopies: copies - 1 };
   } catch (err) {
     throw asMoveError(err, real);
   }
@@ -161,7 +180,8 @@ export async function restoreDuplicate({ trackId, db = getDb() }) {
     // The album directory may have been tidied away while the copy was aside.
     await fs.mkdir(path.dirname(original), { recursive: true });
 
-    // Claimed exactly, unlike the move out: claimFreeName would restore to
+    // Claimed exactly, the same way the move out now claims its trash slot
+    // exactly (see trashLockedCopy): suffixing here would restore to
     // "Title (2).flac" when something occupies the original name, quietly
     // manufacturing a new duplicate — a comic outcome for this feature. Refusing
     // leaves the copy in the trash, where the user can still get at it.

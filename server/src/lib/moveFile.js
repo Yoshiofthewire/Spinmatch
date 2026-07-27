@@ -18,34 +18,6 @@ export function withSuffix(destPath, n) {
   return `${base} (${n})${ext}`;
 }
 
-// Reserves a name at (or beside) destPath by creating an empty file at it, and
-// returns the path actually claimed.
-//
-// Creating the file is the whole point. A check-then-rename leaves a window in
-// which something else can take the name — a concurrent ingest, a file manager,
-// a sync client — and rename() overwrites silently, so whatever arrived in that
-// window is destroyed with no error. `wx` fails if the path exists, which turns
-// the race into an EEXIST to retry rather than a deleted track.
-//
-// organize.js deliberately does NOT use this: ingest wants to compare a
-// colliding file's bytes and report a re-ingest, which is an ingest policy
-// rather than a property of claiming a name.
-export async function claimFreeName(destPath) {
-  for (let n = 1; n <= MAX_COLLISION_SUFFIX; n += 1) {
-    const candidate = n === 1 ? destPath : withSuffix(destPath, n);
-    let handle;
-    try {
-      handle = await fs.open(candidate, 'wx');
-    } catch (err) {
-      if (err.code !== 'EEXIST') throw err;
-      continue;
-    }
-    await handle.close();
-    return candidate;
-  }
-  throw new Error(`could not find a free filename for ${path.basename(destPath)} after ${MAX_COLLISION_SUFFIX} attempts`);
-}
-
 // Moves src onto claimedDest, which the caller has already reserved. The rename
 // therefore overwrites our own placeholder, and nothing else can have taken the
 // name in the meantime, because we are holding it.

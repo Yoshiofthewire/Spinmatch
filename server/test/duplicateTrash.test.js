@@ -150,16 +150,24 @@ test('two concurrent requests for the two copies of one track: exactly one succe
   assert.equal(live, 1, 'one live copy remains — the track has not silently lost all of its copies');
 });
 
-test('a name already taken in the trash is suffixed, never overwritten', async () => {
+// Trash used to suffix onto "a (2).flac" here, but restore recomputes the
+// *canonical* mirror path rather than remembering which suffix was claimed —
+// so a later Undo would silently move whatever unrelated file was sitting at
+// the canonical path into the library, and leave the genuine trashed copy
+// unreachable under its suffix forever. Refusing keeps trash and restore
+// exact inverses.
+test('refuses when the trash already holds a file at the mirrored path', async () => {
   const db = freshDb();
   const [first] = await seedTwoCopies(db);
   const taken = path.join(musicDir, TRASH_DIR_NAME, 'A', 'Al', 'a.flac');
   await fs.mkdir(path.dirname(taken), { recursive: true });
   await fs.writeFile(taken, 'an older trashed file');
 
-  const { trashedPath } = await trashDuplicate({ trackId: first.id, db });
-
-  assert.equal(trashedPath, path.join(musicDir, TRASH_DIR_NAME, 'A', 'Al', 'a (2).flac'));
+  await assert.rejects(
+    trashDuplicate({ trackId: first.id, db }),
+    (err) => err.status === 409,
+  );
+  assert.ok(fsSync.existsSync(first.path), 'the file stays in the library');
   assert.equal(await fs.readFile(taken, 'utf8'), 'an older trashed file', 'the older one survived');
 });
 
@@ -209,6 +217,20 @@ test('undo puts the file back where it was and returns it to the live index', as
   assert.ok(fsSync.existsSync(first.path), 'the file is back in the library');
   assert.ok(!fsSync.existsSync(trashedPath), 'and gone from the trash');
   assert.ok(repo.getTrackById(db, first.id), 'the row is live again');
+});
+
+// The property the refuse-don't-suffix ruling exists to guarantee: what comes
+// back out is what went in, not some other file that happened to be sitting
+// at the mirrored path.
+test('undo returns the exact bytes that were trashed', async () => {
+  const db = freshDb();
+  const [first] = await seedTwoCopies(db);
+  const original = await fs.readFile(first.path, 'utf8');
+
+  await trashDuplicate({ trackId: first.id, db });
+  await restoreDuplicate({ trackId: first.id, db });
+
+  assert.equal(await fs.readFile(first.path, 'utf8'), original);
 });
 
 test('undo refuses when something else now occupies the original path', async () => {
