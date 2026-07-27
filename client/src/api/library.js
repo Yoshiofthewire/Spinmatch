@@ -56,6 +56,17 @@ export function getDuplicates() {
   return get('/library/duplicates');
 }
 
+// Moves one copy of a duplicated track into MUSIC_DIR/.spinmatch-trash. Nothing
+// is deleted — the file keeps its library layout under the trash folder, and
+// restoreDuplicate below moves it back.
+export function trashDuplicate(trackId) {
+  return post(`/library/track/${trackId}/trash`, {});
+}
+
+export function restoreDuplicate(trackId) {
+  return post(`/library/track/${trackId}/restore`, {});
+}
+
 export function getFixCandidates(trackId) {
   return get(`/library/fix-candidates/${trackId}`);
 }
