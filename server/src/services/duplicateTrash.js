@@ -23,6 +23,24 @@ import { NotFoundError, BadRequestError, ConflictError } from '../lib/httpErrors
 // The dot prefix is load-bearing. walk() in libraryScanner.js skips dot-prefixed
 // entries, which is the only reason a trashed file leaves the index and stays
 // out of it; there is no exclusion list to keep in sync.
+//
+// walk() and the recursive fs.watch in librarySync.js are not symmetric about
+// the trash, though, and that has a few visible consequences. noteWrite below
+// suppresses the two events this module's own moves generate, but it can't
+// suppress everything the trash directory does to the watcher:
+//   - mkdir -p of a new trash album folder (moving aside the first duplicate
+//     under an artist/album not already mirrored) fires a directory-basename
+//     event noteWrite never sees, which debounces one full library scan.
+//   - the "delete the folder yourself" cleanup this feature's help text
+//     recommends fires a burst of delete events for the same reason, and
+//     triggers another.
+//   - each mirrored trash directory is one more inotify watch on Linux, on top
+//     of every real library directory — see librarySync.js's ENOSPC handling,
+//     which already treats running out of watches as a live failure mode this
+//     adds a little more pressure toward.
+// None of this is wrong, and none of it is worth working around: an extra scan
+// is idle cost, not a correctness problem, since walk() still skips the trash
+// on the way back in.
 export const TRASH_DIR_NAME = '.spinmatch-trash';
 
 /**
@@ -31,13 +49,21 @@ export const TRASH_DIR_NAME = '.spinmatch-trash';
  * Resolved lexically rather than through realpath, matching assertInsideMusicDir
  * and reindexFile — the two functions this flow actually calls — rather than
  * assertReadableInsideMusicDir. If MUSIC_DIR ever is a symlink, the relative
- * part below starts with "..", the result escapes the root, and the caller's
- * assertInsideMusicDir turns that into a 400 instead of a write outside the
- * library.
+ * part below can start with "..", and that has to be rejected *here*, before
+ * the join: `path.join(root, TRASH_DIR_NAME, rel)` normalizes a single ".."
+ * straight back out again — the exact case a symlinked MUSIC_DIR produces
+ * whenever it shares a parent with its target, or the root is one path
+ * component — so the caller's assertInsideMusicDir would see a path back
+ * inside the root and wave it through, and the file would land inside the
+ * library with no dot prefix instead of in the trash.
  */
 export function trashPathFor(filePath) {
   const root = path.resolve(config.ingest.musicDir);
-  return path.join(root, TRASH_DIR_NAME, path.relative(root, filePath));
+  const rel = path.relative(root, filePath);
+  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) {
+    throw new BadRequestError('Refusing to write outside the music folder');
+  }
+  return path.join(root, TRASH_DIR_NAME, rel);
 }
 
 // The filesystem failures worth naming for the person who clicked the button.
@@ -70,7 +96,7 @@ function asMoveError(err, filePath) {
 /**
  * Moves one copy of a duplicated track into the trash folder.
  *
- * @returns {Promise<{trackId: number, trashedPath: string, remainingCopies: number}>}
+ * @returns {Promise<{trackId: number, trashedPath: string}>}
  */
 export async function trashDuplicate({ trackId, db = getDb() }) {
   // Serialized per dup_key, not per file. Without this, two requests trashing
@@ -151,7 +177,7 @@ async function trashLockedCopy({ trackId, db }) {
     // scan, which finds the path gone and marks the row removed itself.
     await reindexFile(real);
 
-    return { trackId, trashedPath: dest, remainingCopies: copies - 1 };
+    return { trackId, trashedPath: dest };
   } catch (err) {
     throw asMoveError(err, real);
   }
@@ -159,6 +185,18 @@ async function trashLockedCopy({ trackId, db }) {
 
 /**
  * Puts a moved-aside copy back where it came from.
+ *
+ * Its real contract is broader than "undo a move-aside": it restores *any*
+ * `removed = 1` row with an id, not only ones this feature trashed — nothing
+ * here checks that the row was ever under TRASH_DIR_NAME. It happens to fail
+ * cleanly for rows removed some other way (a file the scanner found gone, or
+ * one from a `markRemovedByPath` call elsewhere): `trashPathFor(track.path)`
+ * derives a location under `.spinmatch-trash` that nothing put a file at, so
+ * `moveOnto` throws ENOENT on the source and `asMoveError` turns that into a
+ * plain "The file is no longer there." 400 rather than moving anything. That
+ * is not a designed guard, just where the existing code paths land — worth
+ * knowing before a future Trash view calls this on rows it did not verify are
+ * actually in the trash.
  *
  * Session-scoped in practice: the Duplicates view fetches live rows only, so a
  * reloaded page has no trashed row to offer an Undo for, and purgeRemoved

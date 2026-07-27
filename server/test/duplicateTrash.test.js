@@ -74,6 +74,21 @@ test('trashPathFor mirrors the library layout under the trash folder', () => {
   );
 });
 
+// A single ".." is exactly what a symlinked MUSIC_DIR produces whenever it
+// shares a parent with its target (/data/music -> /data/music-real) or the
+// root is one path component (/music -> /mnt/music) — both ordinary
+// self-hosted setups. path.join would otherwise normalize that ".." straight
+// back inside the root: path.join('/data/music', '.spinmatch-trash',
+// '../music-real/A/x.flac') === '/data/music/music-real/A/x.flac', which
+// passes assertInsideMusicDir and lands the file inside the library with no
+// dot prefix instead of in the trash. trashPathFor has to refuse before the
+// join, not rely on the caller's containment check to catch it after.
+test('trashPathFor refuses a path that resolves outside the lexical root, rather than folding it back inside', () => {
+  configModule.config.ingest.musicDir = musicDir;
+  const sibling = path.join(path.dirname(musicDir), 'music-real', 'A', 'x.flac');
+  assert.throws(() => trashPathFor(sibling), (err) => err.status === 400);
+});
+
 test('moves the file to its mirrored path and marks the row removed', async () => {
   const db = freshDb();
   const [first] = await seedTwoCopies(db);
@@ -81,7 +96,6 @@ test('moves the file to its mirrored path and marks the row removed', async () =
   const result = await trashDuplicate({ trackId: first.id, db });
 
   assert.equal(result.trashedPath, path.join(musicDir, TRASH_DIR_NAME, 'A', 'Al', 'a.flac'));
-  assert.equal(result.remainingCopies, 1);
   assert.ok(fsSync.existsSync(result.trashedPath), 'the file is in the trash');
   assert.ok(!fsSync.existsSync(first.path), 'and no longer in the library');
   assert.equal(repo.getTrackById(db, first.id), null, 'the row has left the live index');
@@ -187,6 +201,7 @@ test('a failed move leaves the index untouched', async (t) => {
   await assert.rejects(trashDuplicate({ trackId: first.id, db }));
   assert.ok(repo.getTrackById(db, first.id), 'the row is still live');
   assert.equal(repo.getRemovedTrackById(db, first.id), null);
+  assert.ok(fsSync.existsSync(first.path), 'and the file is still in the library');
 });
 
 // The dot prefix is the only thing keeping the trash out of the index, so this

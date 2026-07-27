@@ -145,12 +145,15 @@ No behavioural change; `organize.test.js` passing unchanged is the regression pr
   8. `reindexFile(real)` — it stats, finds nothing, and marks the row removed inside a transaction
      with `recomputeStats`. Exactly the path `libraryScanner.js:249-256` was written for; no new
      index code.
-  9. Returns `{ trackId, trashedPath, remainingCopies }`, where `remainingCopies` is the live count
-     *after* the move, so the client can render the group header without a refetch. `trashedPath` is
-     always the mirrored path exactly — never a suffixed one — which is what makes `restoreDuplicate`
-     able to derive it back from `track.path` alone. The absolute path is returned rather than
-     logged, unlike elsewhere in the app: this view already shows full paths by design, and the user
-     is going to go and look at that folder.
+  9. Returns `{ trackId, trashedPath }`. `trashedPath` is always the mirrored path exactly — never a
+     suffixed one — which is what makes `restoreDuplicate` able to derive it back from `track.path`
+     alone. The absolute path is returned rather than logged, unlike elsewhere in the app: this view
+     already shows full paths by design, and the user is going to go and look at that folder.
+
+     An earlier revision also returned `remainingCopies`, the live count after the move, so the
+     client could render the group header without a refetch. It was dropped: the client already
+     derives that count from its own local `trashed` state (`DuplicatesTab.jsx`'s `liveCopies`), so
+     the field was computed on every request and never read.
 - `restoreDuplicate({ trackId, db })`: `getRemovedTrackById` → derive the trash path from the stored
   original path → claim the original path **exactly** (plain `wx`, no suffixing) → `moveOnto` back →
   `noteWrite` → `reindexFile(original)`, which re-reads the tags and restores the row. If the
@@ -210,10 +213,13 @@ about its own operation, beat one shared table that is wrong for half its caller
 ### `client/src/components/library/DuplicatesTab.jsx`
 
 - A **Move aside** button in a new last column of each copy's row.
-- On success the row stays, struck through, reading *Moved to `.spinmatch-trash/…`* with an **Undo**
-  beside it. It does not vanish: a row that disappears the instant it is clicked offers nothing to
-  undo and no confirmation of what happened. Its play button is disabled — the file is no longer at
-  that path.
+- On success the row stays, dimmed (`opacity: 0.55` via `.duplicate-copy-trashed`), with its path
+  cell now showing the trash location and an **Undo** beside it. It does not vanish: a row that
+  disappears the instant it is clicked offers nothing to undo and no confirmation of what happened.
+  Its play button is disabled — the file is no longer at that path.
+
+  Dimmed rather than struck through: the path shown in that row is the file's live new home, not a
+  dead link, and a strikethrough would say the opposite of what happened.
 - The group header count drops (`3 copies` → `2 copies`). When one live copy remains, its button is
   disabled with a title explaining why — the client mirroring the server guard, not substituting
   for it.
