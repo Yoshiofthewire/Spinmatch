@@ -2,7 +2,9 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { config } from '../config.js';
 import { getDb } from '../lib/db.js';
-import { getTrackById, getDupKeyForTrack, liveCopyCountForTrack } from './libraryRepo.js';
+import {
+  getTrackById, getRemovedTrackById, getDupKeyForTrack, liveCopyCountForTrack,
+} from './libraryRepo.js';
 import { reindexFile } from './libraryScanner.js';
 import { assertInsideMusicDir, assertReadableInsideMusicDir } from '../lib/paths.js';
 import { withFileLock } from '../lib/fileLock.js';
@@ -133,5 +135,54 @@ async function trashLockedCopy({ trackId, db }) {
     return { trackId, trashedPath: claimed, remainingCopies: copies - 1 };
   } catch (err) {
     throw asMoveError(err, real);
+  }
+}
+
+/**
+ * Puts a moved-aside copy back where it came from.
+ *
+ * Session-scoped in practice: the Duplicates view fetches live rows only, so a
+ * reloaded page has no trashed row to offer an Undo for, and purgeRemoved
+ * eventually deletes the row this looks up. Recovering after that is a move in a
+ * file manager, which the mirrored layout makes obvious.
+ *
+ * @returns {Promise<{trackId: number, restoredPath: string, track: object}>}
+ */
+export async function restoreDuplicate({ trackId, db = getDb() }) {
+  const track = getRemovedTrackById(db, trackId);
+  if (!track) throw new NotFoundError('That track is not in the trash');
+
+  // Lexical rather than symlink-safe: the file is not at this path any more, so
+  // there is nothing to realpath. trashPathFor resolves the same way.
+  const original = assertInsideMusicDir(track.path);
+  const source = assertInsideMusicDir(trashPathFor(original));
+
+  try {
+    // The album directory may have been tidied away while the copy was aside.
+    await fs.mkdir(path.dirname(original), { recursive: true });
+
+    // Claimed exactly, unlike the move out: claimFreeName would restore to
+    // "Title (2).flac" when something occupies the original name, quietly
+    // manufacturing a new duplicate — a comic outcome for this feature. Refusing
+    // leaves the copy in the trash, where the user can still get at it.
+    let handle;
+    try {
+      handle = await fs.open(original, 'wx');
+    } catch (err) {
+      if (err.code === 'EEXIST') {
+        throw new ConflictError('Something is already at that path, so the copy has been left in the trash.');
+      }
+      throw err;
+    }
+    await handle.close();
+
+    await withFileLock(original, () => moveOnto(source, original));
+    noteWrite(original);
+    noteWrite(source);
+    await reindexFile(original);
+
+    return { trackId, restoredPath: original, track: getTrackById(db, trackId) };
+  } catch (err) {
+    throw asMoveError(err, original);
   }
 }

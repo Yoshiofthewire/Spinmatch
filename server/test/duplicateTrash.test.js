@@ -31,7 +31,7 @@ mock.module('../src/services/tags.js', {
   },
 });
 
-const { trashDuplicate, trashPathFor, TRASH_DIR_NAME } = await import('../src/services/duplicateTrash.js');
+const { trashDuplicate, restoreDuplicate, trashPathFor, TRASH_DIR_NAME } = await import('../src/services/duplicateTrash.js');
 
 // Two copies of one track, both as real (empty) files, both indexed. Returns
 // their ids in path order.
@@ -196,4 +196,48 @@ test('the trash folder is invisible to a library scan', async () => {
     !paths.some((p) => p.includes(TRASH_DIR_NAME)),
     `a trashed file was indexed: ${paths.join(', ')}`,
   );
+});
+
+test('undo puts the file back where it was and returns it to the live index', async () => {
+  const db = freshDb();
+  const [first] = await seedTwoCopies(db);
+  const { trashedPath } = await trashDuplicate({ trackId: first.id, db });
+
+  const result = await restoreDuplicate({ trackId: first.id, db });
+
+  assert.equal(result.restoredPath, first.path);
+  assert.ok(fsSync.existsSync(first.path), 'the file is back in the library');
+  assert.ok(!fsSync.existsSync(trashedPath), 'and gone from the trash');
+  assert.ok(repo.getTrackById(db, first.id), 'the row is live again');
+});
+
+test('undo refuses when something else now occupies the original path', async () => {
+  const db = freshDb();
+  const [first] = await seedTwoCopies(db);
+  const { trashedPath } = await trashDuplicate({ trackId: first.id, db });
+  await fs.writeFile(first.path, 'something else entirely');
+
+  await assert.rejects(
+    restoreDuplicate({ trackId: first.id, db }),
+    (err) => err.status === 409,
+  );
+  assert.equal(await fs.readFile(first.path, 'utf8'), 'something else entirely', 'untouched');
+  assert.ok(fsSync.existsSync(trashedPath), 'the trashed copy is still in the trash');
+});
+
+test('undo refuses a track that is not in the trash', async () => {
+  const db = freshDb();
+  const [first] = await seedTwoCopies(db);
+  await assert.rejects(restoreDuplicate({ trackId: first.id, db }), (err) => err.status === 404);
+});
+
+test('undo recreates the album directory if it was cleaned up in the meantime', async () => {
+  const db = freshDb();
+  const [first] = await seedTwoCopies(db, { names: ['only.flac', 'other.mp3'] });
+  await trashDuplicate({ trackId: first.id, db });
+  // The user tidied up the now-emptier library by hand.
+  await fs.rm(path.dirname(first.path), { recursive: true, force: true });
+
+  await restoreDuplicate({ trackId: first.id, db });
+  assert.ok(fsSync.existsSync(first.path));
 });
