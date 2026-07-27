@@ -14,6 +14,7 @@ import {
 import { getFixCandidates, getFingerprintCandidates, applyFix } from '../services/libraryFix.js';
 import { previewBulkFix, applyBulkFix, MAX_BULK_FIX } from '../services/libraryBulkFix.js';
 import { editTrackTags, editAlbumTags } from '../services/tagEdit.js';
+import { trashDuplicate, restoreDuplicate } from '../services/duplicateTrash.js';
 import {
   getSimilarArtists, getRecommendations, reconstructPlaylist,
 } from '../services/libraryDiscovery.js';
@@ -481,6 +482,29 @@ libraryRouter.post('/album/tags', async (req, res, next) => {
       perTrack,
       trackIds,
     }));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Moving a duplicate aside, and taking that back. Deliberately not DELETE:
+// nothing is deleted, and naming the method after the thing this app refuses to
+// do would be the wrong word in the wrong place.
+libraryRouter.post('/track/:id/trash', async (req, res, next) => {
+  try {
+    const trackId = Number(req.params.id);
+    if (!trackId) throw new BadRequestError('a track id is required');
+    res.json(await trashDuplicate({ trackId }));
+  } catch (err) {
+    next(err);
+  }
+});
+
+libraryRouter.post('/track/:id/restore', async (req, res, next) => {
+  try {
+    const trackId = Number(req.params.id);
+    if (!trackId) throw new BadRequestError('a track id is required');
+    res.json(await restoreDuplicate({ trackId }));
   } catch (err) {
     next(err);
   }
