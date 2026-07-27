@@ -117,14 +117,18 @@ export default function LibraryPage() {
 
   // Every move within the page is a push onto the history stack, so Back undoes
   // exactly one step of it: album → artist → tab.
-  function go({ tab: nextTab = tab, artist = null, album = null }) {
+  //
+  // `replace` is for the one move that isn't navigation: renaming the album you
+  // are looking at. Pushing there would leave a history entry pointing at a name
+  // that no longer resolves, so Back would land on an empty tracklist.
+  function go({ tab: nextTab = tab, artist = null, album = null, replace = false }) {
     const next = { tab: nextTab };
     if (artist) next.artist = artist;
     if (album) {
       next.album = album.album;
       if (album.artist) next.albumArtist = album.artist;
     }
-    setParams(next);
+    setParams(next, { replace });
   }
 
   function openArtist(artist) {
@@ -134,6 +138,25 @@ export default function LibraryPage() {
   function openAlbum(album) {
     setAlbumMeta(album);
     go({ artist: selectedArtist, album });
+  }
+
+  // An album's identity in this app is its (artist, album) string pair — there is
+  // no album table and no album id. So renaming either one doesn't edit the album
+  // being viewed, it makes the album being viewed cease to exist: ?album= still
+  // names the old title, getAlbumTracks matches nothing, and the page reads as
+  // "the album vanished". Following the rename is what keeps that from happening.
+  function albumRenamed(next) {
+    const moved = { ...selectedAlbum, ...next };
+    setAlbumMeta(moved);
+    go({
+      // The artist crumb has to move too when the drill-down came from the very
+      // artist that was just renamed, or Back goes to an artist page with nothing
+      // on it.
+      artist: selectedArtist && selectedArtist === selectedAlbum.artist ? next.artist : selectedArtist,
+      album: moved,
+      replace: true,
+    });
+    refresh();
   }
 
   function clearSelection() {
@@ -197,6 +220,7 @@ export default function LibraryPage() {
               onPlay={(track, queue) => setPlaying({ track, queue })}
               onSelectArtist={openArtist}
               onLibraryChanged={refresh}
+              onAlbumRenamed={albumRenamed}
             />
           ) : selectedArtist ? (
             <ArtistDetail

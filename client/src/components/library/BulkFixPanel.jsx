@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import EqualizerLoader from '../EqualizerLoader.jsx';
+import WriteResultBanner from './WriteResultBanner.jsx';
 import { previewBulkFix, applyBulkFix } from '../../api/library.js';
 
 // Repairs a whole album's tags in one pass.
@@ -118,30 +119,7 @@ export default function BulkFixPanel({ artist, album, onApplied }) {
         </>
       )}
 
-      {state === 'done' && result && (
-        <>
-          <p className="banner banner-success">
-            {result.applied.length === 0
-              ? 'Nothing needed changing.'
-              : `Repaired ${result.applied.length} file${result.applied.length === 1 ? '' : 's'}.`}
-          </p>
-          {/* A run no longer stops at the first unwritable file, so the ones it
-              couldn't do have to be said out loud — otherwise "Repaired 12
-              files" out of 14 selected reads as complete success. */}
-          {result.failed?.length > 0 && (
-            <div className="banner banner-error">
-              <p>
-                {`${result.failed.length} file${result.failed.length === 1 ? '' : 's'} could not be written:`}
-              </p>
-              <ul>
-                {result.failed.map((f) => (
-                  <li key={f.trackId} className="mono">{f.message}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </>
-      )}
+      {state === 'done' && result && <WriteResultBanner result={result} verb="Repaired" />}
 
       {(state === 'ready' || state === 'applying' || state === 'done') && preview && (
         preview.unresolved ? (

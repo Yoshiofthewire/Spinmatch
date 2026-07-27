@@ -1,20 +1,35 @@
 import { Router } from 'express';
 import { verifyTrack } from '../services/verifyTrack.js';
+import { verifyRecording } from '../services/verifiedLinks.js';
 import { resolvePrimaryReleaseForGroup, getReleaseWithTracks } from '../services/musicbrainz.js';
 import { sameOriginOnly } from '../middleware/sameOriginOnly.js';
 import { BadRequestError } from '../lib/httpErrors.js';
-import { requireMbidParam } from '../lib/mbid.js';
+import { assertMbid, requireMbidParam } from '../lib/mbid.js';
 import { sseStream, STREAM_HANDLED } from '../lib/sse.js';
 
 export const verifyRouter = Router();
 
+// `recordingMbid` is optional, and what it buys is persistence. Without it the
+// answer is cached in memory for an hour and lost on restart; with it the lookup
+// goes through verifiedLinks, which remembers hits for 30 days and misses for 7 in
+// the database — the same memory the multi-minute artist sweep relies on. Callers
+// that know which MusicBrainz recording they are asking about (the gap rows) pass
+// it; a free-text search result has no recording to key on and doesn't.
 verifyRouter.post('/', async (req, res, next) => {
   try {
-    const { artist, title, album, lengthMs } = req.body || {};
+    const { artist, title, album, lengthMs, recordingMbid } = req.body || {};
     if (!artist || !title || !lengthMs) {
       throw new BadRequestError('artist, title, and lengthMs are required');
     }
-    const result = await verifyTrack({ artist, title, album, lengthMs });
+    const result = recordingMbid
+      ? await verifyRecording({
+        recordingMbid: assertMbid(String(recordingMbid), 'recordingMbid'),
+        artist,
+        title,
+        album,
+        lengthMs,
+      })
+      : await verifyTrack({ artist, title, album, lengthMs });
     res.json(result);
   } catch (err) {
     next(err);

@@ -8,6 +8,7 @@ import { readTags, writeTags, plannedFills } from './tags.js';
 import { reindexFile } from './libraryScanner.js';
 import { assertReadableInsideMusicDir } from '../lib/paths.js';
 import { withFileLock } from '../lib/fileLock.js';
+import { yieldToEventLoop, describeFailure } from '../lib/writeLoop.js';
 import { BadRequestError } from '../lib/httpErrors.js';
 
 // Repairing a whole album's tags in one pass.
@@ -31,49 +32,6 @@ import { BadRequestError } from '../lib/httpErrors.js';
 // A hard ceiling on one request, alongside the route's other caps. An album is
 // tens of tracks; anything near this is a client bug, not a big record.
 export const MAX_BULK_FIX = 500;
-
-// Hands the event loop back between files.
-//
-// node-taglib-sharp is synchronous: readTags and writeTags each read and rewrite
-// a whole file with no await inside them, so `async` around them buys nothing.
-// The scanner was moved into a worker thread for exactly this reason, and then
-// this module ran the same calls in a 500-iteration loop on the main thread —
-// freezing the server, the healthcheck and every other request for the length of
-// a bulk repair of a lossless album.
-//
-// A worker would be the thorough fix; a yield per file is the cheap one that
-// makes the freeze interruptible, which is the part that actually mattered. The
-// tag IO still costs what it costs, but it no longer costs it all at once.
-function yieldToEventLoop() {
-  return new Promise((resolve) => { setImmediate(resolve); });
-}
-
-// Turns a filesystem failure into something safe to send to the browser.
-// An errno message carries the absolute path it failed on, and these responses
-// are rendered in a page — the same reason paths.js logs the path and returns a
-// generic string. The code is enough for the UI to say something useful.
-function describeFailure(err) {
-  // Written by this module for the browser, so it passes through verbatim.
-  if (err?.code === 'STALE_PREVIEW') return { code: 'stale', message: err.message };
-  switch (err?.code) {
-    case 'ENOENT':
-      return { code: 'missing', message: 'The file is no longer there.' };
-    case 'EACCES':
-    case 'EPERM':
-    case 'EROFS':
-      return { code: 'unwritable', message: 'The file could not be written to.' };
-    case 'EIO':
-    case 'ESTALE':
-    case 'ENOTCONN':
-      return { code: 'unreadable', message: 'The storage holding this file stopped responding.' };
-    default:
-      // A BadRequestError from the containment check already carries a message
-      // written for the browser; anything else stays deliberately vague.
-      return err?.status === 400
-        ? { code: 'rejected', message: err.message }
-        : { code: 'failed', message: 'The file could not be repaired — see the server logs.' };
-  }
-}
 
 // Track numbers parsed out of filenames are the one field that can be confidently
 // wrong: "99 Problems.mp3" reads as track 99. A real position is bounded by how

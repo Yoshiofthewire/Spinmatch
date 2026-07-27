@@ -33,3 +33,13 @@ export function post(path, body) {
     body: JSON.stringify(body),
   });
 }
+
+// For partial updates, where the fields the body omits are the ones the server
+// must leave alone — see editTrackTags in api/library.js.
+export function patch(path, body) {
+  return request(path, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}

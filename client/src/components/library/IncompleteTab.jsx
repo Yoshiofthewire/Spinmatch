@@ -39,7 +39,10 @@ export default function IncompleteTab({ albums, onSelect }) {
         })}
       </div>
 
-      <p className="muted">{active?.[2]}</p>
+      <p className="muted">
+        {active?.[2]}
+        {reason === 'gaps' && ' Open a missing position to look that track up on MusicBrainz and YouTube.'}
+      </p>
 
       {filtered.length === 0 ? (
         <p className="muted">Nothing in this category.</p>
@@ -66,7 +69,19 @@ export default function IncompleteTab({ albums, onSelect }) {
                   </td>
                   {reason === 'gaps' && (
                     <td className="mono">
-                      {a.missingPositions.slice(0, 12).join(', ')}
+                      {/* Each position opens the album, where the per-gap "Find
+                          this track" button lives. A button per position here
+                          instead would be hundreds of them on a page — and each
+                          one a MusicBrainz call — on the one tab whose whole value
+                          is being entirely offline. */}
+                      {a.missingPositions.slice(0, 12).map((position, i) => (
+                        <span key={position}>
+                          {i > 0 && ', '}
+                          <button type="button" className="link-button" onClick={() => onSelect(a)}>
+                            {position}
+                          </button>
+                        </span>
+                      ))}
                       {a.missingPositions.length > 12 && ` +${a.missingPositions.length - 12}`}
                     </td>
                   )}

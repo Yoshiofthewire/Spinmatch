@@ -379,3 +379,163 @@ test('the fallback does not recurse past one level', async () => {
   setDbForTest(null);
   db.close();
 });
+
+// ---------- resolveMissingTrack ----------
+//
+// Turns a hole in the local numbering into a named track. The interesting cases
+// aren't the happy path — they're the three ways it can fail to place a position,
+// because each one means something different to the person looking at the row.
+
+const KID_A_RG = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+const KID_A_RELEASE = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+
+function kidATracks() {
+  return [
+    { position: 1, discNumber: 1, recordingMbid: 'rec-1', title: 'Everything In Its Right Place', artist: 'Radiohead', lengthMs: 251000 },
+    { position: 2, discNumber: 1, recordingMbid: 'rec-2', title: 'Kid A', artist: 'Radiohead', lengthMs: 274000 },
+    { position: 1, discNumber: 2, recordingMbid: 'rec-3', title: 'Disc Two Opener', artist: 'Radiohead', lengthMs: 100000 },
+  ];
+}
+
+function resolvingMocks(overrides = {}) {
+  return {
+    searchReleaseGroups: async () => [{ mbid: KID_A_RG, title: 'Kid A' }],
+    resolvePrimaryReleaseForGroup: async () => KID_A_RELEASE,
+    getReleaseWithTracks: async () => ({
+      release: { mbid: KID_A_RELEASE, title: 'Kid A', artist: 'Radiohead' },
+      tracks: kidATracks(),
+    }),
+    ...overrides,
+  };
+}
+
+test('resolveMissingTrack names the track at a position', async () => {
+  const db = dbWith(['Kid A'], 'Radiohead');
+  const { resolveMissingTrack } = await freshDiscography(resolvingMocks());
+
+  const found = await resolveMissingTrack('Radiohead', 'Kid A', { position: 2, db });
+  assert.equal(found.resolved, true);
+  assert.equal(found.title, 'Kid A');
+  assert.equal(found.lengthMs, 274000);
+  assert.equal(found.recordingMbid, 'rec-2');
+  assert.equal(found.album, 'Kid A');
+  assert.equal(found.releaseGroupMbid, KID_A_RG);
+  db.close();
+});
+
+// A local row with no disc number is asked about as disc 1, and a single-disc
+// release may carry none upstream — both sides have to fold to 1 or the lookup
+// silently finds nothing.
+test('resolveMissingTrack defaults to disc 1 and matches a null upstream discNumber', async () => {
+  const db = dbWith(['Kid A'], 'Radiohead');
+  const { resolveMissingTrack } = await freshDiscography(resolvingMocks({
+    getReleaseWithTracks: async () => ({
+      release: { mbid: KID_A_RELEASE, title: 'Kid A', artist: 'Radiohead' },
+      tracks: [{ position: 4, discNumber: null, recordingMbid: 'rec-4', title: 'Optimistic', artist: 'Radiohead', lengthMs: 300000 }],
+    }),
+  }));
+
+  const found = await resolveMissingTrack('Radiohead', 'Kid A', { position: 4, db });
+  assert.equal(found.resolved, true);
+  assert.equal(found.title, 'Optimistic');
+  db.close();
+});
+
+test('resolveMissingTrack distinguishes discs', async () => {
+  const db = dbWith(['Kid A'], 'Radiohead');
+  const { resolveMissingTrack } = await freshDiscography(resolvingMocks());
+
+  const disc2 = await resolveMissingTrack('Radiohead', 'Kid A', { position: 1, disc: 2, db });
+  assert.equal(disc2.title, 'Disc Two Opener');
+  db.close();
+});
+
+// The useful failure: a position past the end of the official tracklist is more
+// likely a wrong track number on a file you have than a file you're missing, and
+// the count is what lets the UI say so.
+test('resolveMissingTrack reports a position past the tracklist with the real count', async () => {
+  const db = dbWith(['Kid A'], 'Radiohead');
+  const { resolveMissingTrack } = await freshDiscography(resolvingMocks());
+
+  const found = await resolveMissingTrack('Radiohead', 'Kid A', { position: 14, db });
+  assert.equal(found.resolved, false);
+  assert.equal(found.reason, 'no_such_position');
+  assert.equal(found.trackCount, 3);
+  db.close();
+});
+
+test('resolveMissingTrack reports an album it cannot match', async () => {
+  const db = dbWith(['Not A Real Album'], 'Radiohead');
+  const { resolveMissingTrack } = await freshDiscography({
+    searchReleaseGroups: async () => [{ mbid: KID_A_RG, title: 'Something Else Entirely' }],
+  });
+
+  const found = await resolveMissingTrack('Radiohead', 'Not A Real Album', { position: 1, db });
+  assert.equal(found.resolved, false);
+  assert.equal(found.reason, 'unresolved_album');
+  db.close();
+});
+
+test('resolveMissingTrack reports a release group with no usable release', async () => {
+  const db = dbWith(['Kid A'], 'Radiohead');
+  const { resolveMissingTrack } = await freshDiscography(resolvingMocks({
+    resolvePrimaryReleaseForGroup: async () => null,
+  }));
+
+  const found = await resolveMissingTrack('Radiohead', 'Kid A', { position: 1, db });
+  assert.equal(found.resolved, false);
+  assert.equal(found.reason, 'no_release');
+  db.close();
+});
+
+// A track with no length can be named but not duration-verified, so the null has
+// to survive rather than being defaulted — VerifyButton keys on it.
+test('resolveMissingTrack passes a null lengthMs through untouched', async () => {
+  const db = dbWith(['Kid A'], 'Radiohead');
+  const { resolveMissingTrack } = await freshDiscography(resolvingMocks({
+    getReleaseWithTracks: async () => ({
+      release: { mbid: KID_A_RELEASE, title: 'Kid A', artist: 'Radiohead' },
+      tracks: [{ position: 1, discNumber: 1, recordingMbid: 'rec-1', title: 'Untimed', artist: 'Radiohead', lengthMs: null }],
+    }),
+  }));
+
+  const found = await resolveMissingTrack('Radiohead', 'Kid A', { position: 1, db });
+  assert.equal(found.resolved, true);
+  assert.equal(found.lengthMs, null);
+  db.close();
+});
+
+// On a compilation the release credit is "Various Artists", which is not who
+// performed the track — so the track's own credit wins.
+test('resolveMissingTrack prefers the track credit over the release credit', async () => {
+  const db = dbWith(['Comp'], 'Various Artists');
+  const { resolveMissingTrack } = await freshDiscography(resolvingMocks({
+    searchReleaseGroups: async () => [{ mbid: KID_A_RG, title: 'Comp' }],
+    getReleaseWithTracks: async () => ({
+      release: { mbid: KID_A_RELEASE, title: 'Comp', artist: 'Various Artists' },
+      tracks: [{ position: 1, discNumber: 1, recordingMbid: 'rec-1', title: 'A Song', artist: 'The Real Band', lengthMs: 200000 }],
+    }),
+  }));
+
+  const found = await resolveMissingTrack('Various Artists', 'Comp', { position: 1, db });
+  assert.equal(found.artist, 'The Real Band');
+  db.close();
+});
+
+// This is what makes a per-row button affordable: clicking three gap rows of one
+// album must not cost three album searches.
+test('resolveMissingTrack reuses the remembered album link on a second lookup', async () => {
+  const db = dbWith(['Kid A'], 'Radiohead');
+  let searches = 0;
+  const { resolveMissingTrack } = await freshDiscography(resolvingMocks({
+    searchReleaseGroups: async () => {
+      searches += 1;
+      return [{ mbid: KID_A_RG, title: 'Kid A' }];
+    },
+  }));
+
+  await resolveMissingTrack('Radiohead', 'Kid A', { position: 1, db });
+  await resolveMissingTrack('Radiohead', 'Kid A', { position: 2, db });
+  assert.equal(searches, 1, 'the second row must come off library_album_links');
+  db.close();
+});

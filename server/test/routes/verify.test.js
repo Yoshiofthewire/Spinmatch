@@ -199,3 +199,65 @@ test('GET /api/verify/album/:mbid/stream emits an album header, a result per tra
   assert.equal(results[1].data.title, 'Stream Two');
   assert.ok(events.some((e) => e.event === 'done'), 'stream ends with a done event');
 });
+
+// An optional recordingMbid routes the lookup through verifiedLinks instead of
+// verifyTrack, which is the difference between remembering the answer for an hour
+// in memory and remembering it for 30 days in the database. The gap rows pass one;
+// a free-text search result has none to pass.
+test('POST /api/verify with a recordingMbid persists the result in verified_links', async (t) => {
+  const { openDb, setDbForTest } = await import('../../src/lib/db.js');
+  const { getVerifiedLink } = await import('../../src/services/verifiedLinks.js');
+  const db = openDb(':memory:');
+  setDbForTest(db);
+  t.after(() => { setDbForTest(null); db.close(); });
+
+  mockMusicBrainzAgent();
+  let calls = 0;
+  mockExecFile(t, (bin, args, opts, callback) => {
+    calls += 1;
+    callback(null, ndjson([{ id: 'vid-persist-1', title: 'Persisted Song', duration: 180 }]), '');
+  });
+
+  const mbid = '99999999-9999-4999-8999-999999999999';
+  const body = {
+    artist: 'Persist Artist',
+    title: 'Persisted Song',
+    album: 'Persist Album',
+    lengthMs: 180000,
+    recordingMbid: mbid,
+  };
+
+  const res = await fetch(`${baseUrl}/api/verify`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Sec-Fetch-Site': 'same-origin' },
+    body: JSON.stringify(body),
+  });
+  assert.equal(res.status, 200);
+  assert.equal((await res.json()).status, 'confirmed');
+
+  const remembered = getVerifiedLink(db, mbid);
+  assert.ok(remembered, 'the answer should have been written to verified_links');
+  assert.equal(remembered.videoId, 'vid-persist-1');
+
+  // And the persistence is load-bearing: a repeat asks yt-dlp nothing.
+  await fetch(`${baseUrl}/api/verify`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Sec-Fetch-Site': 'same-origin' },
+    body: JSON.stringify(body),
+  });
+  assert.equal(calls, 1, 'the second lookup must come off verified_links');
+});
+
+// The mbid is interpolated into a cache key and a primary key, so a malformed one
+// is refused rather than stored.
+test('POST /api/verify rejects a malformed recordingMbid', async () => {
+  mockMusicBrainzAgent();
+  const res = await fetch(`${baseUrl}/api/verify`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Sec-Fetch-Site': 'same-origin' },
+    body: JSON.stringify({
+      artist: 'A', title: 'T', lengthMs: 1000, recordingMbid: 'not-a-uuid',
+    }),
+  });
+  assert.equal(res.status, 400);
+});

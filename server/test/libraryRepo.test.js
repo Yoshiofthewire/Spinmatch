@@ -415,3 +415,24 @@ test('a track with no artist or title is not a duplicate candidate', () => {
   assert.equal(repo.findDuplicateGroups(db).length, 0);
   db.close();
 });
+
+// SQL never matches NULL by equality, so `artist = ?` returned nothing at all for
+// an album whose files carry no artist tag — while listAlbums does group one as its
+// own album. The grid therefore offered a row that opened onto an empty tracklist,
+// and the edit panels would have inherited that.
+test('getAlbumTracks finds an album whose files carry no artist tag', () => {
+  const db = openDb(':memory:');
+  repo.upsertLocalTrack(db, { path: '/m/Unknown/Untitled/01.mp3', artist: null, album: 'Untitled', title: 'One', durationMs: 1000, changeKey: '10:1' });
+  repo.upsertLocalTrack(db, { path: '/m/Unknown/Untitled/02.mp3', artist: null, album: 'Untitled', title: 'Two', durationMs: 2000, changeKey: '20:1' });
+  repo.recomputeStats(db);
+
+  const tracks = repo.getAlbumTracks(db, { artist: null, album: 'Untitled' });
+  assert.equal(tracks.length, 2);
+  assert.deepEqual(tracks.map((t) => t.title), ['One', 'Two']);
+
+  // And it stays scoped: a NULL artist must not act as a wildcard.
+  repo.upsertLocalTrack(db, { path: '/m/A/Untitled/01.mp3', artist: 'A', album: 'Untitled', title: 'Theirs', durationMs: 1000, changeKey: '40:1' });
+  assert.equal(repo.getAlbumTracks(db, { artist: null, album: 'Untitled' }).length, 2);
+  assert.equal(repo.getAlbumTracks(db, { artist: 'A', album: 'Untitled' }).length, 1);
+  db.close();
+});

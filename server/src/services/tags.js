@@ -93,10 +93,18 @@ export async function readCoverArt(filePath) {
 //
 // `overwrite` widens the contract from "fill the blanks" to "correct the file":
 // a field is written when it differs from what's desired, not only when it's
-// empty. Reserved for the fingerprint path, where the audio itself says the
-// existing tags name the wrong recording. A field that already agrees is left
-// alone and stays out of filledFields, so applying a match the file already
-// matches honestly reports that nothing changed.
+// empty. A field that already agrees is left alone and stays out of
+// filledFields, so applying a match the file already matches honestly reports
+// that nothing changed.
+//
+// Two callers earn it, for different reasons. The fingerprint path, where the
+// audio itself says the existing tags name the wrong recording; and the manual
+// edit path (services/tagEdit.js), where a person typed the value. That second
+// caller passes a PARTIAL `desired` — only the fields it means to change — which
+// combined with the `desiredValue == null` skip below gives it exactly "write
+// these, leave everything else alone". That is why manual editing needs no
+// function of its own here, and also why it cannot remove a tag: a null means
+// "no opinion" throughout this module, and nothing gives it a second meaning.
 //
 // `replaceCoverArt` is the same widening for the embedded picture, and is
 // deliberately a separate flag rather than something `overwrite` implies:
@@ -137,14 +145,21 @@ export async function writeTags(
       filledFields.push('coverArt');
     }
 
-    file.save();
+    // Nothing to write means nothing to save. save() rewrites the whole
+    // container, which bumps mtime and wakes the MUSIC_DIR watcher — so without
+    // this, pressing Save on a manual edit form with nothing dirty rewrites the
+    // file, and a bulk repair of an album that already agrees with its
+    // MusicBrainz tracklist rewrites every file in it, to change nothing.
+    if (filledFields.length) file.save();
   } finally {
     file.dispose();
   }
   // Recorded so the MUSIC_DIR watcher doesn't mistake our own write for an
   // external change and schedule a full library rescan for it — see
   // lib/recentWrites.js. Noted here rather than at each call site so no future
-  // writer can forget.
+  // writer can forget, and noted even when the save above was skipped: the note
+  // is a 30-second suppression window, so a spurious one costs nothing and a
+  // missing one costs a full rescan.
   noteWrite(filePath);
   return { filledFields };
 }

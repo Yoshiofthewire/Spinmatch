@@ -1,63 +1,64 @@
 # Spinmatch
 
-Search MusicBrainz for an artist, album, or song, browse album art and tracklists, and get a
-YouTube link for a track — verified by cross-checking the video's duration against the
-MusicBrainz-recorded track length.
+Spinmatch searches MusicBrainz for an artist, an album, or a song. It shows album art and
+tracklists, and it finds a YouTube link for a track. Spinmatch compares the duration of the video
+against the track length that MusicBrainz records, and reports whether the two agree.
 
-This app **only finds and verifies YouTube links**. It does not download or rip audio.
+Spinmatch **only finds and verifies YouTube links**. It does not download or copy audio.
 
 ## First-run login
 
-The whole app is gated behind a single admin account. The **first time** you open Spinmatch
-it shows a one-time setup screen — pick a username and password (minimum 8 characters) and it
-logs you in. After that, every visit shows a login screen, and all `/api` routes except
-`/api/health` and `/api/config` require a valid session.
+One admin account protects the whole app. The **first time** you open Spinmatch, it shows a setup
+screen. Enter a username and a password of 8 characters or more. Spinmatch then logs you in. After
+setup, every visit shows a login screen. All `/api` routes need a valid session, except
+`/api/health` and `/api/config`.
 
-The credential is stored (scrypt-hashed) in the same SQLite database as the library index
-(`LIBRARY_DB`, default `/data/db/library.db`), so keep that path on a persistent volume. No
-extra configuration is required — auth is always on.
+Spinmatch stores the password as a scrypt hash. It uses the same SQLite database as the library
+index (`LIBRARY_DB`, default `/data/db/library.db`). Keep that path on a persistent volume. No
+extra configuration is necessary, because the login is always active.
 
-**Changing your password:** use the **Account** page. It asks for your current password, and
-changing it signs out every other browser and device — the tab you're in stays signed in.
+**To change your password,** use the **Account** page. The page asks for your current password. A
+password change logs out every other browser and device. The tab that you use stays logged in.
 
-**Forgotten password:** stop the app and delete the `app_auth` row (or the whole DB file) to
-return to the first-run setup screen. Session cookies name the admin they were issued to, and
-creating a new admin rotates the token-signing secret, so a cookie from before the reset stops
-working immediately.
+**If you forget your password,** stop the app and delete the `app_auth` row. You can delete the
+whole database file instead. Spinmatch then shows the first-run setup screen again. Each session
+cookie names the admin that it belongs to. A new admin also gets a new token-signing secret. A
+cookie from before the reset therefore stops working immediately.
 
-Sessions are stateless cookies valid for 30 days. **Log out** clears the cookie and revokes the
-token server-side, so a copy of it taken elsewhere stops working too — which, this being a
-single-account app, means logging out signs you out on every device. Changing your password does
+A session is a stateless cookie with a life of 30 days. **Log out** deletes the cookie and revokes
+the token on the server. A copy of that cookie on another machine therefore stops working too.
+Spinmatch has one account only, so a logout logs you out on every device. A password change does
 the same.
 
 ### Running behind a reverse proxy
 
-Set `TRUST_PROXY=1` (or a subnet — anything Express's
-[`trust proxy`](https://expressjs.com/en/guide/behind-proxies.html) setting accepts). Without
-it, `X-Forwarded-*` headers are ignored, which is correct for a directly-exposed process but
-wrong behind a proxy in two specific ways:
+Set `TRUST_PROXY=1`. You can also give a subnet, or any other value that the Express
+[`trust proxy`](https://expressjs.com/en/guide/behind-proxies.html) setting accepts. Without this
+setting, Spinmatch ignores the `X-Forwarded-*` headers. That is correct for a directly exposed
+process, but wrong behind a proxy for two reasons:
 
-- the login rate limit keys on the client IP, and every request appears to come from the proxy,
-  so all clients share one bucket;
-- the session cookie is marked `Secure` based on the request scheme, and a proxy that terminates
-  TLS makes the request to Spinmatch itself plain HTTP.
+- The login rate limit uses the client IP address as its key. Behind a proxy, every request appears
+  to come from the proxy, so all clients share one limit.
+- Spinmatch marks the session cookie `Secure` from the scheme of the request. A proxy that
+  terminates TLS sends a plain HTTP request to Spinmatch.
 
-Only set it when a proxy you control is actually in front of the app: it makes the app trust a
-header any client can send.
+Set this value only when you control a proxy in front of the app. The setting makes the app trust a
+header that any client can send.
 
-Accepted values are a hop count (`1`), `true`/`false`, a subnet (`10.0.0.0/8`), or a named preset
-(`loopback`). An unparseable value stops the server at startup with an explicit message rather
-than starting up with the setting silently inert.
+Permitted values are a hop count (`1`), `true`, `false`, a subnet (`10.0.0.0/8`), or a named preset
+(`loopback`). If the value is not valid, the server stops at startup and prints a message. It does
+not start with the setting silently inactive.
 
 ## Prerequisites
 
-- Node.js 20+ (Node 24 recommended — this project uses native `fetch` and `--env-file`)
-- [`yt-dlp`](https://github.com/yt-dlp/yt-dlp) installed and on `PATH`
+- Node.js 20 or later. Node 24 is preferred, because this project uses the native `fetch` and
+  `--env-file`.
+- [`yt-dlp`](https://github.com/yt-dlp/yt-dlp), installed and on `PATH`.
 
 ## Installing yt-dlp
 
-Spinmatch looks up and verifies YouTube matches by shelling out to `yt-dlp` — there's no API key
-or daily quota. Install it with one of:
+Spinmatch runs `yt-dlp` as a subprocess to find and verify YouTube matches. No API key and no daily
+quota are necessary. Install `yt-dlp` with one of these commands:
 
 ```
 pipx install yt-dlp   # recommended: isolated, easy to upgrade with `pipx upgrade yt-dlp`
@@ -65,17 +66,17 @@ pip install --user yt-dlp
 brew install yt-dlp   # macOS
 ```
 
-Confirm it's on `PATH`: `yt-dlp --version`. If you install it somewhere not on `PATH`, set
-`YTDLP_PATH` in `.env` to the full path of the binary.
+To confirm that `yt-dlp` is on `PATH`, run `yt-dlp --version`. If you install it in a directory
+that is not on `PATH`, set `YTDLP_PATH` in `.env` to the full path of the program.
 
-Because yt-dlp scrapes YouTube directly rather than calling an official API, heavy bulk use
-(especially the "Find all on YouTube" album action) can trigger temporary rate limiting from
-YouTube — Spinmatch serializes lookups to reduce this risk, but if it happens, wait a bit and
-retry, and consider running `yt-dlp -U` to pick up any anti-bot-detection fixes.
+`yt-dlp` reads the YouTube site directly instead of an official API. A large number of lookups can
+therefore cause a temporary rate limit from YouTube. The **Find all on YouTube** album action is the
+most likely cause. Spinmatch makes one lookup at a time to reduce this risk. If a rate limit occurs,
+wait and then try again. Run `yt-dlp -U` to get the newest anti-bot-detection fixes.
 
 ## Configuration
 
-Copy `.env.example` to `.env` and fill in the values:
+Copy `.env.example` to `.env` and enter your values:
 
 ```
 PORT=3000
@@ -86,251 +87,331 @@ MB_APP_VERSION=0.1.0
 METUBE_URL=
 ```
 
-`MB_CONTACT_EMAIL` is required by [MusicBrainz's API usage policy](https://musicbrainz.org/doc/MusicBrainz_API/Rate_Limiting) —
-every request must identify itself with a real contact email in its `User-Agent` string, or
-MusicBrainz may block the app's IP.
+`MB_CONTACT_EMAIL` is necessary. The
+[MusicBrainz API usage policy](https://musicbrainz.org/doc/MusicBrainz_API/Rate_Limiting) requires a
+real contact email in the `User-Agent` string of every request. Without it, MusicBrainz can block
+the IP address of the app.
 
 ### Optional: local library ingest
 
-If you set `INGEST_DIR` and `MUSIC_DIR` (see `.env.example`), an "Ingest" page appears letting you
-drop new audio (loose files or whole album folders) into `INGEST_DIR` and have Spinmatch tag and
-move it into an organized `{Artist}/{Album}/{Track} - {Title}` structure under `MUSIC_DIR`. Tracks
-with no album land under `{Artist}/Singles/`, and multi-disc releases get disc-prefixed track
-names. If a file identical to one already in your library turns up, it's left in place rather than
-duplicated.
+Set `INGEST_DIR` and `MUSIC_DIR` to add an **Ingest** page. See `.env.example`. Put new audio in
+`INGEST_DIR`, as single files or as whole album directories. Spinmatch tags each file and moves it
+into a `{Artist}/{Album}/{Track} - {Title}` structure below `MUSIC_DIR`. A track with no album goes
+to `{Artist}/Singles/`. A multi-disc release gets a disc prefix in each track name. If a file is
+identical to one already in the library, Spinmatch leaves it in place instead of making a duplicate.
 
-The Docker image presets both variables to `/data/ingest` and `/data/music`, the paths
-`docker-compose.yml` and the Unraid template already mount, so under Docker the volume mapping is
-the whole configuration — there is nothing extra to set. Point a mount at whichever host folders
-you want and the page appears. (Set a variable to an empty string to deliberately turn the feature
-off.) Outside Docker the variables are unset by default, so the feature stays opt-in.
+The Docker image sets both variables to `/data/ingest` and `/data/music`. `docker-compose.yml` and
+the Unraid template already mount those two paths. Under Docker, the volume mapping is therefore the
+whole configuration. Mount the host directories that you want, and the page appears. To disable the
+feature, set a variable to an empty string. Outside Docker, both variables are empty by default, so
+the feature stays optional.
 
-Also setting `ACOUSTID_API_KEY` turns on *automatic* identification: each track is fingerprinted
-(via [Chromaprint](https://acoustid.org/chromaprint)/[AcoustID](https://acoustid.org/)) and
-confirmed against the MusicBrainz-recorded duration before being tagged and moved. Album folders
-are handled as a unit: a folder is only auto-tagged and moved when a single release cleanly
-accounts for every file in it — otherwise the whole folder is left untouched for review. Get a
-free AcoustID API key at [acoustid.org/new-application](https://acoustid.org/new-application).
-`fpcalc` (Chromaprint's command-line tool) must be installed and on `PATH` — the Docker image
-installs it automatically; for local/non-Docker use, install it via your package manager (e.g.
-`apt install chromaprint` / `brew install chromaprint`) or set `FPCALC_PATH` if it's elsewhere.
+Also set `ACOUSTID_API_KEY` to enable *automatic* identification. Spinmatch makes a fingerprint of
+each track with [Chromaprint](https://acoustid.org/chromaprint) and asks
+[AcoustID](https://acoustid.org/) what the recording is. It then compares the result against the
+track length from MusicBrainz before it tags and moves the file. Spinmatch handles an album
+directory as one unit. It tags and moves that directory only when one release accounts for every
+file in it. In all other cases it leaves the whole directory for your review.
 
-Without `ACOUSTID_API_KEY` (AcoustID's key registration has been down for a while, so you may not
-be able to get one), ingest falls back to matching on the tags the files already carry: it searches
-MusicBrainz for the file's artist/title and only accepts a hit whose title agrees and whose
-MusicBrainz length is within five seconds of the file's own — the same "confirm before touching
-anything" bar the fingerprint path applies, just without the fingerprint. Album folders work the
-same way, matched by their album/artist tags against a release group whose whole tracklist lines up
-by duration (track-number tags, when present, decide the running order rather than filenames).
-Files with no useful tags, or whose tags don't confirm, land in "needs review" for manual
-resolution (see below) — nothing is guessed at. No fingerprinting means `fpcalc` isn't needed
-either on this path.
+Get a free AcoustID API key at
+[acoustid.org/new-application](https://acoustid.org/new-application). `fpcalc`, the command-line
+program of Chromaprint, must be installed and on `PATH`. The Docker image installs `fpcalc` for you.
+For local use, install it with your package manager, for example `apt install chromaprint` or
+`brew install chromaprint`. If `fpcalc` is in another directory, set `FPCALC_PATH`.
 
-Anything that can't be confidently identified is left untouched in `INGEST_DIR` and listed on the
-Ingest page as "needs review" — nothing is ever deleted, and unmatched items are never moved
-anywhere without your review. For a loose file, you can resolve it manually right from the
-needs-review list: pick one of the offered candidates — AcoustID's lower-confidence near-misses if
-`ACOUSTID_API_KEY` is set, otherwise whatever MusicBrainz returns for the file's own tags — or
-search MusicBrainz by artist/title yourself, and Spinmatch tags and moves the file the same way an
-auto-confirmed match would be. Non-audio files are left untouched.
+Without `ACOUSTID_API_KEY`, ingest matches on the tags that the files already have. AcoustID key
+registration has been unavailable for some time, so you may not be able to get a key. Spinmatch
+searches MusicBrainz for the artist and title of the file. It accepts a result only when the title
+agrees, and when the MusicBrainz length is within five seconds of the length of the file. This is
+the same "confirm before any change" rule that the fingerprint path uses, without the fingerprint.
+
+Album directories work the same way. Spinmatch matches the album and artist tags against a release
+group whose whole tracklist agrees by duration. Track-number tags, when they exist, set the running
+order instead of the filenames. This path makes no fingerprint, so it does not need `fpcalc`.
+
+Spinmatch leaves any file that it cannot identify with confidence in `INGEST_DIR`. It lists that
+file on the Ingest page as "needs review". Spinmatch never deletes a file, and it never moves an
+unmatched item without your review. It also never guesses.
+
+You can resolve a single file directly from the needs-review list. Select one of the offered
+candidates, or search MusicBrainz yourself by artist and title. With `ACOUSTID_API_KEY` set, the
+candidates are the lower-confidence results from AcoustID. Without it, the candidates are what
+MusicBrainz returns for the tags of the file. Spinmatch then tags and moves the file in the same way
+as an automatic match. Spinmatch does not change a file that is not audio.
 
 ### Library / Collection Manager
 
-Whenever `MUSIC_DIR` is set (see above), Spinmatch also indexes it into a local SQLite database
-and turns on a "Your Library" page. The index records artist, album, title, duration, track and
-disc number, year, genre, format, file size, whether the file carries embedded cover art, and when
-the track was first seen. It is built at startup and kept current afterward by a background scan
-plus a filesystem watcher, so changes made outside the app (e.g. copying files in directly) are
-picked up without a restart. The scan runs in a worker thread — the per-file tag reads and database
-writes happen off the main event loop, so the app stays responsive even while indexing a large
-(100k+ track) collection.
+When `MUSIC_DIR` is set, Spinmatch also indexes that directory into a local SQLite database and adds
+a **Your Library** page. The index records the artist, album, title, duration, track number, disc
+number, year, genre, format, and file size. It also records whether the file has embedded cover art,
+and the date when Spinmatch first saw the track.
+
+Spinmatch builds the index at startup. A background scan and a filesystem watcher then keep it
+current, so Spinmatch detects a change that you make outside the app without a restart. The scan
+runs in a worker thread. The tag reads and database writes for each file therefore happen off the
+main event loop. The app stays responsive during a scan of a large collection of 100k tracks or
+more.
 
 The Library page has eight tabs:
 
-- **Overview** — track/album/artist counts, total playtime, total size on disk, and a format
-  breakdown, plus shortcuts into the reports below.
-- **Artists** — searchable and sortable by name, album count, track count, or playtime. Drill into
-  an artist for their albums.
-- **Albums** — cover-art grid sortable by artist, title, year, track count, or recently added, with
-  an "incomplete only" filter. Album art is read from the files themselves on demand, so nothing is
-  extracted to disk and only the covers on screen are ever read. Art embedded in the audio is used
-  first; failing that, a `cover`/`folder`/`front` image sitting in the album folder is served
-  instead, so libraries that keep art alongside the music still get covers.
-- **Tracks** — the whole collection in one sortable, searchable table. Paged on the server, so it
-  stays responsive at any library size.
-- **Incomplete** — albums that look unfinished, computed entirely from the index with no network
-  calls: numbered gaps (you have 1, 2, 4 of 4 — so 3 is missing), single files filed as whole
-  albums, and albums with no track numbers at all, where completeness can't be judged.
-- **Health** — tag hygiene: tracks missing an artist, album, title, track number, duration, or
-  cover art. Worth checking, because the matching below is done on artist and title — an empty
-  artist tag is invisible to it. Note that "No album tag" and "No title tag" count files whose
-  album or title is *displayed* everywhere else in the app: the scanner falls back to the folder
-  name and the filename so browse views have something to group and label by, and the Health tab
-  is where you find out that the file itself carries neither. Those rows show the value greyed out
-  and marked *(from folder)* / *(from filename)*, with the path beneath. Each count drills into
-  the tracks behind it, and most offer a
-  **Fix tags** action: pick the right MusicBrainz recording (from the file's own tags, or by
-  searching) and Spinmatch fills in what's missing — artist, title, album, year, track and disc
-  number, and cover art. By default it only fills tags that are *empty*, never overwrites a value
-  you already have, and it never moves or renames the file. A missing *duration* is the exception:
-  that means the audio stream itself couldn't be decoded, so it's a broken file rather than a
-  tagging problem, and no fix is offered. When a file's tags are too empty to search on, the picker
-  falls back to what the file's *path* says — `Artist/Album/05 - Title.flac` is metadata too — and a
-  **Whole album** button escalates to the album-wide repair described below.
+- **Overview** — the track, album, and artist counts, the total playtime, the total size on disk,
+  and a format breakdown. It also has shortcuts into the reports below.
+- **Artists** — searchable, and sortable by name, album count, track count, or playtime. Open an
+  artist to see their albums.
+- **Albums** — a grid of cover art, sortable by artist, title, year, track count, or date added. It
+  has an "incomplete only" filter. Spinmatch reads album art from the files on demand, so it
+  extracts nothing to disk and reads only the covers on the screen. Spinmatch uses the art that the
+  audio file embeds. If the file embeds none, Spinmatch serves a `cover`, `folder`, or `front` image
+  from the album directory instead. A library that keeps art beside the music therefore still gets
+  covers.
+- **Tracks** — the whole collection in one sortable, searchable table. The server pages this table,
+  so it stays responsive at any library size. Each row has an **Edit tags** action that opens the
+  editor in place.
+- **Incomplete** — albums that look unfinished. Spinmatch computes this tab from the index alone and
+  makes no network request. It reports three cases:
 
-  With an `ACOUSTID_API_KEY` set, the panel also offers **Identify by audio**: it fingerprints the
-  file with Chromaprint and asks AcoustID what the recording actually is, which is the only way to
-  identify a file whose tags and path are both useless. Because a fingerprint doesn't depend on the
-  metadata being repaired, it's also the one source allowed to *replace* what's already there rather
-  than only fill blanks — that's what fixes a file tagged as the wrong song entirely. Two tick
-  boxes, both unchecked by default and offered only for fingerprint matches: one replaces the text
-  tags, the other replaces the embedded cover art. They're deliberately separate, because wanting
-  the right title and wanting someone else's sleeve are different wishes. The button is opt-in per
-  track rather than automatic because fingerprinting spawns a subprocess over the audio and spends
-  a rate-limited AcoustID call.
-- **Duplicates** — the same artist, album and title indexed at more than one path, with every
-  copy's track number, length, format, size and full path side by side, and a play button for each
-  so they can be compared. The album is part of the match, so a song that appears on two different
-  releases — an album track that's also on a compilation — is not a duplicate and is not listed.
-  What's left is genuine redundancy: a FLAC and a 128k MP3 of the same album track, or a folder
-  copied twice. **Spinmatch never deletes files;** this view tells you what you have and leaves the
-  decision to you.
-- **Discover** — the one view that looks outward: artists and records connected to the ones you
-  already own the most of, plus playlist reconstruction. See below.
+  1. A gap in the numbering. You have 1, 2, and 4 of 4, so 3 is absent.
+  2. One file filed as a whole album.
+  3. An album with no track numbers, where Spinmatch cannot judge completeness.
 
-Alongside the library-wide **Rescan library** button, artist and album pages have a **Rescan this
-artist/album** action that re-reads only those folders — useful right after fixing tags or dropping
-a file in, instead of waiting for a full pass. It walks the folders rather than just the files it
-already knows about, so newly added tracks are picked up too.
+  Each absent position opens the album view, where **Find this track** searches for it.
+- **Health** — tag hygiene. This tab counts the tracks that have no artist, album, title, track
+  number, duration, or cover art. Check it, because the matching described below uses the artist and
+  the title. An empty artist tag is invisible to that matching.
+
+  "No album tag" and "No title tag" count files whose album or title the rest of the app *displays*.
+  The scanner uses the directory name and the filename as a fallback, so the browse views have
+  something to group and label by. The Health tab is where you learn that the file itself has
+  neither value. Those rows show the value in grey, mark it *(from folder)* or *(from filename)*, and
+  print the path below it.
+
+  Each count opens the tracks behind it, and most rows offer two actions.
+
+  **Fix tags** selects the correct MusicBrainz recording, either from the tags of the file or from a
+  search that you make. Spinmatch then adds the values that are absent: artist, title, album, year,
+  track number, disc number, and cover art. By default it fills only the tags that are *empty*, and
+  it never replaces a value that you already have.
+
+  **Edit tags** is the reverse. You type the values, and Spinmatch writes them over what the file
+  has. This is the one path in the app where you are the source of truth instead of MusicBrainz.
+  That is what makes it the correct tool here. These rows are files whose tags are absent, and that
+  is exactly what a MusicBrainz search has nothing to search on. See
+  [Editing tags by hand](#editing-tags-by-hand).
+
+  Neither action ever removes a tag, and neither one moves or renames the file. An absent *duration*
+  is the exception. It means that Spinmatch could not decode the audio stream, so the file is
+  damaged instead of badly tagged, and Spinmatch offers no repair.
+
+  When the tags of a file are too empty to search on, the picker uses the *path* of the file
+  instead. `Artist/Album/05 - Title.flac` is metadata too. A **Whole album** button opens the
+  album-wide repair that the next section describes.
+
+  With `ACOUSTID_API_KEY` set, the panel also offers **Identify by audio**. Spinmatch makes a
+  fingerprint of the file with Chromaprint and asks AcoustID what the recording is. This is the only
+  way to identify a file whose tags and path are both useless. A fingerprint does not depend on the
+  metadata that you are about to repair. It is therefore also the one source that may *replace* an
+  existing value instead of only filling an empty one. That is what repairs a file tagged as the
+  wrong song.
+
+  Two check boxes control the replacement. Both are clear by default, and Spinmatch offers them for
+  fingerprint matches only. One replaces the text tags. The other replaces the embedded cover art.
+  They are separate on purpose, because the correct title and someone else's cover art are different
+  wishes. The button is per track instead of automatic, because a fingerprint starts a subprocess
+  over the audio and spends one rate-limited AcoustID request.
+- **Duplicates** — the same artist, album, and title indexed at more than one path. Spinmatch shows
+  the track number, length, format, size, and full path of every copy beside each other. Each copy
+  also gets a play button, so you can compare them. The album is part of the match. A song on two
+  different releases is therefore not a duplicate, and Spinmatch does not list it. An album track
+  that is also on a compilation is the common example. What remains is real redundancy: a FLAC and a 128k MP3
+  of the same album track, or a directory copied twice. **Spinmatch never deletes a file.** This
+  view reports what you have and leaves the decision to you.
+- **Discover** — the one view that looks outward. It shows artists and records connected to the ones
+  that you own the most of, and it rebuilds a playlist. See below.
+
+Beside the **Rescan library** button, each artist page and album page has a **Rescan this
+artist/album** action. That action re-reads only those directories, which is useful directly after
+you repair tags or add a file. Spinmatch reads the whole directory instead of only the files that it
+already knows, so it also finds new tracks.
 
 ### Repairing a whole album's tags
 
-Album pages carry a **Fix this album's tags** panel — the bulk counterpart to the per-track action
-in the Health tab. Repairing files one at a time through MusicBrainz costs one to three rate-limited
-lookups each, so a few hundred files is a twenty-minute job; resolving the album *once* costs two
-lookups for the entire tracklist. Two sources, because they fail in opposite directions:
+Each album page has a **Fix this album's tags** panel. It is the bulk equivalent of the per-track
+action in the Health tab. A repair of one file at a time through MusicBrainz costs one to three
+rate-limited lookups, so a few hundred files take about twenty minutes. A repair that resolves the
+album *once* costs two lookups for the whole tracklist. There are two sources, because they fail in
+opposite directions:
 
-- **From file paths** — reads artist, album, track number and title from where each file sits. No
-  network at all, and it works on files carrying no tags whatsoever, which is exactly the Health
-  tab's population.
-- **From MusicBrainz** — resolves the album once and lines your files up against its official
-  tracklist, by track number when they have one and by listing order when they don't (and only when
-  the two lists are the same length, so a partial album is never shifted onto the wrong titles).
+- **From file paths** — reads the artist, album, track number, and title from the location of each
+  file. It makes no network request, and it works on files that have no tags at all, which is
+  exactly the population of the Health tab.
+- **From MusicBrainz** — resolves the album once and matches your files against its official
+  tracklist. It matches by track number when every file has one, and by listing order when they do
+  not. It uses the listing order only when both lists have the same length, so it never moves a
+  partial album onto the wrong titles.
 
-Both show a full preview first: every file, every proposed value, with what would be written
-highlighted against what's already on the file. Nothing is written until you tick rows and press
-Apply, and the same rules as the single-track fix hold — only empty fields are filled, and nothing
-is moved or renamed.
+Both sources show a full preview first. The preview lists every file and every proposed value, and
+marks what Spinmatch would write against what the file already has. Spinmatch writes nothing until
+you select rows and press **Apply**. The same rules as the single-track **Fix tags** action hold.
+Spinmatch fills only empty fields, and it moves and renames nothing. To write your own values across
+an album, use **Edit album tags** below.
 
-Three MusicBrainz-backed checks sit on top of the offline reports. All run only when you press the
-button, so a slow or unreachable MusicBrainz never blocks the page:
+### Editing tags by hand
 
-- **Missing albums** (artist view) — diffs the artist's studio discography against what you own and
-  shows the missing records with cover art and year. Each one links straight into the existing
-  release-group page, where you can verify the tracks against YouTube and hand them to MeTube.
-  Resolving an artist name to MusicBrainz is a fuzzy search, so when the match is ambiguous
-  Spinmatch asks you to pick rather than guessing; the choice is remembered.
+Every path above derives what to write, from a MusicBrainz recording, an official tracklist, or the
+path of the file. Each one fills only what is empty. This section describes the other half. Here the
+values come from you, and Spinmatch writes them over what the file already has.
 
-  **Joined credits** get a second chance. Roughly a quarter of a real collection is rows like
-  `Justice & Thundercat`, `Grabbitz feat. REZZ` or `Nine Inch Nails / Stephen Morris and Gillian
-  Gilbert` — none of which resolve to a MusicBrainz artist, which used to strand them even when the
-  artist they lead with is one you own hundreds of tracks by. When the whole name doesn't resolve,
-  Spinmatch retries with the primary artist, and the panel tells you which artist it matched through.
+**One track at a time.** An **Edit tags** action is on every row of the **Tracks** tab, and on
+every track in an album tracklist. It is also beside **Fix tags** in the **Health** drill-down. The
+editor opens in place, below the row that you selected. It has the seven writable fields: artist,
+title, album, track number, disc, year, and genre.
 
-  Two rules keep that from inventing matches, and both are load-bearing:
+**A whole album at once.** Each album page has an **Edit album tags** panel. Spinmatch applies the
+artist, album, year, genre, and disc values to every track that you leave selected. The title and
+the track number stay per row, because one title across a whole record is never what anyone means. A
+field whose tracks disagree shows *(varies)* and starts empty, so you cannot replace twelve
+different values with one by accident.
 
-  - It only ever runs **after** the whole name has failed, so a real band name that resolves on its
-    own — `She & Him`, `Simon & Garfunkel` — is never split.
-  - The primary artist is accepted **only if you already own them under that exact name**. This
-    matters more than it sounds: MusicBrainz has real artists named `Florence`, `Earth` and `Wind`,
-    so splitting `Florence + The Machine` or `Earth, Wind & Fire` and trusting the name would link
-    the wrong act with total confidence. Requiring the segment to be something already on disk makes
-    the fallback self-validating.
+Three points are worth your attention, because they surprise people:
 
-  Nothing is rewritten on disk and no rows are merged — this only affects how a name is resolved
-  upstream, so a wrong match is undone with **Wrong artist?** like any other.
-- **Check tracklist** (album view) — compares one album against its official tracklist. This catches
-  what the track-number check can't: an album numbered 1..10 with no gaps that actually has 12
-  tracks. Each missing track gets the usual "Find on YouTube" button, and **Find all missing on
-  YouTube** does the whole gap in one pass — the same streaming, one-at-a-time matching the
-  release-group page uses, but scoped to the tracks you don't already own, so nothing you have is
-  looked up. Results come with the usual copy-link and Send to MeTube actions.
-- **Find every missing track on YouTube** (artist view) — the whole-discography sweep: every track
-  of every album that artist has and you don't, in one streaming run. This is minutes of work at
-  one lookup per second, so results are written to a small on-disk cache as they land — stopping it
-  and coming back later resumes rather than starting over. Albums whose tracklist can't be read are
-  reported and stepped past; a rate limit stops the run.
+- **A field that you leave blank keeps its current value.** An edit replaces a value, but it never
+  *removes* a tag. Spinmatch cannot empty a field, on purpose, because that is the one operation
+  with no way to undo it. If you clear a box, the panel says so on the row instead of doing nothing
+  silently. To remove a tag, clear it in an external tag editor and then rescan.
+- **Spinmatch writes nothing until you confirm it.** When you press **Save**, Spinmatch shows the
+  pending changes as a plain list of the old value, the new value, and the number of files. It
+  writes only when you press **Write these tags**. Nothing in this app can be undone, and this is
+  the one path whose values come from a keyboard instead of a lookup.
+- **A change to the artist or the album changes the tags only.** Spinmatch never moves or renames a
+  file, so the directory on disk keeps its old name. The **From file paths** repair source reads that
+  directory, so it continues to propose the name that you changed away from. The panel warns you as
+  soon as you edit either field.
+
+Both paths write in place and re-index the file immediately. They report the result for each file. A
+file that is read-only or absent appears as a failure, and Spinmatch still writes the rest of the
+album.
+
+### MusicBrainz checks
+
+Four MusicBrainz checks sit above the offline reports. Each one runs only when you press its button,
+so a slow or unreachable MusicBrainz never blocks a page.
+
+- **Missing albums** (artist view) — compares the studio discography of the artist against what you
+  own. It shows each absent record with its cover art and year. Each record links to the existing
+  release-group page, where you can verify the tracks against YouTube and send them to MeTube. A
+  match from a local artist name to MusicBrainz is a fuzzy search. When the match is ambiguous,
+  Spinmatch asks you to select one instead of guessing, and it remembers your choice.
+
+  **Joined credits** get a second attempt. About a quarter of a real collection is rows such as
+  `Justice & Thundercat`, `Grabbitz feat. REZZ`, or `Nine Inch Nails / Stephen Morris and Gillian
+  Gilbert`. None of these match a MusicBrainz artist. Spinmatch used to abandon them, even when it
+  held hundreds of tracks by the first artist in the name. When the whole name does not match,
+  Spinmatch retries with the primary artist, and the panel reports which artist it matched through.
+
+  Two rules stop that fallback from inventing a match, and both are essential:
+
+  - The fallback runs only **after** the whole name fails. A real band name that matches on its own,
+    such as `She & Him` or `Simon & Garfunkel`, is therefore never split.
+  - Spinmatch accepts the primary artist **only when you already own that artist under that exact
+    name**. This matters more than it appears to. MusicBrainz has real artists named `Florence`,
+    `Earth`, and `Wind`. A split of `Florence + The Machine` or `Earth, Wind & Fire` that trusted the
+    name would therefore match the wrong act with complete confidence. A requirement that the
+    segment is already on disk makes the fallback verify itself.
+
+  Spinmatch rewrites nothing on disk and merges no rows. This affects only how it resolves a name
+  upstream, so **Wrong artist?** undoes a wrong match, as it does anywhere else.
+- **Find this track** (album view) — appears on each gap in the tracklist. A gap in the numbering
+  knows only a position, and you cannot search YouTube for "track 4". Spinmatch therefore asks
+  MusicBrainz what sits at that position, and then sends the named track to the usual YouTube
+  lookup. The action is per row, and it is cheap on several rows. Spinmatch fetches the tracklist of
+  the album once and reuses it, so only the first row reaches the network. If the position is past
+  the end of the official tracklist, Spinmatch says so. A gap at 14 on a record of 12 tracks is a
+  wrong track number on a file that you already have. **Edit tags** is the repair for that.
+- **Check tracklist** (album view) — compares one album against its official tracklist. This finds
+  what the track-number check cannot: an album numbered 1 to 10 with no gaps that in fact has 12
+  tracks. Each absent track gets the usual **Find on YouTube** button. **Find all missing on
+  YouTube** does the whole gap in one pass. It uses the same streaming, one-at-a-time matching as
+  the release-group page. It covers only the tracks that you do not own, so Spinmatch searches for
+  nothing that you have. The results have the usual copy-link and Send to MeTube actions.
+- **Find every missing track on YouTube** (artist view) — a sweep of the whole discography. It
+  covers every track of every album that the artist has and you do not, in one streaming run. This
+  is several minutes of work at one lookup per second. Spinmatch therefore writes each result to a
+  small cache on disk as it arrives. If you stop the run and return later, it continues instead of
+  starting again. Spinmatch reports and skips an album whose tracklist it cannot read. A rate limit
+  stops the run.
 
 ### Discovery
 
-Every other library view is about finding holes in records you already know about. The **Discover**
-tab is the inverse — music you don't have, reached from music you do:
+Every other library view finds gaps in records that you already know about. The **Discover** tab is
+the reverse. It reaches music that you do not have from music that you do:
 
-- **Find similar artists** — seeds from the ten artists you own the most of and follows two
-  different signals. **Sounds like** comes from ListenBrainz, where listening histories overlap with
-  yours. **Connected to** comes from MusicBrainz's relationship graph — shared members, side
-  projects, collaborations. Each suggestion says which of your artists led to it and by which
-  signal, ranked by how many of them agree; anything already in your library is filtered out.
-- **Suggest albums** — the same, taken one step further: the studio discographies of the top few
-  discovered artists, minus anything you already own. Each cover links into the release-group page,
-  where the existing verify-and-hand-to-MeTube flow takes over.
-- **Rebuild a playlist** — paste one track per line, as `Artist - Title` or just a title, and see
-  what you already have against what you'd need to find. Entirely offline: matched against the
-  index with no upstream call, so it works when MusicBrainz doesn't.
+- **Find similar artists** — starts from the ten artists that you own the most of, and follows two
+  signals. **Sounds like** comes from ListenBrainz, where a listening history overlaps with yours.
+  **Connected to** comes from the relationship graph of MusicBrainz, which records shared members,
+  side projects, and collaborations. Each suggestion reports which of your artists led to it and by
+  which signal. Spinmatch ranks the suggestions by how many of your artists agree, and it removes
+  anything already in your library.
+- **Suggest albums** — the same idea, one step further. It lists the studio discographies of the
+  first few discovered artists, without the records that you already own. Each cover links to the
+  release-group page, where the existing verify-and-send-to-MeTube flow continues.
+- **Rebuild a playlist** — paste one track for each line, as `Artist - Title` or as a title alone.
+  Spinmatch reports what you already have and what you must still find. This works offline. It
+  matches against the index and makes no upstream request, so it works when MusicBrainz does not.
 
-The two signals are kept apart rather than blended, because they make different claims. MusicBrainz
-records facts, not taste: a "member of band" edge is a documented connection, and it finds side
-projects that listening data ranks poorly or not at all. ListenBrainz is the reverse — it knows
-nothing about who played on what, but it knows Portishead listeners also play Massive Attack. An
-artist reached by both is the strongest lead there is here and is marked as such.
+Spinmatch keeps the two signals separate instead of combining them, because they make different
+claims. MusicBrainz records facts, not taste. A "member of band" edge is a documented connection,
+and it finds side projects that listening data ranks poorly or not at all. ListenBrainz is the
+reverse. It knows nothing about who played on what, but it knows that a listener of Portishead also
+plays Massive Attack. An artist that both signals reach is the strongest result here, and Spinmatch
+marks it.
 
-Both come from MetaBrainz, both are keyed on the same artist ids, and neither needs an API key —
-your listening habits are never sent anywhere, because Spinmatch only ever asks "who is similar to
-this artist id".
+Both signals come from MetaBrainz, both use the same artist ids, and neither needs an API key.
+Spinmatch never sends your listening habits anywhere, because it only ever asks which artist is
+similar to a given artist id.
 
-ListenBrainz's similar-artist endpoint lives on an experimental subdomain, so its absence is a
-supported state rather than a failure: discovery falls back to the relationship graph alone and says
-so on the page. Set `LISTENBRAINZ_ENABLED=0` to turn it off deliberately. Both lookups are cached
-for a month, and an outage is never cached — otherwise a momentary blip would look like "this artist
-has no neighbours" for weeks.
+The similar-artist endpoint of ListenBrainz is on an experimental subdomain, so Spinmatch supports
+its absence instead of treating it as a failure. Discovery then uses the relationship graph alone and
+reports that on the page. Set `LISTENBRAINZ_ENABLED=0` to disable it deliberately. Spinmatch caches
+both lookups for a month, and it never caches an outage. Without that rule, a short outage would look
+like "this artist has no neighbors" for weeks.
 
-A collection concentrated in one scene will still legitimately turn up little. That's an honest
-answer, not a broken one.
+A collection concentrated in one scene still returns little. That is an honest answer, not a fault.
 
-Search results and artist pages are also library-aware: an album or song you already have is
-badged **In your library**. That check is pure local SQL with no upstream call, and matches the same
-way gap detection does, so "Kid A (Deluxe Edition)" on disk still counts as owning "Kid A". An
-artist page therefore doubles as a coverage view — their whole studio discography with the ones you
-own marked.
+Search results and artist pages also know your library. Spinmatch marks an album or song that you
+already have with **In your library**. That check is local SQL with no upstream request, and it
+matches in the same way as gap detection. "Kid A (Deluxe Edition)" on disk therefore still counts as
+ownership of "Kid A". An artist page is also a coverage view, because it shows the whole studio
+discography with the records that you own marked.
 
-Album pages reached from search still have the original gap detection. Matching is by artist and
-track title, normalized to fold away case, punctuation, featured-artist tails, and parenthetical
-suffixes like "(Remastered 2011)" or "[Live]" — so a remaster you own isn't reported as missing.
-Larger tag drift (e.g. "The Beatles" vs "Beatles") can still cause a track you own to show up as
-missing, so results depend on your files' tag hygiene — see the Health tab.
+An album page reached from a search still has the original gap detection. Spinmatch matches by
+artist and track title, and it normalizes both. The normalization ignores case, punctuation,
+featured-artist suffixes, and a suffix in brackets such as "(Remastered 2011)" or "[Live]". A
+remaster that you own is therefore not reported as absent. Larger tag differences, such as "The
+Beatles" against "Beatles", can still make a track that you own appear as absent. Results therefore
+depend on the tag hygiene of your files. See the Health tab.
 
-There's also a small **preview player**: press play on any track to stream it from disk, with
-seeking, and next/previous across the list you started from. It's deliberately a preview — a way to
-confirm a file is what its tags claim — not a music server. There's no queue management,
-transcoding, or playback outside the Library page; point Navidrome or Jellyfin at `MUSIC_DIR` if you
-want that.
+Spinmatch also has a small **preview player**. Press play on any track to stream it from disk, with
+seeking and with next and previous across the list that you started from. This is a preview on
+purpose. It is a way to confirm that a file is what its tags claim, and it is not a music server.
+There is no queue management, no transcoding, and no playback outside the Library page. Point
+Navidrome or Jellyfin at `MUSIC_DIR` for those features.
 
-**Upgrading:** the first scan after updating re-reads tags for every file once, to fill in the
-columns added above. On a large collection that takes a few minutes; it happens in the background
-and only once. The date a track was first added to your library is preserved. A later upgrade also
-drops an unused `verified_tracks` table left over from an early schema; no data you can see is
-affected.
+**Upgrading:** the first scan after an update re-reads the tags of every file once, to fill the
+columns that this version adds. On a large collection that takes a few minutes. It runs in the
+background, and it runs once. Spinmatch keeps the date when each track first entered your library. A
+later upgrade also deletes an unused `verified_tracks` table from an early schema. No data that you
+can see changes.
 
-This feature needs no separate opt-in flag — it's enabled automatically as soon as `MUSIC_DIR` is
-configured, independent of the ingest feature above. The index itself lives at `LIBRARY_DB`
-(default `/data/db/library.db`). As with `MUSIC_DIR`, this path **must be on a mounted volume** in
-Docker/Unraid — otherwise the index is rebuilt from scratch (harmless, just slower) every time the
-container is recreated. In Docker Compose, set `DB_HOST_DIR` to the host folder to bind-mount for
-it (default `./db`).
+This feature needs no separate flag. Spinmatch enables it as soon as you configure `MUSIC_DIR`,
+independent of the ingest feature above. The index is at `LIBRARY_DB`, default
+`/data/db/library.db`. As with `MUSIC_DIR`, this path **must be on a mounted volume** under Docker
+and Unraid. Otherwise Spinmatch rebuilds the index every time you recreate the container, which is
+harmless but slow. In Docker Compose, set `DB_HOST_DIR` to the host directory to bind-mount for it,
+default `./db`.
 
-Node's built-in `node:sqlite` module is still experimental, so on some Node versions you may see a
-one-time `ExperimentalWarning: SQLite is an experimental feature` on stderr at startup (it did not
-fire on Node 24.16) — this is expected and harmless.
+The built-in `node:sqlite` module of Node is still experimental. On some versions of Node you
+therefore see a single `ExperimentalWarning: SQLite is an experimental feature` on stderr at startup.
+This warning did not appear on Node 24.16. It is expected and harmless.
 
 ## Running locally
 
@@ -339,8 +420,9 @@ npm install
 npm run dev
 ```
 
-This runs the Express backend (with `--env-file=../.env`, picking up `.env` from the repo root)
-and the Vite dev server concurrently. Open http://localhost:5173.
+This runs the Express backend and the Vite dev server together. The backend uses
+`--env-file=../.env`, so it reads `.env` from the root of the repository. Open
+http://localhost:5173.
 
 ## Running in production
 
@@ -350,8 +432,8 @@ npm run build
 npm start
 ```
 
-`npm start` runs the Express server directly (reading `.env` via `--env-file`), serving the
-built client from `client/dist` on `$PORT` (default 3000).
+`npm start` runs the Express server directly, and reads `.env` through `--env-file`. The server
+serves the built client from `client/dist` on `$PORT`, default 3000.
 
 ## Running with Docker
 
@@ -360,83 +442,96 @@ cp .env.example .env   # fill in your values
 docker compose up --build
 ```
 
-The app will be available at http://localhost:3000. The container builds the client and runs
-the server in a single image — no separate frontend container needed.
+The app is then at http://localhost:3000. The container builds the client and runs the server in one
+image. No separate frontend container is necessary.
 
 ### File ownership (`PUID` / `PGID`)
 
-The container starts as root, prepares its own database directory, and then drops to an
-unprivileged uid before running the server. It never serves a request as root: this process shells
-out to `yt-dlp` and `fpcalc` and parses tags out of files you downloaded from wherever, none of
-which should run as root with your music library mounted read-write. It also means files the
-ingest flow writes land owned by you rather than by root, so your media player can still write to
-them.
+The container starts as root, prepares its own database directory, and then changes to an
+unprivileged user id before it runs the server. It never answers a request as root. This process
+runs `yt-dlp` and `fpcalc` as subprocesses, and it parses tags out of files that you downloaded from
+anywhere. None of that work should run as root with your music library mounted read-write. The
+change of user id also means that the ingest flow writes files owned by you instead of by root.
+Your media player can therefore still write to them.
 
-Which uid it drops to is `PUID`/`PGID`, defaulting to **1000:1000**:
+`PUID` and `PGID` select that user id. The default is **1000:1000**:
 
 ```
 PUID=1000     # `id -u` on most Linux hosts; 99 on Unraid (nobody)
 PGID=1000     # `id -g` on most Linux hosts; 100 on Unraid (users)
 ```
 
-This matters because a bind mount keeps its **host** ownership — nothing the image does at build
-time can change it. Set these to whatever owns the folders you mounted. The container chowns
-`/data/db` for you on every start, because that directory is the app's own private storage
-(the SQLite index and your login). Your music and ingest directories are deliberately left
-alone: a recursive chown of a music library is slow, isn't the container's call, and can't be
-undone. If either isn't writable, fix it yourself:
+This matters because a bind mount keeps the ownership of the **host**. Nothing that the image does
+at build time can change that ownership. Set these values to the owner of the directories that you
+mounted.
+
+The container changes the owner of `/data/db` for you at every start. That directory is the private
+storage of the app, and it holds the SQLite index and your login. It deliberately does not touch your
+music and ingest directories. A recursive change of owner across a music library is slow, is not the
+decision of the container, and cannot be undone. If either directory is not writable, correct it
+yourself:
 
 ```
 sudo chown -R 1000:1000 ./ingest ./music
 ```
 
-If the database directory can't be made writable, the server says so on startup and exits rather
-than answering every request with a 500 — check `docker logs` for a message naming the path, the
-uid it's running as, and who owns it.
+If the container cannot make the database directory writable, the server reports the problem at
+startup and exits. It does not answer every request with a 500. Read `docker logs` for a message
+that names the path, the user id that the server runs as, and the current owner.
 
-Running the container with an explicit `--user` (or `user:` in `docker-compose.yml`) still works
-and takes precedence: the entrypoint sees it's already unprivileged and gets out of the way. In
-that case nothing can be chowned for you, so the mounts must already be writable.
+An explicit `--user` still works, and it takes priority. The same applies to `user:` in
+`docker-compose.yml`. The entrypoint detects that it is already unprivileged and does nothing. In
+that case it can change no owner for you, so the mounts must already be writable.
 
-> **Upgrading from a version that ran as root?** Your `db` folder is root-owned and the server
-> will refuse to start until it isn't. The entrypoint fixes this automatically; if you've pinned
-> `--user`, run `sudo chown -R 1000:1000 ./db` once.
+> **Are you upgrading from a version that ran as root?** Your `db` directory belongs to root, and
+> the server refuses to start until that changes. The entrypoint corrects this automatically. If you
+> pinned `--user`, run `sudo chown -R 1000:1000 ./db` once.
 
 ## Running on Unraid
 
-A published image is available at `ghcr.io/yoshiofthewire/spinmatch:latest`, rebuilt automatically
-on every push to `main` and daily whenever a new `yt-dlp` release comes out.
+A published image is at `ghcr.io/yoshiofthewire/spinmatch:latest`. The build runs automatically on
+every push to `main`, and daily when a new release of `yt-dlp` appears.
 
-Search for **Spinmatch** in the **Apps** tab (Community Applications) and click **Install**.
+To install with Community Applications:
 
-Without Community Applications, the same template can be added by hand: in the **Docker** tab,
-click **Add Container**, switch the template dropdown to **Enter URL**, and paste
+1. Open the **Apps** tab.
+2. Search for **Spinmatch**.
+3. Click **Install**.
+
+To add the same template by hand, without Community Applications:
+
+1. Open the **Docker** tab.
+2. Click **Add Container**.
+3. Change the template list to **Enter URL**.
+4. Paste this URL:
 
 ```
 https://raw.githubusercontent.com/Yoshiofthewire/unraid_docker_apps/main/Spinmatch.xml
 ```
 
-Either way you get
-[`Spinmatch.xml`](https://github.com/Yoshiofthewire/unraid_docker_apps/blob/main/Spinmatch.xml) —
-it lives in [unraid_docker_apps](https://github.com/Yoshiofthewire/unraid_docker_apps) alongside the
-other templates, not in this repository — with the repository, port, paths, and environment
-variables filled in. At minimum, set **MB Contact Email**. The mapped
-paths (**Ingest Directory**, **Music Directory**, and **Library DB Directory**) are the host folders
-bind-mounted at the container paths `/data/ingest`, `/data/music`, and `/data/db`. A path mapping on
-its own doesn't tell the app anything, so the template also ships the matching `INGEST_DIR`,
-`MUSIC_DIR`, and `LIBRARY_DB` variables (under **Show more settings**) pointing at those container
-paths — leave them as-is unless you change a container path. Point
-**Music Directory** at your existing music share to enable the local library ingest feature
-described above, and set **AcoustID API Key** as well if you want automatic track identification
-(otherwise ingest still works, just with manual matching only). **Library DB Directory** should
-point at a persistent appdata path so the
-collection index survives container rebuilds; it's used automatically once **Music Directory** is
-set, no separate toggle needed.
+Both methods give you
+[`Spinmatch.xml`](https://github.com/Yoshiofthewire/unraid_docker_apps/blob/main/Spinmatch.xml),
+with the repository, port, paths, and environment variables already set. That file is in
+[unraid_docker_apps](https://github.com/Yoshiofthewire/unraid_docker_apps) beside the other
+templates, and not in this repository.
 
-The template sets **PUID**/**PGID** (under **Show more settings**) to Unraid's `nobody:users`,
-**99:100**, which is what owns a standard Unraid share — leave them alone unless you know yours
-are owned by something else. See [File ownership](#file-ownership-puid--pgid) above for what they
-do and what happens if they're wrong.
+Set **MB Contact Email** at minimum. The mapped paths **Ingest Directory**, **Music Directory**, and
+**Library DB Directory** are the host directories bind-mounted at the container paths
+`/data/ingest`, `/data/music`, and `/data/db`. A path mapping alone tells the app nothing. The
+template therefore also ships the matching `INGEST_DIR`, `MUSIC_DIR`, and `LIBRARY_DB` variables,
+under **Show more settings**, which point at those container paths. Leave those variables unchanged
+unless you change a container path.
+
+Point **Music Directory** at your existing music share to enable the local library ingest feature
+described above. Also set **AcoustID API Key** if you want automatic track identification. Without
+that key, ingest still works with manual matching only. Point **Library DB Directory** at a
+persistent appdata path, so the collection index survives a rebuild of the container. Spinmatch uses
+that index as soon as you set **Music Directory**, and it needs no separate switch.
+
+The template sets **PUID** and **PGID**, under **Show more settings**, to `nobody:users` of Unraid,
+which is **99:100**. That pair owns a standard Unraid share. Leave both values unchanged unless you
+know that something else owns yours. See [File ownership](#file-ownership-puid--pgid) above for what
+they do, and for what happens when they are wrong.
 
 ## Tests
 
@@ -444,7 +539,7 @@ do and what happens if they're wrong.
 npm test
 ```
 
-Runs the backend test suite (Node's built-in test runner — `undici`'s `MockAgent` mocks
-MusicBrainz, and `node:test`'s built-in method mocking stubs out `yt-dlp` calls — no live
-network calls). There are no automated frontend tests; verify UI changes by running
-`npm run dev` and testing in a browser.
+This runs the backend test suite on the built-in test runner of Node. The `MockAgent` of `undici`
+mocks MusicBrainz, and the built-in method mocking of `node:test` replaces the `yt-dlp` calls. The
+suite makes no live network request. There are no automated frontend tests. To verify a change to
+the UI, run `npm run dev` and test it in a browser.

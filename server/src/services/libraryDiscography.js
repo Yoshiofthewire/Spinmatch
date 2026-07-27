@@ -1,4 +1,7 @@
-import { searchArtists, browseReleaseGroupsByArtist, searchReleaseGroups } from './musicbrainz.js';
+import {
+  searchArtists, browseReleaseGroupsByArtist, searchReleaseGroups,
+  resolvePrimaryReleaseForGroup, getReleaseWithTracks,
+} from './musicbrainz.js';
 import { luceneQuoted } from '../lib/lucene.js';
 import { detectAlbumGaps } from './libraryGaps.js';
 import { getDb } from '../lib/db.js';
@@ -225,6 +228,68 @@ export async function resolveAlbum(artist, album, { db = getDb() } = {}) {
 
   saveAlbumLink(db, { artist, album, releaseGroupMbid: match?.mbid ?? null });
   return { releaseGroupMbid: match?.mbid ?? null, cached: false };
+}
+
+/**
+ * Names the MusicBrainz track sitting at one (disc, position) of a local album.
+ *
+ * This is what turns a gap the local numbering shows — "you have 1,2,3,5" — into
+ * something actionable: the placeholder row knows only a position, and a position
+ * cannot be searched for on YouTube. Once this has named it, the existing verify
+ * path takes over unchanged.
+ *
+ * Lives here rather than in libraryGaps because it needs resolveAlbum, and this
+ * module already imports libraryGaps — putting it there would close a cycle.
+ *
+ * Never throws for "we couldn't place this": an unresolvable album, a release
+ * group with no usable release, and a position past the end of the tracklist are
+ * all answers the UI has something useful to say about, not errors.
+ *
+ * @param {string|null} artist
+ * @param {string} album
+ * @param {object} options
+ * @param {number} [options.disc]  1 for a single-disc album, which is how local
+ *   rows with a NULL disc are asked about.
+ * @param {number} options.position
+ * @returns {Promise<object>} `{resolved: false, reason}` or `{resolved: true, …}`
+ */
+export async function resolveMissingTrack(artist, album, { disc = 1, position, db = getDb() } = {}) {
+  // Reuses the library_album_links memo, including its remembered negative — so
+  // clicking this on several gap rows of an album that can't be resolved spends
+  // one upstream search, not one per row.
+  const { releaseGroupMbid } = await resolveAlbum(artist, album, { db });
+  if (!releaseGroupMbid) return { resolved: false, reason: 'unresolved_album' };
+
+  const releaseMbid = await resolvePrimaryReleaseForGroup(releaseGroupMbid);
+  if (!releaseMbid) return { resolved: false, reason: 'no_release', releaseGroupMbid };
+
+  const { release, tracks } = await getReleaseWithTracks(releaseMbid);
+  // Same (disc, position) comparison alignToTracklist uses, including the `?? 1`
+  // on both sides: a single-disc release may carry no disc number upstream, and
+  // local single-disc rows carry NULL.
+  const match = tracks.find((t) => t.position === position && (t.discNumber ?? 1) === disc);
+  if (!match) {
+    // Worth distinguishing, because it usually means the opposite of a missing
+    // file: a position past the end of the official tracklist is more likely a
+    // wrong track number on a file you already have.
+    return {
+      resolved: false, reason: 'no_such_position', trackCount: tracks.length, releaseGroupMbid,
+    };
+  }
+
+  return {
+    resolved: true,
+    // The track's own credit before the release's, so a compilation names the
+    // artist who actually performed the track rather than "Various Artists".
+    artist: match.artist || release.artist || null,
+    title: match.title,
+    album: release.title,
+    lengthMs: match.lengthMs,
+    recordingMbid: match.recordingMbid,
+    position,
+    disc,
+    releaseGroupMbid,
+  };
 }
 
 // Checks one owned album against its MusicBrainz tracklist. This catches what
