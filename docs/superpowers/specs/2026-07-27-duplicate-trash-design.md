@@ -110,9 +110,16 @@ No behavioural change; `organize.test.js` passing unchanged is the regression pr
 
 ### `server/src/services/duplicateTrash.js` (new)
 
-- `trashPathFor(realPath)` — pure. Maps a library path to its mirror under `.spinmatch-trash`,
-  relative to the realpath-resolved `MUSIC_DIR` so it agrees with what
-  `assertReadableInsideMusicDir` returns.
+- `trashPathFor(filePath)` — pure and synchronous. Maps a library path to its mirror under
+  `.spinmatch-trash`, taking the relative part against `path.resolve(config.ingest.musicDir)`.
+
+  Lexically resolved, **not** realpath-resolved. `assertInsideMusicDir` and `reindexFile` already
+  compare against the lexically resolved root, so the rest of the app has long assumed
+  `MUSIC_DIR` is not itself a symlink; using realpath here would agree with
+  `assertReadableInsideMusicDir` and disagree with the two functions this feature actually calls.
+  If the assumption is ever violated, `path.relative` produces a `../` prefix, the derived
+  destination escapes the root, and the `assertInsideMusicDir(dest)` in the next step turns it into
+  a 400 — which is the correct outcome rather than a silent write outside the library.
 - `trashDuplicate({ trackId, db })`:
   1. `getTrackById` → `NotFoundError` if it is gone.
   2. `liveCopyCount(db, track.dup_key) < 2` → `ConflictError`. Before any filesystem call.
@@ -129,9 +136,9 @@ No behavioural change; `organize.test.js` passing unchanged is the regression pr
   8. `reindexFile(real)` — it stats, finds nothing, and marks the row removed inside a transaction
      with `recomputeStats`. Exactly the path `libraryScanner.js:249-256` was written for; no new
      index code.
-  9. Returns `{ trackId, trashedPath, dupKey, remainingCopies }`, where `remainingCopies` is the
-     live count *after* the move, so the client can render the group header without a refetch. The
-     path returned is the one actually claimed, which differs from the derived one in the suffixed
+  9. Returns `{ trackId, trashedPath, remainingCopies }`, where `remainingCopies` is the live count
+     *after* the move, so the client can render the group header without a refetch. The path
+     returned is the one actually claimed, which differs from the derived one in the suffixed
      case. The absolute path is returned
      rather than logged, unlike elsewhere in the app: this view already shows full paths by design,
      and the user is going to go and look at that folder.
@@ -164,9 +171,14 @@ Add `ConflictError` (409, code `CONFLICT`) alongside the existing four. `errorHa
 
 ### `server/src/lib/writeLoop.js`
 
-`describeFailure` gains an optional `action` label, defaulting to `'written'`, used in the two
-messages that name the operation ("The file could not be moved."). One shared error mapper is worth
-four characters of API; a second near-identical mapper in `duplicateTrash.js` is not.
+Unchanged. Parameterising `describeFailure` was the original intent, but its messages read "could
+not be **written to**" and a move needs a different verb in every branch, so the parameter would
+have to be the whole phrase rather than a label — at which point the shared function is a lookup
+table with extra steps. It also has no `ENOSPC` case, which a move needs and a tag write does not.
+
+`duplicateTrash.js` carries its own eight-entry `MOVE_FAILURES` table instead, mapping the
+filesystem error codes worth naming to messages written for a move. Two short tables, each honest
+about its own operation, beat one shared table that is wrong for half its callers.
 
 ### `server/src/routes/library.js`
 
