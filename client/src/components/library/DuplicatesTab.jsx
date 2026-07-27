@@ -124,7 +124,7 @@ export default function DuplicatesTab({ onPlay }) {
                         <button
                           type="button"
                           className="play-button"
-                          onClick={() => onPlay(copy, group.copies)}
+                          onClick={() => onPlay(copy, group.copies.filter((c) => !trashed[c.id]))}
                           disabled={Boolean(trashedPath)}
                           aria-label={`Play ${copy.title} — ${copy.path}`}
                         >

@@ -1,5 +1,21 @@
 # Moving a duplicate aside — Implementation Plan
 
+> **Superseded in part.** Mid-flight, the human ruled that a trash-path collision refuses with a 409
+> instead of suffixing onto `" (2)"` — see the spec's "The trash mirrors the library layout" decision
+> and `duplicateTrash.js`'s `trashLockedCopy`. This plan predates that ruling and still specifies the
+> opposite: **Task 1**'s `claimFreeName` deliverable (its Interfaces list and Steps 1, 3–5), the
+> `claimFreeName` tests in its Step 1 code block, and **Task 3**'s "a name already taken in the trash
+> is suffixed, never overwritten" test in its Step 1 code block all describe or test the suffixing
+> behaviour the ruling removed. What was actually built instead: both `trashDuplicate` and
+> `restoreDuplicate` claim their destination exactly with a plain `fs.open(dest, 'wx')` and throw
+> `ConflictError` on `EEXIST`; `claimFreeName` and its suffixing tests were never added.
+> `withSuffix`/`MAX_COLLISION_SUFFIX` did land in `lib/moveFile.js` as shown, but unused by the trash
+> flow — `organize.js`'s `claimDestination` is their only caller. Re-executing this plan as written
+> would rebuild the exact hazard the ruling exists to remove: a suffixed trash path breaks the
+> trash/restore symmetry Undo depends on (see the spec's "Restore recomputes the mirrored path fresh"
+> paragraph). This plan is left otherwise unedited as a historical record of how the work was
+> sequenced; treat the spec as authoritative wherever the two disagree.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Give the Duplicates view a per-copy **Move aside** button that relocates a redundant file

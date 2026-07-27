@@ -39,6 +39,16 @@ function boundedInt(value, min, max) {
   return i >= min && i <= max ? i : null;
 }
 
+// Only entry.name is checked against the dot-skip below, never dir itself —
+// so a caller that hands walk() a dot-prefixed root (.spinmatch-trash, say)
+// gets that root's contents indexed anyway. That's safe today only because
+// every caller's roots come from indexed, live paths: the full scan starts at
+// config.ingest.musicDir, and rescanDirs in routes/library.js derives its dirs
+// from listTrackPaths(… removed = 0), which by construction can never return a
+// path under the trash. duplicateTrash.js's "the trash is invisible to the
+// index" guarantee now depends on that chain rather than incidentally
+// benefiting from it — if a future caller ever passes walk() a directory it
+// picked some other way, this is the check that would need to move.
 async function* walk(dir) {
   let entries;
   try {
