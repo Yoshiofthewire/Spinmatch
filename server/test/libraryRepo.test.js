@@ -6,6 +6,7 @@ process.env.MB_CONTACT_EMAIL = 'test@example.com';
 
 const { openDb } = await import('../src/lib/db.js');
 const repo = await import('../src/services/libraryRepo.js');
+const { upsertLocalTrack, markRemovedByPath, getTrackById, getRemovedTrackById, liveCopyCountForTrack } = repo;
 
 function seeded() {
   const db = openDb(':memory:');
@@ -435,4 +436,44 @@ test('getAlbumTracks finds an album whose files carry no artist tag', () => {
   assert.equal(repo.getAlbumTracks(db, { artist: null, album: 'Untitled' }).length, 2);
   assert.equal(repo.getAlbumTracks(db, { artist: 'A', album: 'Untitled' }).length, 1);
   db.close();
+});
+
+// The last-copy guard and Undo both need to ask questions the rest of the app
+// never asks: how many live copies share this key, and where did a row that has
+// been marked removed used to live.
+test('liveCopyCountForTrack counts every live copy sharing the key, itself included', () => {
+  const db = openDb(':memory:');
+  upsertLocalTrack(db, { path: '/m/a.flac', artist: 'A', album: 'Al', title: 'One', durationMs: 1000, changeKey: '1:1' });
+  upsertLocalTrack(db, { path: '/m/b.mp3', artist: 'A', album: 'Al', title: 'One', durationMs: 1000, changeKey: '2:1' });
+  const [a, b] = db.prepare('SELECT id FROM local_tracks ORDER BY path').all();
+
+  assert.equal(liveCopyCountForTrack(db, a.id), 2);
+  assert.equal(liveCopyCountForTrack(db, b.id), 2);
+});
+
+test('liveCopyCountForTrack stops counting a copy once it is marked removed', () => {
+  const db = openDb(':memory:');
+  upsertLocalTrack(db, { path: '/m/a.flac', artist: 'A', album: 'Al', title: 'One', durationMs: 1000, changeKey: '1:1' });
+  upsertLocalTrack(db, { path: '/m/b.mp3', artist: 'A', album: 'Al', title: 'One', durationMs: 1000, changeKey: '2:1' });
+  const [a] = db.prepare('SELECT id FROM local_tracks ORDER BY path').all();
+
+  markRemovedByPath(db, '/m/b.mp3');
+  assert.equal(liveCopyCountForTrack(db, a.id), 1);
+});
+
+test('liveCopyCountForTrack returns 0 for an unknown id', () => {
+  const db = openDb(':memory:');
+  assert.equal(liveCopyCountForTrack(db, 999), 0);
+});
+
+test('getRemovedTrackById finds a row the rest of the app is right to hide', () => {
+  const db = openDb(':memory:');
+  upsertLocalTrack(db, { path: '/m/a.flac', artist: 'A', album: 'Al', title: 'One', durationMs: 1000, changeKey: '1:1' });
+  const { id } = db.prepare('SELECT id FROM local_tracks').get();
+
+  assert.equal(getRemovedTrackById(db, id), null, 'a live row is not in the trash');
+
+  markRemovedByPath(db, '/m/a.flac');
+  assert.equal(getTrackById(db, id), null, 'and the live lookup no longer finds it');
+  assert.equal(getRemovedTrackById(db, id).path, '/m/a.flac');
 });
