@@ -391,6 +391,18 @@ export function liveCopyCountForTrack(db, id) {
   `).get(id).c;
 }
 
+// The group a live track's last-copy guard has to serialize on. A dedicated
+// lookup rather than adding dup_key to TRACK_COLUMNS, which would put it on
+// every track payload the app sends out for the sake of the one caller (the
+// duplicate-trash flow) that needs it to lock a group of copies against a
+// concurrent move-aside of a sibling. Null for an unknown id and for a row
+// with no dup_key, same as liveCopyCountForTrack.
+export function getDupKeyForTrack(db, id) {
+  return db.prepare(
+    'SELECT dup_key FROM local_tracks WHERE id = ? AND removed = 0'
+  ).get(id)?.dup_key ?? null;
+}
+
 // Albums that look incomplete judged purely on what's on disk — no upstream
 // call, so this stays available when MusicBrainz doesn't. Three separate
 // signals, ranked by how confident we can be:

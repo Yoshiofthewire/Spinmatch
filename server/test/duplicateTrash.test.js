@@ -123,6 +123,33 @@ test('refuses an unknown track id', async () => {
   await assert.rejects(trashDuplicate({ trackId: 4242, db }), (err) => err.status === 404);
 });
 
+// The requirement above, under concurrency. Awaited sequentially, the count
+// check is safe by construction — there's nothing racing it. Fired together,
+// nothing stops both calls from reading "2 live copies" before either has
+// written anything, unless the check+move+reindex sequence is serialized per
+// dup_key rather than per file. Without that serialization this test moves
+// both copies and leaves zero live rows for the track — the very outcome the
+// last-copy guard exists to prevent.
+test('two concurrent requests for the two copies of one track: exactly one succeeds', async () => {
+  const db = freshDb();
+  const [first, second] = await seedTwoCopies(db);
+
+  const [a, b] = await Promise.allSettled([
+    trashDuplicate({ trackId: first.id, db }),
+    trashDuplicate({ trackId: second.id, db }),
+  ]);
+
+  const outcomes = [a, b];
+  const fulfilled = outcomes.filter((o) => o.status === 'fulfilled');
+  const rejected = outcomes.filter((o) => o.status === 'rejected');
+  assert.equal(fulfilled.length, 1, 'exactly one of the two racing requests moves a file');
+  assert.equal(rejected.length, 1, 'the other is refused, not silently a no-op');
+  assert.equal(rejected[0].reason.status, 409, 'refused as a conflict, not some other failure');
+
+  const live = db.prepare('SELECT COUNT(*) c FROM local_tracks WHERE removed = 0 AND dup_key IS NOT NULL').get().c;
+  assert.equal(live, 1, 'one live copy remains — the track has not silently lost all of its copies');
+});
+
 test('a name already taken in the trash is suffixed, never overwritten', async () => {
   const db = freshDb();
   const [first] = await seedTwoCopies(db);

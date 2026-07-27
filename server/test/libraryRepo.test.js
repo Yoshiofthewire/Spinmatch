@@ -477,6 +477,28 @@ test('liveCopyCountForTrack returns 0 for a row whose dup_key is null', () => {
   assert.equal(repo.liveCopyCountForTrack(db, id), 0);
 });
 
+// getDupKeyForTrack is the group key the duplicate-trash flow locks on, so a
+// concurrent move-aside of two copies of the same track serializes against
+// each other rather than racing the last-copy guard.
+test('getDupKeyForTrack returns the same key for every live copy in a group', () => {
+  const db = openDb(':memory:');
+  repo.upsertLocalTrack(db, { path: '/m/a.flac', artist: 'A', album: 'Al', title: 'One', durationMs: 1000, changeKey: '1:1' });
+  repo.upsertLocalTrack(db, { path: '/m/b.mp3', artist: 'A', album: 'Al', title: 'One', durationMs: 1000, changeKey: '2:1' });
+  const [a, b] = db.prepare('SELECT id FROM local_tracks ORDER BY path').all();
+
+  assert.equal(repo.getDupKeyForTrack(db, a.id), repo.getDupKeyForTrack(db, b.id));
+  assert.ok(repo.getDupKeyForTrack(db, a.id));
+});
+
+test('getDupKeyForTrack returns null for an unknown id and for a row with no dup_key', () => {
+  const db = openDb(':memory:');
+  repo.upsertLocalTrack(db, { path: '/m/untagged.mp3', artist: null, album: null, title: null, durationMs: 1000, changeKey: '1:1' });
+  const { id } = db.prepare('SELECT id FROM local_tracks').get();
+
+  assert.equal(repo.getDupKeyForTrack(db, 999), null);
+  assert.equal(repo.getDupKeyForTrack(db, id), null);
+});
+
 test('getRemovedTrackById finds a row the rest of the app is right to hide', () => {
   const db = openDb(':memory:');
   repo.upsertLocalTrack(db, { path: '/m/a.flac', artist: 'A', album: 'Al', title: 'One', durationMs: 1000, changeKey: '1:1' });
