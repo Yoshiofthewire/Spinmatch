@@ -501,7 +501,7 @@ that case it can change no owner for you, so the mounts must already be writable
 ## Running on Unraid
 
 A published image is at `ghcr.io/yoshiofthewire/spinmatch:latest`. The build runs automatically on
-every push to `main`, and daily when a new release of `yt-dlp` appears.
+every push to `main`, and within an hour of a new release of `yt-dlp` appearing.
 
 To install with Community Applications:
 
