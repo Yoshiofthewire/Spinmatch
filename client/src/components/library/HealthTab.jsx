@@ -105,17 +105,20 @@ function IssueTracks({ issue, fixable, onFixed, onSelectAlbum, onPlay }) {
                   {track.title
                     ? <span className={track.titleSynthesized ? 'muted' : undefined}>{track.title}</span>
                     : <span className="muted">—</span>}
-                  {track.titleSynthesized && <span className="muted"> (from filename)</span>}
+                  {/* Boolean(), because the synthesized flags come back from
+                      SQLite as 0 and 1 rather than false and true — and React
+                      renders a literal 0 for the left side of a false `&&`. */}
+                  {Boolean(track.titleSynthesized) && <span className="muted"> (from filename)</span>}
                   {/* The path is the only identifier an untagged file has, so it
                       has to be visible for the row to mean anything. */}
-                  {(!track.title || track.titleSynthesized)
+                  {(!track.title || Boolean(track.titleSynthesized))
                     && <span className="muted mono fix-path">{track.path}</span>}
                 </td>
                 <td>
                   {track.album
                     ? <span className={track.albumSynthesized ? 'muted' : undefined}>{track.album}</span>
                     : <span className="muted">—</span>}
-                  {track.albumSynthesized && <span className="muted"> (from folder)</span>}
+                  {Boolean(track.albumSynthesized) && <span className="muted"> (from folder)</span>}
                 </td>
                 <td className="mono">{track.trackNumber ?? '—'}</td>
                 {fixable && (
