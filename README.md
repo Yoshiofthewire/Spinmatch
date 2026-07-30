@@ -59,12 +59,6 @@ the video length is to the length that MusicBrainz records:
 
 ![The same album with three tracks matched individually, and a row marked "Unverified (closest match)" 129 seconds out](docs/screenshots/verify-track.png)
 
-Every match has a **Copy** button for the URL, and **Copy all links to clipboard** takes the whole
-run at once. Set `METUBE_URL` and each match also gets a **Send to MeTube** button, which posts the
-video URL to `{METUBE_URL}/add` from your browser.
-[MeTube](https://github.com/alexta69/metube) is a separate self-hosted downloader; Spinmatch only
-hands it a link.
-
 ## Your library
 
 Set `MUSIC_DIR` and Spinmatch indexes that directory into a local SQLite database and adds a
@@ -257,7 +251,7 @@ so a slow or unreachable MusicBrainz never blocks a page.
 
 - **Missing albums** (artist view) — compares the studio discography of the artist against what you
   own. It shows each absent record with its cover art and year. Each record links to the existing
-  release-group page, where you can verify the tracks against YouTube and send them to MeTube. A
+  release-group page, where you can verify the tracks against YouTube. A
   match from a local artist name to MusicBrainz is a fuzzy search. When the match is ambiguous,
   Spinmatch asks you to select one instead of guessing, and it remembers your choice.
 
@@ -293,7 +287,7 @@ so a slow or unreachable MusicBrainz never blocks a page.
   tracks. Each absent track gets the usual **Find on YouTube** button. **Find all missing on
   YouTube** does the whole gap in one pass. It uses the same streaming, one-at-a-time matching as
   the release-group page. It covers only the tracks that you do not own, so Spinmatch searches for
-  nothing that you have. The results have the usual copy-link and Send to MeTube actions.
+  nothing that you have.
 - **Find every missing track on YouTube** (artist view) — a sweep of the whole discography. It
   covers every track of every album that the artist has and you do not, in one streaming run. This
   is several minutes of work at one lookup per second. Spinmatch therefore writes each result to a
@@ -317,7 +311,7 @@ the reverse. It reaches music that you do not have from music that you do:
   ![The Discover tab listing similar artists, each row naming the signal and which of your artists led to it](docs/screenshots/library-discover.png)
 - **Suggest albums** — the same idea, one step further. It lists the studio discographies of the
   first few discovered artists, without the records that you already own. Each cover links to the
-  release-group page, where the existing verify-and-send-to-MeTube flow continues.
+  release-group page, where the existing verify flow continues.
 - **Rebuild a playlist** — paste one track for each line, as `Artist - Title` or as a title alone.
   Spinmatch reports what you already have and what you must still find. This works offline. It
   matches against the index and makes no upstream request, so it works when MusicBrainz does not.
@@ -420,7 +414,7 @@ folder. Spinmatch does not change a file that is not audio.
 
 ## History
 
-The **History** page lists what you have verified, sent to MeTube, and ingested, with a timestamp for
+The **History** page lists what you have verified and ingested, with a timestamp for
 each. It is a record of your own actions, held in the local storage of your browser, and it keeps the
 newest 200. Nothing on this page reaches the server, and **Clear All** empties it.
 
@@ -520,7 +514,6 @@ Every other variable is optional. `.env.example` carries the same list with long
 | `PORT` | `3000` | The port the server listens on. |
 | `MB_APP_NAME`, `MB_APP_VERSION` | `Spinmatch`, `0.1.0` | The other two parts of the `User-Agent`. |
 | `YTDLP_PATH` | `yt-dlp` | Path to the `yt-dlp` program, when it is not on `PATH`. |
-| `METUBE_URL` | unset | Base URL of a [MeTube](https://github.com/alexta69/metube) instance. Set it to get **Send to MeTube** buttons. |
 | `MUSIC_DIR` | unset | Your music folder. Setting it enables [Your Library](#your-library). |
 | `INGEST_DIR` | unset | The drop folder. Set it *and* `MUSIC_DIR` to enable [Ingest](#adding-new-files-the-ingest-page). |
 | `LIBRARY_DB` | `data/library.db` | The SQLite file. It always holds the login, plus the library index when `MUSIC_DIR` is set. The Docker image sets it to `/data/db/library.db`. |
