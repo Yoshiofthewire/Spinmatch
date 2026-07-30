@@ -118,8 +118,13 @@ export default function TagEditPanel({ track, onSaved, onCancel, onPlay }) {
         <>
           <div className="tag-edit-grid">
             {states.map((field) => {
-              const synthesized = (field.key === 'album' && track.albumSynthesized)
-                || (field.key === 'title' && track.titleSynthesized);
+              // Boolean(), because the synthesized flags arrive from SQLite as 0
+              // or 1 — without it this is 0 rather than false for an ordinary
+              // field, and React renders that 0 next to the input below.
+              const synthesized = Boolean(
+                (field.key === 'album' && track.albumSynthesized)
+                || (field.key === 'title' && track.titleSynthesized)
+              );
               return (
                 <div key={field.key} className="tag-edit-row">
                   <label htmlFor={`tag-${track.id}-${field.key}`}>{field.label}</label>

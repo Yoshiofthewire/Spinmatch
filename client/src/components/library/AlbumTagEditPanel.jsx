@@ -251,7 +251,9 @@ export default function AlbumTagEditPanel({ artist, album, tracks, onSaved, onCa
                       aria-label={`Title for ${track.title}`}
                       onChange={(e) => setRow(track.id, 'title', e.target.value)}
                     />
-                    {track.titleSynthesized && (
+                    {/* Boolean(), because titleSynthesized arrives from SQLite as
+                        0 or 1 — React renders a literal 0 for a false `&&`. */}
+                    {Boolean(track.titleSynthesized) && (
                       <span className="muted"> (from filename)</span>
                     )}
                   </td>
