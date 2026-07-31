@@ -288,13 +288,20 @@ export function openDb(dbPath) {
     fs.mkdirSync(path.dirname(dbPath), { recursive: true });
   }
   const db = new DatabaseSync(dbPath);
+  // First, before anything that touches the file. The scan runs in a worker
+  // thread holding its own connection, and that connection takes a brief
+  // exclusive lock when it checkpoints the WAL on close — so opening a
+  // connection can collide with a scan finishing. Set last, the collision landed
+  // on `PRAGMA journal_mode` (the first statement here that reads the file) with
+  // no timeout yet in force, and a plain read failed outright with SQLITE_BUSY
+  // instead of waiting the 5s this line exists to allow.
+  db.exec('PRAGMA busy_timeout = 5000;');
   db.exec('PRAGMA foreign_keys = ON;');
   // WAL lets dashboard reads run without blocking behind a long library scan
   // (and vice-versa); NORMAL sync is the standard, safe WAL pairing. Harmless
   // no-op for the in-memory DB used by tests.
   db.exec('PRAGMA journal_mode = WAL;');
   db.exec('PRAGMA synchronous = NORMAL;');
-  db.exec('PRAGMA busy_timeout = 5000;');
   db.exec(SCHEMA);
   // A fresh DB gets every column from SCHEMA, so migrate() finds nothing to
   // alter and just stamps the version. Only an upgraded install does real work.
