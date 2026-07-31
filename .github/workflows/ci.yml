@@ -51,10 +51,19 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # Runs the server workspace's suite (~600 tests, ~20s). Needs no network:
+      # fpcalc, from Chromaprint — the same binary the Dockerfile installs, which
+      # is why it is installed here rather than stubbed. Most of fpcalc.test.js
+      # mocks execFile, but its last case deliberately runs the real thing
+      # against a real fixture, and that is the only test that would notice the
+      # binary changing its output format under us. Skipping it on a missing
+      # binary would leave CI green while testing nothing.
+      - name: Install Chromaprint (fpcalc)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libchromaprint-tools
+
+      # Runs the server workspace's suite (~600 tests, ~30s). Needs no network:
       # every upstream is an undici MockAgent with net connect disabled, and
-      # yt-dlp and fpcalc are mocked at execFile rather than invoked, so neither
-      # binary has to exist on the runner.
+      # yt-dlp is mocked at execFile rather than invoked, so that binary does not
+      # have to exist on the runner.
       #
       # One scanner test makes a directory unreadable with chmod 000 to prove an
       # unreadable subtree isn't reconciled as "removed". GitHub's runners
