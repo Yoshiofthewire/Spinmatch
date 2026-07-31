@@ -337,3 +337,90 @@ test('an in-range track number still survives the clamp', async () => {
     assert.equal(track.year, 1994);
   });
 });
+
+// A directory the scan cannot list tells it nothing about the tracks under it.
+// Treating that as "empty" is what made a transient EACCES (or an NFS blip) erase
+// an entire album from the index — and with it the added_at of every track on it.
+test('a subtree that cannot be read is left alone, not marked removed', async (t) => {
+  await withMusicDir(async (dir, db) => {
+    const albumDir = path.join(dir, 'Artist', 'Album');
+    await fs.mkdir(albumDir, { recursive: true });
+    await fs.writeFile(path.join(albumDir, '01.mp3'), 'x');
+    await fs.writeFile(path.join(dir, 'loose.mp3'), 'x');
+
+    const { runScanOnce } = await freshScanner(async () => ({ artist: 'A', album: 'B', title: 'T' }));
+    const first = await runScanOnce();
+    assert.equal(first.added, 2);
+
+    const repo = await import('../src/services/libraryRepo.js');
+    assert.equal(repo.getStats(db).totalTracks, 2);
+
+    await fs.chmod(albumDir, 0o000);
+    try {
+      // Running as root would read it anyway and the test would prove nothing.
+      await fs.readdir(albumDir);
+      t.skip('cannot make a directory unreadable as this user');
+      return;
+    } catch {
+      // Good: the scan is about to hit the same EACCES.
+    }
+
+    try {
+      const second = await runScanOnce();
+      assert.equal(second.removed, 0, 'an unreadable subtree must not count as removals');
+      assert.equal(repo.getStats(db).totalTracks, 2, 'the hidden album must still be indexed');
+    } finally {
+      await fs.chmod(albumDir, 0o755);
+    }
+  });
+});
+
+// The narrow counterpart: rescanDirs resolves removals per known path in scope,
+// so an unreadable folder there is the whole of the scope it was asked about.
+test('rescanDirs does not remove tracks under a directory it could not read', async (t) => {
+  await withMusicDir(async (dir, db) => {
+    const albumDir = path.join(dir, 'Artist', 'Album');
+    await fs.mkdir(albumDir, { recursive: true });
+    await fs.writeFile(path.join(albumDir, '01.mp3'), 'x');
+
+    const scanner = await freshScanner(async () => ({ artist: 'A', album: 'B', title: 'T' }));
+    await scanner.runScanOnce();
+    const repo = await import('../src/services/libraryRepo.js');
+    assert.equal(repo.getStats(db).totalTracks, 1);
+
+    await fs.chmod(albumDir, 0o000);
+    try {
+      await fs.readdir(albumDir);
+      t.skip('cannot make a directory unreadable as this user');
+      return;
+    } catch { /* expected */ }
+
+    try {
+      const summary = await scanner.rescanDirs([albumDir]);
+      assert.equal(summary.removed, 0);
+      assert.equal(repo.getStats(db).totalTracks, 1);
+    } finally {
+      await fs.chmod(albumDir, 0o755);
+    }
+  });
+});
+
+// A genuinely deleted file still has to disappear — the guard above must not
+// have turned removal off in general.
+test('a deleted file is still marked removed when the walk succeeded', async () => {
+  await withMusicDir(async (dir, db) => {
+    const gone = path.join(dir, 'gone.mp3');
+    await fs.writeFile(gone, 'x');
+    await fs.writeFile(path.join(dir, 'stays.mp3'), 'x');
+
+    const { runScanOnce } = await freshScanner(async () => ({ artist: 'A', album: 'B', title: 'T' }));
+    await runScanOnce();
+    const repo = await import('../src/services/libraryRepo.js');
+    assert.equal(repo.getStats(db).totalTracks, 2);
+
+    await fs.rm(gone);
+    const second = await runScanOnce();
+    assert.equal(second.removed, 1);
+    assert.equal(repo.getStats(db).totalTracks, 1);
+  });
+});

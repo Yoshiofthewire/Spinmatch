@@ -572,9 +572,19 @@ libraryRouter.post('/bulk-fix/apply', async (req, res, next) => {
       album,
       source: str(req.body?.source) ?? 'path',
     };
+    // Rejected, not filtered. `.filter(Number.isInteger)` dropped anything that
+    // wasn't a number and then repaired whatever was left, so a request naming
+    // ten tracks where one id was malformed came back 200 with a summary of nine
+    // — and nothing in that response said which one never happened. A caller
+    // asking to repair a set is asking about the set.
+    const ids = trackIds.map((id) => (typeof id === 'number' || typeof id === 'string' ? Number(id) : NaN));
+    if (!ids.every((id) => Number.isInteger(id) && id > 0)) {
+      throw new BadRequestError('trackIds must all be positive whole numbers');
+    }
+
     res.json(await applyBulkFix({
       ...args,
-      trackIds: trackIds.map(Number).filter(Number.isInteger),
+      trackIds: ids,
       preview: previewCache.get(previewKey(args)) ?? null,
     }));
   } catch (err) {
