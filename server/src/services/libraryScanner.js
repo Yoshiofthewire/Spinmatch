@@ -49,22 +49,43 @@ function boundedInt(value, min, max) {
 // index" guarantee now depends on that chain rather than incidentally
 // benefiting from it — if a future caller ever passes walk() a directory it
 // picked some other way, this is the check that would need to move.
-async function* walk(dir) {
+//
+// `unreadable` collects the directories that could not be listed. Skipping the
+// subtree is right — there is nothing to report about files we cannot see — but
+// the caller must not then conclude they are gone: a walk that silently returns
+// nothing for a subtree and a walk over an emptied subtree look identical from
+// the outside, and the second one marks every track under it removed. A
+// permissions blip or an NFS hiccup on one album folder was enough to erase that
+// album from the index. Callers pass a Set and exclude what's under it from
+// removal; see the reconciliation in runScanOnce.
+async function* walk(dir, unreadable) {
   let entries;
   try {
     entries = await fs.readdir(dir, { withFileTypes: true });
-  } catch {
-    return; // unreadable dir -> skip subtree
+  } catch (err) {
+    // unreadable dir -> skip subtree, and tell the caller we did
+    console.warn(`libraryScanner: could not read ${dir}, skipping subtree: ${err.message}`);
+    unreadable.add(dir);
+    return;
   }
   for (const entry of entries) {
     if (entry.name.startsWith('.')) continue;
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
-      yield* walk(full);
+      yield* walk(full, unreadable);
     } else if (entry.isFile() && isAudioFile(entry.name)) {
       yield full;
     }
   }
+}
+
+// True when `filePath` sits under any of `dirs`. Used to hold back removals for
+// the parts of the tree a scan could not actually look at.
+function isUnderAny(filePath, dirs) {
+  for (const dir of dirs) {
+    if (filePath.startsWith(dir + path.sep)) return true;
+  }
+  return false;
 }
 
 // The single place a file on disk becomes a local_tracks row. Shared by the full
@@ -188,6 +209,7 @@ export async function runScanOnce() {
 
   const known = getChangeKeys(db);
   const seen = new Set();
+  const unreadableDirs = new Set();
   const toUpsert = [];
   let scanned = 0;
   let added = 0;
@@ -195,7 +217,7 @@ export async function runScanOnce() {
 
   // Phase 1 (async IO): walk, stat, and read tags for changed files only,
   // collecting the rows to write. No DB mutation happens here.
-  for await (const filePath of walk(root)) {
+  for await (const filePath of walk(root, unreadableDirs)) {
     scanned += 1;
     seen.add(filePath);
     let stat;
@@ -220,6 +242,18 @@ export async function runScanOnce() {
 
     if (!known.has(filePath)) added += 1; else updated += 1;
     toUpsert.push(rowFor(filePath, stat, meta));
+  }
+
+  // A subtree the walk could not list has to be treated as "still there, we just
+  // couldn't look", not as empty. The root gets this protection up front (the
+  // fs.access above); this extends it to every directory below it, which is
+  // where the realistic failures are — one album folder on a network mount, a
+  // permission that flickers during a re-export. Holding these back means a
+  // failed scan under-reports removals, which the next successful scan corrects;
+  // the alternative was deleting an entire artist's index on a transient EACCES
+  // and losing every added_at with it.
+  for (const filePath of known.keys()) {
+    if (!seen.has(filePath) && isUnderAny(filePath, unreadableDirs)) seen.add(filePath);
   }
 
   // Phase 2 (chunked transactions): batch the upserts so each commit is one
@@ -288,12 +322,13 @@ export async function rescanDirs(dirs) {
   const known = getChangeKeys(db);
   const knownInScope = [...known.keys()].filter(inScope);
   const seen = new Set();
+  const unreadableDirs = new Set();
   const toUpsert = [];
   let added = 0;
   let updated = 0;
 
   for (const root of roots) {
-    for await (const filePath of walk(root)) {
+    for await (const filePath of walk(root, unreadableDirs)) {
       seen.add(filePath);
       let stat;
       try {
@@ -315,7 +350,12 @@ export async function rescanDirs(dirs) {
     }
   }
 
-  const gone = knownInScope.filter((p) => !seen.has(p));
+  // Same rule as the full scan: a directory that could not be listed says
+  // nothing about the tracks under it. A rescan is narrower, so an unreadable
+  // root here can be the whole of the requested scope — and marking the album
+  // you just repaired as removed because its folder was briefly busy is exactly
+  // the failure this guards.
+  const gone = knownInScope.filter((p) => !seen.has(p) && !isUnderAny(p, unreadableDirs));
   withTransaction(db, () => {
     for (const row of toUpsert) upsertLocalTrack(db, row);
     for (const p of gone) markRemovedByPath(db, p);

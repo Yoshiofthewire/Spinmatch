@@ -6,8 +6,50 @@ import { sameOriginOnly } from '../middleware/sameOriginOnly.js';
 import { BadRequestError } from '../lib/httpErrors.js';
 import { assertMbid, requireMbidParam } from '../lib/mbid.js';
 import { sseStream, STREAM_HANDLED } from '../lib/sse.js';
+import { MAX_TAG_TEXT } from '../lib/tagLimits.js';
 
 export const verifyRouter = Router();
+
+// Nothing on this route is a tag, but the values are the same kind of thing —
+// an artist and a title someone is asking about — so they get the same ceiling
+// rather than a second number meaning the same thing.
+//
+// A truthiness check was the whole of the validation here, and truthiness says
+// nothing about type or size: an array, an object, or a megabyte of pasted text
+// all passed and went on to become a yt-dlp search argument (a single argv
+// element, never a shell string — see ytdlp.js — so the risk was the size of the
+// argument and the junk in the cache key, not injection).
+function requireText(value, field) {
+  if (typeof value !== 'string') throw new BadRequestError(`${field} must be text`);
+  const trimmed = value.trim();
+  if (!trimmed) throw new BadRequestError(`${field} is required`);
+  if (trimmed.length > MAX_TAG_TEXT) {
+    throw new BadRequestError(`${field} must be ${MAX_TAG_TEXT} characters or fewer`);
+  }
+  return trimmed;
+}
+
+function optionalText(value, field) {
+  if (value === undefined || value === null || value === '') return undefined;
+  return requireText(value, field);
+}
+
+// Long enough for a Grateful Dead show, short enough that it is still a track.
+const MAX_LENGTH_MS = 24 * 60 * 60 * 1000;
+
+// lengthMs is arithmetic, not text: durationMatch subtracts it from every
+// candidate's duration to rank them. NaN (from a string, an object, a boolean)
+// makes every comparison false, so the ranking silently returns nothing rather
+// than failing; Infinity and negatives are worse in the same quiet way. Rounded
+// because it also forms part of the result cache key, where 3000 and 3000.4
+// would otherwise be two entries for one track.
+function requireLengthMs(value) {
+  const n = typeof value === 'number' || typeof value === 'string' ? Number(value) : NaN;
+  if (!Number.isFinite(n) || n <= 0 || n > MAX_LENGTH_MS) {
+    throw new BadRequestError(`lengthMs must be a duration in milliseconds between 1 and ${MAX_LENGTH_MS}`);
+  }
+  return Math.round(n);
+}
 
 // `recordingMbid` is optional, and what it buys is persistence. Without it the
 // answer is cached in memory for an hour and lost on restart; with it the lookup
@@ -17,10 +59,13 @@ export const verifyRouter = Router();
 // it; a free-text search result has no recording to key on and doesn't.
 verifyRouter.post('/', async (req, res, next) => {
   try {
-    const { artist, title, album, lengthMs, recordingMbid } = req.body || {};
-    if (!artist || !title || !lengthMs) {
-      throw new BadRequestError('artist, title, and lengthMs are required');
-    }
+    const body = req.body || {};
+    const artist = requireText(body.artist, 'artist');
+    const title = requireText(body.title, 'title');
+    const album = optionalText(body.album, 'album');
+    const lengthMs = requireLengthMs(body.lengthMs);
+    const { recordingMbid } = body;
+
     const result = recordingMbid
       ? await verifyRecording({
         recordingMbid: assertMbid(String(recordingMbid), 'recordingMbid'),

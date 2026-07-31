@@ -77,3 +77,43 @@ test('getFrontCoverImage returns null when no cover art exists', async () => {
   const image = await getFrontCoverImage('rg-no-cover');
   assert.equal(image, null);
 });
+
+// Content-Length is what the sender claims. Buffering the whole body first and
+// checking its size afterwards means the claim decides how much memory the
+// process allocates, which is the wrong way round.
+test('getFrontCoverImage refuses a body that runs past the limit despite a small Content-Length', async () => {
+  const pool = mockCoverArtArchive();
+  const { MAX_IMAGE_BYTES } = await import('../src/lib/imageBytes.js');
+  const oversized = Buffer.alloc(MAX_IMAGE_BYTES + 1024, 0x41);
+
+  pool
+    .intercept({ path: '/release-group/rg-liar/front', method: 'HEAD' })
+    .reply(307, '', { headers: { location: 'https://coverartarchive.org/release-group/rg-liar/front-1200.jpg' } });
+  pool
+    .intercept({ path: '/release-group/rg-liar/front-1200.jpg', method: 'HEAD' })
+    .reply(200, '', { headers: {} });
+  pool
+    .intercept({ path: '/release-group/rg-liar/front-1200.jpg', method: 'GET' })
+    .reply(200, oversized, { headers: { 'content-type': 'image/jpeg', 'content-length': '1024' } });
+
+  assert.equal(await getFrontCoverImage('rg-liar'), null);
+});
+
+// The honest oversized case is still refused on the header alone, without
+// reading the body at all.
+test('getFrontCoverImage refuses art that declares itself over the limit', async () => {
+  const pool = mockCoverArtArchive();
+  const { MAX_IMAGE_BYTES } = await import('../src/lib/imageBytes.js');
+
+  pool
+    .intercept({ path: '/release-group/rg-huge/front', method: 'HEAD' })
+    .reply(307, '', { headers: { location: 'https://coverartarchive.org/release-group/rg-huge/front-1200.jpg' } });
+  pool
+    .intercept({ path: '/release-group/rg-huge/front-1200.jpg', method: 'HEAD' })
+    .reply(200, '', { headers: {} });
+  pool
+    .intercept({ path: '/release-group/rg-huge/front-1200.jpg', method: 'GET' })
+    .reply(200, '', { headers: { 'content-type': 'image/jpeg', 'content-length': String(MAX_IMAGE_BYTES + 1) } });
+
+  assert.equal(await getFrontCoverImage('rg-huge'), null);
+});

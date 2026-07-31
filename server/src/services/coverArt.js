@@ -5,6 +5,12 @@ import { MAX_IMAGE_BYTES } from '../lib/imageBytes.js';
 
 const CACHE_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
 
+// Node's fetch has no default timeout, so a connection that opens and then goes
+// quiet is held until the OS gives up on the socket — minutes, during which the
+// album grid's two dozen parallel cover requests are all still queued behind it.
+// Same value and same reasoning as listenBrainz.js.
+const REQUEST_TIMEOUT_MS = 15_000;
+
 // URLs are small, so a generous cache costs little. Image *bodies* are not: this
 // cache holds Buffers, so it is bounded by total bytes rather than by entry
 // count. `maxEntries: 24` was not the tight bound its comment claimed — at the
@@ -28,7 +34,11 @@ export async function getFrontCoverUrl(releaseGroupMbid) {
   const url = `https://coverartarchive.org/release-group/${releaseGroupMbid}/front`;
   let result = null;
   try {
-    const response = await fetch(url, { method: 'HEAD', redirect: 'follow' });
+    const response = await fetch(url, {
+      method: 'HEAD',
+      redirect: 'follow',
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
     if (response.ok) result = response.url;
   } catch (err) {
     // Cover art is decorative: a failed HEAD means "no art", and logging it is
@@ -41,6 +51,26 @@ export async function getFrontCoverUrl(releaseGroupMbid) {
   return result;
 }
 
+// Reads a response body up to `limit` bytes, or returns null the moment it goes
+// over. Returning early out of the for-await cancels the underlying stream, so
+// an oversized body stops arriving rather than being drained.
+//
+// This is the check that has to hold. Content-Length is what the sender chose to
+// claim: a response that omits it, or lies about it, was free to allocate as
+// much memory as it liked under a `Buffer.from(await response.arrayBuffer())` —
+// the whole body lands before its size can be looked at.
+async function readCapped(response, limit) {
+  if (!response.body) return Buffer.alloc(0);
+  const chunks = [];
+  let total = 0;
+  for await (const chunk of response.body) {
+    total += chunk.byteLength;
+    if (total > limit) return null;
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks, total);
+}
+
 // Downloads the actual cover art image bytes for embedding into tagged files.
 // Returns {bytes: Buffer, mimeType: string} or null if no cover art exists.
 export async function getFrontCoverImage(releaseGroupMbid) {
@@ -51,12 +81,11 @@ export async function getFrontCoverImage(releaseGroupMbid) {
   let result = null;
   if (url) {
     try {
-      const response = await fetch(url);
+      const response = await fetch(url, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
       const declared = Number(response.headers.get('content-length'));
       if (response.ok && !(declared > MAX_IMAGE_BYTES)) {
-        const bytes = Buffer.from(await response.arrayBuffer());
-        // Re-checked after reading: Content-Length is a hint, not a promise.
-        if (bytes.length <= MAX_IMAGE_BYTES) {
+        const bytes = await readCapped(response, MAX_IMAGE_BYTES);
+        if (bytes) {
           result = { bytes, mimeType: response.headers.get('content-type') || 'image/jpeg' };
         } else {
           console.warn(`coverArt: front cover for ${releaseGroupMbid} exceeds ${MAX_IMAGE_BYTES} bytes, skipping`);

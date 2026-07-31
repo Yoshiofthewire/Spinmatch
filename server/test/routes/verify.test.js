@@ -261,3 +261,31 @@ test('POST /api/verify rejects a malformed recordingMbid', async () => {
   });
   assert.equal(res.status, 400);
 });
+
+// artist and title become a yt-dlp search argument and lengthMs becomes duration
+// arithmetic, so both are checked for type and size rather than truthiness. Each
+// of these used to reach yt-dlp (or the ranking) as-is.
+test('POST /api/verify rejects non-string, oversized and out-of-range fields', async () => {
+  mockMusicBrainzAgent();
+  const bad = [
+    { artist: ['A'], title: 'T', lengthMs: 1000 },
+    { artist: { toString: 'x' }, title: 'T', lengthMs: 1000 },
+    { artist: 'A', title: 42, lengthMs: 1000 },
+    { artist: 'A', title: '   ', lengthMs: 1000 },
+    { artist: 'A'.repeat(5000), title: 'T', lengthMs: 1000 },
+    { artist: 'A', title: 'T', album: ['nope'], lengthMs: 1000 },
+    { artist: 'A', title: 'T', lengthMs: -5 },
+    { artist: 'A', title: 'T', lengthMs: 0 },
+    { artist: 'A', title: 'T', lengthMs: 'four minutes' },
+    { artist: 'A', title: 'T', lengthMs: Number.MAX_SAFE_INTEGER },
+    { artist: 'A', title: 'T', lengthMs: true },
+  ];
+  for (const body of bad) {
+    const res = await fetch(`${baseUrl}/api/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Sec-Fetch-Site': 'same-origin' },
+      body: JSON.stringify(body),
+    });
+    assert.equal(res.status, 400, `expected 400 for ${JSON.stringify(body)}`);
+  }
+});

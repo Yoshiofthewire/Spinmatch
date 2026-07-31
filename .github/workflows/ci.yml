@@ -1,0 +1,103 @@
+name: CI
+
+# What has to be true before a change lands: the server suite passes, the client
+# still builds, and the image still builds.
+#
+# The image check matters more here than it looks. docker-publish.yml only builds
+# on push to main, so without this a Dockerfile mistake is merged first and
+# discovered when the publish run fails — with main already broken. Running it on
+# pull requests puts the failure before the merge instead.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A newer push to the same branch makes the older run's answer irrelevant before
+# it finishes. Keyed on the ref rather than the SHA so the cancellation applies
+# across pushes to one branch, not just re-runs of one commit.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Read-only. Nothing here publishes; docker-publish.yml is the only workflow that
+# needs packages: write, and this one must not be a second way to get it.
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Server tests and client build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          # Matches the runtime the image ships (node:24-alpine in the
+          # Dockerfile). Testing a version this app is never deployed on would
+          # report failures nobody can hit and miss the ones they can — the
+          # suite leans on Node 24 behaviour either way (node:test module
+          # mocking, AbortSignal.timeout).
+          node-version: 24
+          # Keyed on package-lock.json, which is the file npm ci reads.
+          cache: npm
+
+      # ci, not install: it installs exactly what the lockfile pins and fails
+      # rather than quietly resolving something newer, which is the same
+      # reasoning the Dockerfile's build stage gives.
+      - name: Install dependencies
+        run: npm ci
+
+      # Runs the server workspace's suite (~600 tests, ~20s). Needs no network:
+      # every upstream is an undici MockAgent with net connect disabled, and
+      # yt-dlp and fpcalc are mocked at execFile rather than invoked, so neither
+      # binary has to exist on the runner.
+      #
+      # One scanner test makes a directory unreadable with chmod 000 to prove an
+      # unreadable subtree isn't reconciled as "removed". GitHub's runners
+      # execute as an unprivileged user, so that holds; the test detects root and
+      # skips itself rather than passing vacuously if this ever runs in a
+      # container as uid 0.
+      - name: Run server tests
+        run: npm test
+
+      # The client has no test suite, so the Vite build is what stands between a
+      # broken import and a container that serves a blank page. It is also the
+      # only place the client is exercised at all in CI.
+      - name: Build the client
+        run: npm run build
+
+  docker:
+    name: Docker image builds
+    runs-on: ubuntu-latest
+    # Skipped on push to main, where docker-publish.yml builds the same image for
+    # real a moment later. Duplicating that build would double the work to learn
+    # the same thing.
+    if: github.event_name != 'push'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build the image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          platforms: linux/amd64
+          # Matching docker-publish.yml: a single-platform build here would
+          # otherwise get wrapped in an OCI index by the default attestations,
+          # which is pure overhead for an image that is thrown away.
+          provenance: false
+          sbom: false
+          # YTDLP_VERSION deliberately unset, so this exercises the same
+          # unpinned "install the latest from PyPI" path a plain local
+          # `docker build` takes. The publish workflow passes a resolved version
+          # instead; that path is covered there.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

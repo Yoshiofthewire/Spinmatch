@@ -6,6 +6,8 @@ import { UpstreamUnavailableError, RateLimitedError } from '../lib/httpErrors.js
 const BASE_URL = 'https://api.acoustid.org/v2/lookup';
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours — a fingerprint→recording mapping is stable
 
+const REQUEST_TIMEOUT_MS = 15_000;
+
 // AcoustID's documented limit is 3 requests/sec per API key.
 const rateLimiter = new RateLimiter(334);
 // Keyed by audio fingerprint, so one entry per distinct file ever ingested.
@@ -27,7 +29,15 @@ export async function lookup({ fingerprint, durationSeconds }) {
 
     let response;
     try {
-      response = await fetch(BASE_URL, { method: 'POST', body });
+      // Timed out for the same reason MusicBrainz is: the rate limiter above is
+      // one process-wide queue, so a stalled request holds up every fingerprint
+      // lookup behind it, and Node's fetch waits on a half-open socket for
+      // minutes by default.
+      response = await fetch(BASE_URL, {
+        method: 'POST',
+        body,
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
     } catch (err) {
       throw new UpstreamUnavailableError(`Could not reach AcoustID: ${err.message}`);
     }

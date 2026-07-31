@@ -6,6 +6,14 @@ import { UpstreamUnavailableError } from '../lib/httpErrors.js';
 const BASE_URL = 'https://musicbrainz.org/ws/2';
 const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 
+// Node's fetch has no default timeout, and this is the worst place in the app to
+// go without one: the rate limiter below is a single process-wide queue, so one
+// request stalled on a half-open socket stalls *every* MusicBrainz lookup behind
+// it — the artist sweep, the album check, the bulk repair — for as long as the
+// OS keeps the socket alive. The signal covers reading the body too, not just
+// the handshake.
+const REQUEST_TIMEOUT_MS = 15_000;
+
 // MusicBrainz allows at most 1 request/sec per source IP; this queue is shared
 // across every call this process makes, regardless of which route triggered it.
 const rateLimiter = new RateLimiter(1000);
@@ -29,6 +37,7 @@ async function mbFetch(path, params = {}) {
     try {
       response = await fetch(url, {
         headers: { 'User-Agent': userAgent(), Accept: 'application/json' },
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
     } catch (err) {
       throw new UpstreamUnavailableError(`Could not reach MusicBrainz: ${err.message}`);
@@ -36,7 +45,15 @@ async function mbFetch(path, params = {}) {
     if (!response.ok) {
       throw new UpstreamUnavailableError(`MusicBrainz returned ${response.status} for ${path}`);
     }
-    return response.json();
+    try {
+      // Inside the try as well: the deadline covers the body, so a response that
+      // sends headers and then trickles aborts here rather than in the fetch
+      // above — and a raw AbortError escaping would be a 500 instead of the
+      // "upstream is unavailable" the rest of this module promises.
+      return await response.json();
+    } catch (err) {
+      throw new UpstreamUnavailableError(`Could not read the MusicBrainz response for ${path}: ${err.message}`);
+    }
   });
 
   cache.set(cacheKey, json, CACHE_TTL_MS);

@@ -276,6 +276,20 @@ test('POST /api/library/bulk-fix/apply refuses a request over the cap', async ()
   assert.equal(res.status, 400);
 });
 
+// Filtering the bad ids out and repairing the rest answered 200 with a summary
+// of fewer tracks than were asked for, and nothing in that summary said which
+// ones never happened. The set is the request.
+test('POST /api/library/bulk-fix/apply rejects malformed trackIds rather than skipping them', async () => {
+  for (const trackIds of [[1, 'two', 3], [1, null], [1, 1.5], [1, -2], [1, 0], [1, {}], [1, true]]) {
+    const res = await fetch(`${baseUrl}/api/library/bulk-fix/apply`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Sec-Fetch-Site': 'same-origin' },
+      body: JSON.stringify({ artist: 'A', album: 'Al', trackIds }),
+    });
+    assert.equal(res.status, 400, `expected 400 for ${JSON.stringify(trackIds)}`);
+  }
+});
+
 // Every non-GET /api request goes through sameOriginOnly, so a cross-site POST
 // can't reach the tag writer even with a valid session cookie.
 test('POST /api/library/bulk-fix/apply is refused cross-site', async () => {
