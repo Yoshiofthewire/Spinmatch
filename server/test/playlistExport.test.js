@@ -113,14 +113,33 @@ test('progress is reported per file', async () => {
 test('a name that looks like a traversal becomes a literal segment inside the root', async () => {
   const a = await seedFile('A/B/seven.mp3');
   const { dir } = await exportToDropoff({ name: '../escape', items: [item('A', 'Seven', a)] });
-  // sanitizeSegment strips the separator, so this is one literal folder name —
-  // there is no traversal left for the containment check to catch.
+  // sanitizeSegment strips the separator, so for THIS input the result is one
+  // literal folder name with no '/' left in it. That is not a general
+  // guarantee that no name can escape — sanitizeSegment(' . ') collapses to
+  // '.', and path.join(root, '.') is root itself, which is a real escape of
+  // the "inside a playlist subfolder" property (see the '.' test below). The
+  // actual safety property is enforced by assertInsideDropoffDir's strict
+  // descendant check, not by sanitizeSegment.
   assert.equal(dir, path.join(dropoffDir, '..escape'));
   assert.ok(dir.startsWith(dropoffDir + path.sep));
 });
 
 test('the containment check refuses a path outside the drop-off root', async () => {
   await assert.rejects(() => assertInsideDropoffDir('/etc/passwd'), /outside/i);
+});
+
+test('a name that sanitizes to the bare root is refused, not treated as the root itself', async () => {
+  // sanitizeSegment(' . ') === '.' (the trailing-dot strip is anchored at the
+  // end and the string ends in a space; .trim() then removes the padding),
+  // and path.join(DROPOFF_DIR, '.') collapses back to DROPOFF_DIR itself. If
+  // the containment check let the bare root through, exportToDropoff's
+  // fs.rm(dir, { recursive: true, force: true }) would delete everything in
+  // DROPOFF_DIR, not just one playlist's folder.
+  const a = await seedFile('A/B/eight.mp3');
+  await assert.rejects(
+    () => exportToDropoff({ name: ' . ', items: [item('A', 'Eight', a)] }),
+    /outside/i,
+  );
 });
 
 test('the containment check refuses an unconfigured drop-off folder', async () => {
@@ -162,4 +181,42 @@ test('the containment check refuses a drop-off folder that resolves to a parent 
   } finally {
     liveConfig.playlist.dropoffDir = original;
   }
+});
+
+test('a failed space check happens before the wipe, so a rejected export leaves the previous export intact', async () => {
+  const a = await seedFile('A/B/nine.mp3');
+  await exportToDropoff({ name: 'Guarded', items: [item('A', 'Nine', a)] });
+  const before = await fs.readdir(path.join(dropoffDir, 'Guarded'));
+  assert.deepEqual(before, ['1 - A - Nine.mp3']);
+
+  // An absurd sizeBytes is the cheapest way to force the space check to fail
+  // without actually filling the test filesystem.
+  const huge = item('A', 'Huge', a, {
+    track: { path: a, artist: 'A', title: 'Huge', durationMs: 1000, sizeBytes: Number.MAX_SAFE_INTEGER, ext: '.mp3' },
+  });
+  await assert.rejects(
+    () => exportToDropoff({ name: 'Guarded', items: [huge] }),
+    /not enough room/i,
+  );
+
+  // The rejection must have happened before fs.rm ran — the previous export's
+  // file is still there, untouched.
+  const after = await fs.readdir(path.join(dropoffDir, 'Guarded'));
+  assert.deepEqual(after, ['1 - A - Nine.mp3']);
+});
+
+test('a missing size_bytes falls back to a real fs.stat rather than being treated as zero', async () => {
+  // Regression for the bug where `sizeBytes ?? 0` let an all-NULL-size
+  // playlist sail through the free-space check no matter how large the files
+  // actually were. sizeBytes is deliberately omitted here (not just left
+  // undefined on an existing key) to match what a NULL size_bytes column
+  // produces once it comes back through playlistRepo.
+  const a = await seedFile('A/B/ten.mp3', 4096);
+  const noSize = {
+    artist: 'A', title: 'Ten', album: 'Al',
+    track: { path: a, artist: 'A', title: 'Ten', durationMs: 1000, ext: '.mp3' },
+  };
+  const { copied, bytes } = await exportToDropoff({ name: 'Unsized', items: [noSize] });
+  assert.equal(copied, 1);
+  assert.equal(bytes, 4096);
 });

@@ -94,6 +94,24 @@ async function freeBytes(dir) {
   return stat.bavail * stat.bsize;
 }
 
+// The library's size_bytes column isn't always populated (older scans, rows
+// written before the column existed) — `sizeBytes ?? 0` silently turned a
+// playlist of all-NULL sizes into a "0 bytes needed" check that always
+// passes, defeating the free-space guard entirely. Falling back to a real
+// fs.stat of the source keeps the pre-copy total accurate instead of
+// optimistic. Left to throw on a genuinely missing/unreadable source file:
+// that file was going to fail fs.copyFile later anyway, and failing here is
+// strictly better because it happens before the drop-off folder is wiped.
+async function trackBytes(track) {
+  if (track.sizeBytes != null) return track.sizeBytes;
+  const stat = await fs.stat(track.path);
+  return stat.size;
+}
+
+async function bytesFor(playable) {
+  return Promise.all(playable.map((item) => trackBytes(item.track)));
+}
+
 /**
  * Copy the playlist's resolved tracks into DROPOFF_DIR/<name>/.
  *
@@ -106,11 +124,17 @@ export async function exportToDropoff({ name, items, onProgress, signal }) {
   const dir = await assertInsideDropoffDir(dropoffDirFor(name));
   const playable = items.filter((i) => i.track);
   const skipped = items.length - playable.length;
-  const totalBytes = playable.reduce((sum, i) => sum + (i.track.sizeBytes ?? 0), 0);
 
   return withFileLock(`dropoff:${dir}`, async () => {
-    // Fail before copying rather than halfway through filling a device.
-    const available = await freeBytes(config.playlist.dropoffDir);
+    // Fail before copying — and before the existing folder is touched at
+    // all — rather than halfway through filling a device. sizes is computed
+    // once and reused below, so a track with no size_bytes only costs one
+    // fs.stat rather than one here and another during the copy loop.
+    const [sizes, available] = await Promise.all([
+      bytesFor(playable),
+      freeBytes(config.playlist.dropoffDir),
+    ]);
+    const totalBytes = sizes.reduce((sum, n) => sum + n, 0);
     if (totalBytes > available) {
       throw new BadRequestError(
         `Not enough room: the playlist needs ${totalBytes} bytes and ${available} are free`
@@ -128,7 +152,7 @@ export async function exportToDropoff({ name, items, onProgress, signal }) {
       await assertInsideDropoffDir(dest);
       await fs.copyFile(item.track.path, dest);
       copied += 1;
-      bytes += item.track.sizeBytes ?? 0;
+      bytes += sizes[i];
       onProgress?.({ index: i + 1, total: playable.length, title: item.track.title, bytes });
     }
 

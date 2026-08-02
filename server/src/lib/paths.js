@@ -64,7 +64,21 @@ export async function assertInsideDropoffDir(destPath) {
     throw new BadRequestError('The drop-off folder is not readable');
   }
 
-  const musicRoot = path.resolve(config.ingest.musicDir ?? '');
+  // Realpath'd like root, so a MUSIC_DIR that is itself a symlink (e.g. onto a
+  // NAS mount) is compared by where it actually points rather than by the
+  // symlink's own lexical path — otherwise DROPOFF_DIR pointed straight at
+  // that same target would not match the string comparison below and the
+  // wipe would land inside the live music library. An unreadable MUSIC_DIR
+  // falls back to a lexical resolve rather than throwing: this function has
+  // to keep working when only DROPOFF_DIR is configured/relevant.
+  let musicRoot = path.resolve(config.ingest.musicDir ?? '');
+  if (config.ingest.musicDir) {
+    try {
+      musicRoot = await fs.realpath(musicRoot);
+    } catch {
+      // Fall back to the lexical resolve computed above.
+    }
+  }
   if (root === path.parse(root).root) {
     throw new BadRequestError('Refusing to use the filesystem root as a drop-off folder');
   }
@@ -72,8 +86,15 @@ export async function assertInsideDropoffDir(destPath) {
     throw new BadRequestError('The drop-off folder must be outside the music folder');
   }
 
+  // No `resolved === root` exemption: the bare root must never pass. A name
+  // that sanitizes to '.' (e.g. ' . ') makes path.join(root, '.') collapse
+  // back to root itself, and letting that through here means
+  // exportToDropoff's fs.rm(dir, { recursive: true, force: true }) deletes
+  // everything in DROPOFF_DIR, not just the one playlist folder. No caller
+  // needs the bare root to pass: dropoffDirFor always appends a segment, and
+  // the per-file check always has a filename.
   const resolved = path.resolve(destPath);
-  if (resolved !== root && !resolved.startsWith(root + path.sep)) {
+  if (!resolved.startsWith(root + path.sep)) {
     console.warn(`paths: refusing to write outside DROPOFF_DIR: ${destPath}`);
     throw new BadRequestError('Refusing to write outside the drop-off folder');
   }
