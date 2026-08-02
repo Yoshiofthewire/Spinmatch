@@ -160,12 +160,25 @@ export function getSimilarArtists({ db = getDb(), limit = 30 } = {}) {
   return shared(`similar:${limit}`, () => computeSimilarArtists({ db, limit }));
 }
 
-async function computeSimilarArtists({ db, limit }) {
-  const seeds = await seedArtists(db, SEED_ARTISTS);
+/**
+ * The artists a caller-supplied list of seeds points at, ranked by how many of
+ * them agree.
+ *
+ * `excludeOwned` is the CALLER'S policy, not this function's behaviour, and that
+ * is the whole point of the split. The Discover tab wants music you don't have,
+ * so it passes true. A playlist wants the opposite — the neighbours you own are
+ * exactly the ones it can put on a device — so it passes false. One walk of the
+ * signals, one cache, two meanings.
+ *
+ * @returns {Promise<{artists: object[], listenBrainz: 'ok'|'unavailable'|'disabled'}>}
+ */
+export async function collectNeighbours(db, { seeds, excludeOwned = true, limit = 30 }) {
   // Everything already on disk, so discovery never suggests what you have.
   // Compared on artistKey, which also drops a leading article — see the note
-  // there for why that folding is local to discovery.
-  const owned = new Set(listArtistNames(db).map(artistKey));
+  // there for why that folding is local to discovery. Null when the caller
+  // wants the owned artists kept, so the filter isn't merely bypassed but
+  // never built.
+  const owned = excludeOwned ? new Set(listArtistNames(db).map(artistKey)) : null;
 
   const found = new Map();
   let listenBrainzAnswered = false;
@@ -174,7 +187,7 @@ async function computeSimilarArtists({ db, limit }) {
   // reached by both signals is a stronger suggestion than one reached by either,
   // and the UI says which.
   function note(candidate, seed, kind, rank) {
-    if (owned.has(artistKey(candidate.name))) return;
+    if (owned && owned.has(artistKey(candidate.name))) return;
     const existing = found.get(candidate.mbid);
     if (existing) {
       existing.score += 1;
@@ -229,13 +242,39 @@ async function computeSimilarArtists({ db, limit }) {
     .slice(0, limit);
 
   return {
-    seeds: seeds.map((s) => ({ artist: s.artist, trackCount: s.trackCount })),
     artists,
     // Lets the UI say discovery is running on half its signal rather than
     // silently showing thinner results.
     listenBrainz: config.discovery.listenBrainzEnabled
       ? (listenBrainzAnswered ? 'ok' : 'unavailable')
       : 'disabled',
+  };
+}
+
+/**
+ * Seeds from names the caller supplies rather than from the top of the
+ * collection. Exported so a playlist can start from an artist the user picked;
+ * seedArtists stays private because only discovery wants "whoever you own most
+ * of", and only it needs the trackCount those rows carry.
+ */
+export async function resolveSeedArtists(db, names) {
+  const seeds = [];
+  for (const artist of names) {
+    const { mbArtistId } = await resolveArtist(artist, { db });
+    if (mbArtistId) seeds.push({ artist, mbArtistId });
+  }
+  return seeds;
+}
+
+async function computeSimilarArtists({ db, limit }) {
+  const seeds = await seedArtists(db, SEED_ARTISTS);
+  const { artists, listenBrainz } = await collectNeighbours(db, {
+    seeds, excludeOwned: true, limit,
+  });
+  return {
+    seeds: seeds.map((s) => ({ artist: s.artist, trackCount: s.trackCount })),
+    artists,
+    listenBrainz,
   };
 }
 
