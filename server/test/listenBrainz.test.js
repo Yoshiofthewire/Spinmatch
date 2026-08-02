@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 
 process.env.MB_CONTACT_EMAIL = 'test@example.com';
 
+const configModule = await import('../src/config.js');
 const {
   getSimilarArtists, resetSimilarCacheForTest, getTopRecordings, resetPopularityCacheForTest,
 } = await import('../src/services/listenBrainz.js');
@@ -163,4 +164,21 @@ test('a shape change degrades to null rather than throwing', async () => {
   resetPopularityCacheForTest();
   stubFetch(() => jsonResponse({ unexpected: true }));
   assert.equal(await getTopRecordings(MBID), null);
+});
+
+// The README documents LISTENBRAINZ_ENABLED=0 as how a user turns this off
+// deliberately, on the promise that Spinmatch then sends nothing upstream.
+// getTopRecordings has to honour that promise itself rather than relying on
+// a caller to check the flag first.
+test('the disabled flag short-circuits getTopRecordings before any fetch', async () => {
+  resetPopularityCacheForTest();
+  stubFetch(() => jsonResponse([{ recording_name: 'Roads', recording_mbid: OTHER, total_listen_count: 900 }]));
+  const original = configModule.config.discovery.listenBrainzEnabled;
+  configModule.config.discovery.listenBrainzEnabled = false;
+  try {
+    assert.equal(await getTopRecordings(MBID), null);
+    assert.equal(calls.length, 0, 'a disabled flag must not reach the network at all');
+  } finally {
+    configModule.config.discovery.listenBrainzEnabled = original;
+  }
 });

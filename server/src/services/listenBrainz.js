@@ -131,7 +131,7 @@ const popularityCache = new TTLCache({ maxEntries: 1000 });
  *   not.
  */
 export async function getTopRecordings(artistMbid) {
-  if (!artistMbid) return null;
+  if (!artistMbid || !config.discovery.listenBrainzEnabled) return null;
 
   const cached = popularityCache.get(artistMbid);
   if (cached !== undefined) return cached;
