@@ -68,6 +68,14 @@ export const config = {
     // index/credential land on the mounted volume.
     dbPath: process.env.LIBRARY_DB || 'data/library.db',
   },
+  playlist: {
+    // Where "export to player" copies files. Opt-in, like INGEST_DIR: unset
+    // means the feature is hidden. Deliberately not a folder inside MUSIC_DIR —
+    // the copies would sit on the music volume (which is often a network share
+    // when the player is USB) and the scanner would index every one of them as a
+    // duplicate.
+    dropoffDir: process.env.DROPOFF_DIR || null,
+  },
 };
 
 export function userAgent() {
@@ -91,4 +99,8 @@ export function ingestEnabled() {
 
 export function libraryEnabled() {
   return Boolean(config.ingest.musicDir);
+}
+
+export function playlistExportEnabled() {
+  return Boolean(config.ingest.musicDir && config.playlist.dropoffDir);
 }
