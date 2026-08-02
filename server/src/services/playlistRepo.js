@@ -1,4 +1,4 @@
-import { getDb } from '../lib/db.js';
+import { getDb, withTransaction } from '../lib/db.js';
 import { makeMatchKey, makeTitleKey } from '../lib/normalize.js';
 
 // Playlists, and the resolution of their items to files on disk.
@@ -151,8 +151,7 @@ export function addItems(db, playlistId, items) {
       (playlist_id, position, artist, title, album, match_key, title_key, source, seed_artist, added_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
-  db.exec('BEGIN');
-  try {
+  withTransaction(db, () => {
     items.forEach((item, i) => {
       insert.run(
         playlistId, next + i, item.artist ?? null, item.title, item.album ?? null,
@@ -161,11 +160,7 @@ export function addItems(db, playlistId, items) {
       );
     });
     db.prepare('UPDATE playlists SET updated_at = ? WHERE id = ?').run(now, playlistId);
-    db.exec('COMMIT');
-  } catch (err) {
-    db.exec('ROLLBACK');
-    throw err;
-  }
+  });
   return { added: items.length };
 }
 
@@ -182,14 +177,9 @@ function renumber(db, playlistId) {
     'SELECT id FROM playlist_items WHERE playlist_id = ? ORDER BY position'
   ).all(playlistId).map((r) => r.id);
   const update = db.prepare('UPDATE playlist_items SET position = ? WHERE id = ?');
-  db.exec('BEGIN');
-  try {
+  withTransaction(db, () => {
     ids.forEach((id, i) => update.run(i, id));
-    db.exec('COMMIT');
-  } catch (err) {
-    db.exec('ROLLBACK');
-    throw err;
-  }
+  });
 }
 
 export function reorderItems(db, playlistId, itemIds) {
@@ -201,13 +191,8 @@ export function reorderItems(db, playlistId, itemIds) {
   const ordered = itemIds.filter((id) => owned.has(id));
   const rest = [...owned].filter((id) => !ordered.includes(id));
   const update = db.prepare('UPDATE playlist_items SET position = ? WHERE id = ?');
-  db.exec('BEGIN');
-  try {
+  withTransaction(db, () => {
     [...ordered, ...rest].forEach((id, i) => update.run(i, id));
     db.prepare('UPDATE playlists SET updated_at = ? WHERE id = ?').run(Date.now(), playlistId);
-    db.exec('COMMIT');
-  } catch (err) {
-    db.exec('ROLLBACK');
-    throw err;
-  }
+  });
 }

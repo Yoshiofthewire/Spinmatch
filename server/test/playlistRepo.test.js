@@ -46,7 +46,10 @@ test('with no album to break the tie the largest file wins', () => {
 test('an artist that disagrees still resolves on title alone', () => {
   const db = seeded();
   const { id } = pl.createPlaylist(db, { name: 'x' });
-  pl.addItems(db, id, [{ artist: 'Portishead Feat Nobody', title: 'Mysterons', source: 'paste' }]);
+  // 'The Portishead' folds to 'the portishead', which differs from the file's
+  // 'portishead' — so this misses pass 1 (match_key) and must fall through to
+  // pass 2 (title_key) to resolve at all.
+  pl.addItems(db, id, [{ artist: 'The Portishead', title: 'Mysterons', source: 'paste' }]);
   const { items } = pl.getPlaylist(db, id);
   assert.equal(items[0].track.title, 'Mysterons');
   db.close();
