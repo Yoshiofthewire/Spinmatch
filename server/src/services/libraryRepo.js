@@ -3,6 +3,7 @@
 // importing it would close a cycle — true of the scanner, which imports this
 // file, but not of a constants-only leaf module that imports nothing itself.
 import { MAX_TRACK_NUMBER } from '../lib/tagLimits.js';
+import { makeMatchKey, makeTitleKey } from '../lib/normalize.js';
 
 export function upsertLocalTrack(db, {
   path, artist, album, title, durationMs, changeKey,
@@ -15,13 +16,18 @@ export function upsertLocalTrack(db, {
   // columns it folds, and so every writer (scanner, targeted rescan, tests) gets
   // it without having to remember.
   const dupKey = artist != null && title != null ? foldKey(artist, album, title) : null;
+  // Computed here for the same reason dupKey is: so every writer gets them and
+  // none can drift from the columns they fold.
+  const matchKey = makeMatchKey(artist, title);
+  const titleKey = makeTitleKey(title);
   db.prepare(`
     INSERT INTO local_tracks (
       path, artist, album, title, album_synthesized, title_synthesized, dup_key,
+      match_key, title_key,
       duration_ms, track_number, disc, year, genre,
       has_cover_art, ext, size_bytes, mtime_ms, change_key, removed, added_at, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
     ON CONFLICT(path) DO UPDATE SET
       artist = excluded.artist,
       album = excluded.album,
@@ -29,6 +35,8 @@ export function upsertLocalTrack(db, {
       album_synthesized = excluded.album_synthesized,
       title_synthesized = excluded.title_synthesized,
       dup_key = excluded.dup_key,
+      match_key = excluded.match_key,
+      title_key = excluded.title_key,
       duration_ms = excluded.duration_ms,
       track_number = excluded.track_number,
       disc = excluded.disc,
@@ -45,6 +53,7 @@ export function upsertLocalTrack(db, {
       updated_at = excluded.updated_at
   `).run(
     path, artist, album, title, albumSynthesized, titleSynthesized, dupKey,
+    matchKey, titleKey,
     durationMs, trackNumber, disc, year, genre,
     hasCoverArt, ext, sizeBytes, mtimeMs, changeKey, now, now,
   );

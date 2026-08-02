@@ -11,7 +11,7 @@ import { DatabaseSync } from 'node:sqlite';
 
 process.env.MB_CONTACT_EMAIL = 'test@example.com';
 
-const { openDb } = await import('../src/lib/db.js');
+const { openDb, migrate } = await import('../src/lib/db.js');
 
 // The exact local_tracks shape that shipped before this change.
 const V1_SCHEMA = `
@@ -108,7 +108,7 @@ test('a fresh database is created at the current version with no migration work'
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'spinmatch-fresh-'));
   const db = openDb(path.join(dir, 'library.db'));
   const version = db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get();
-  assert.equal(version.value, '6');
+  assert.equal(version.value, '7');
   db.close();
   fs.rmSync(dir, { recursive: true, force: true });
 });
@@ -142,7 +142,7 @@ test('a forced re-tag happens once per version that needs one, not on every upgr
     assert.equal(second.prepare('SELECT change_key FROM local_tracks').get().change_key, '');
     assert.equal(
       second.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value,
-      '6',
+      '7',
     );
     second.prepare("UPDATE local_tracks SET change_key = '20:2'").run();
     second.close();
@@ -205,4 +205,23 @@ test('re-opening a v5 database leaves remembered links alone', () => {
     assert.equal(row.video_id, 'abc123');
     second.close();
   });
+});
+
+test('v7 backfills match_key and title_key without re-reading files', () => {
+  const db = openDb(':memory:');
+  // Simulate a v6 install: drop the new columns' values and rewind the version.
+  db.exec("UPDATE local_tracks SET match_key = NULL, title_key = NULL");
+  db.prepare("INSERT INTO meta (key, value) VALUES ('schema_version', '6') "
+    + 'ON CONFLICT(key) DO UPDATE SET value = excluded.value').run();
+  db.prepare(`INSERT INTO local_tracks (path, artist, album, title, change_key, updated_at)
+              VALUES ('/m/a.mp3', 'Portishead', 'Dummy', 'Roads [Live]', 'k', 1)`).run();
+
+  assert.equal(migrate(db), 7);
+
+  const row = db.prepare("SELECT match_key AS m, title_key AS t, change_key AS c FROM local_tracks WHERE path = '/m/a.mp3'").get();
+  assert.equal(row.m, 'portishead\u001froads');
+  assert.equal(row.t, 'roads');
+  // The keys derive from columns already in the table, so no rescan is forced.
+  assert.equal(row.c, 'k', 'change_key must not be cleared — this backfill reads no files');
+  db.close();
 });

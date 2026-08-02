@@ -2,10 +2,11 @@ import { DatabaseSync } from 'node:sqlite';
 import fs from 'node:fs';
 import path from 'node:path';
 import { config } from '../config.js';
+import { makeMatchKey, makeTitleKey } from './normalize.js';
 
 // Bumped when local_tracks gains columns that existing rows need backfilled or
 // re-read from disk. migrate() below is what actually reacts to the change.
-const SCHEMA_VERSION = 6;
+const SCHEMA_VERSION = 7;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS meta (
@@ -33,6 +34,13 @@ CREATE TABLE IF NOT EXISTS local_tracks (
   -- moment an artist is called "Ärzte". Storing the folded value lets the
   -- duplicate count be a GROUP BY instead of a full table load into JS.
   dup_key       TEXT,
+  -- Folded "artist␟title" and "title", computed in JS on write (see
+  -- libraryRepo.upsertLocalTrack). Distinct from dup_key above: these fold
+  -- through normalizeTitle, so they match "Kid A (Remastered)" to "Kid A",
+  -- which is what a playlist item has to do. dup_key must not, because two
+  -- different masterings are genuinely two files.
+  match_key     TEXT,
+  title_key     TEXT,
   duration_ms   INTEGER,
   track_number  INTEGER,
   disc          INTEGER,
@@ -126,6 +134,38 @@ CREATE TABLE IF NOT EXISTS library_similar_cache (
   related_json   TEXT NOT NULL,
   checked_at     INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS playlists (
+  id               INTEGER PRIMARY KEY,
+  name             TEXT NOT NULL,
+  -- Lowercased in JS, like every other grouping key here, so "Road Trip" and
+  -- "road trip" cannot both exist.
+  name_key         TEXT UNIQUE NOT NULL,
+  created_at       INTEGER NOT NULL,
+  updated_at       INTEGER NOT NULL,
+  last_exported_at INTEGER,
+  last_export_dir  TEXT
+);
+
+-- A row is an entry in a playlist, not a reference to a file. local_tracks is
+-- keyed on path, so ingest, duplicate-trash and album repair each turn a moved
+-- file into a NEW row — an id here would rot every time the rest of the app was
+-- used. Text resolved at read time survives that, and makes a gap fill itself in
+-- the moment the file lands in the library.
+CREATE TABLE IF NOT EXISTS playlist_items (
+  id          INTEGER PRIMARY KEY,
+  playlist_id INTEGER NOT NULL REFERENCES playlists(id) ON DELETE CASCADE,
+  position    INTEGER NOT NULL,
+  artist      TEXT,
+  title       TEXT NOT NULL,
+  album       TEXT,
+  match_key   TEXT NOT NULL,
+  title_key   TEXT NOT NULL,
+  -- manual | popular | random | paste. 'random' is what the UI labels "Chance".
+  source      TEXT NOT NULL,
+  seed_artist TEXT,
+  added_at    INTEGER NOT NULL
+);
 `;
 
 // Applied after migrate(), never as part of SCHEMA: on an upgraded install the
@@ -160,6 +200,9 @@ CREATE INDEX IF NOT EXISTS idx_lt_removed ON local_tracks(removed) WHERE removed
 -- Health tab shows the count) and previously pulled every row in the table into
 -- JS to compute it.
 CREATE INDEX IF NOT EXISTS idx_lt_live_dup_key ON local_tracks(dup_key) WHERE removed = 0 AND dup_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_lt_live_match_key ON local_tracks(match_key) WHERE removed = 0;
+CREATE INDEX IF NOT EXISTS idx_lt_live_title_key ON local_tracks(title_key) WHERE removed = 0;
+CREATE INDEX IF NOT EXISTS idx_pi_playlist ON playlist_items(playlist_id, position);
 
 -- Superseded by the partial indexes above, which SQLite can use for strictly
 -- more queries. Dropped so an upgraded install isn't paying to maintain both.
@@ -200,6 +243,12 @@ const V6_TRACK_COLUMNS = [
   ['album_synthesized', 'INTEGER NOT NULL DEFAULT 0'],
   ['title_synthesized', 'INTEGER NOT NULL DEFAULT 0'],
   ['dup_key', 'TEXT'],
+];
+
+// v7: the keys playlist items resolve through. See the note on them in SCHEMA.
+const V7_TRACK_COLUMNS = [
+  ['match_key', 'TEXT'],
+  ['title_key', 'TEXT'],
 ];
 
 function addMissingColumns(db, table, columns) {
@@ -274,6 +323,19 @@ export function migrate(db) {
     db.exec(`UPDATE local_tracks SET year = NULL
              WHERE year IS NOT NULL AND (year < 1 OR year > 2999)`);
     db.exec("UPDATE local_tracks SET change_key = '' WHERE removed = 0");
+  }
+
+  if (current < 7) {
+    addMissingColumns(db, 'local_tracks', V7_TRACK_COLUMNS);
+    // Unlike the v2 and v6 backfills, this one reads no files: both keys are a
+    // pure function of artist and title, which are already in the table. So
+    // change_key is deliberately NOT cleared — forcing a full rescan of a large
+    // library to compute something already derivable would be pure waste.
+    const rows = db.prepare('SELECT id, artist, title FROM local_tracks').all();
+    const update = db.prepare('UPDATE local_tracks SET match_key = ?, title_key = ? WHERE id = ?');
+    for (const row of rows) {
+      update.run(makeMatchKey(row.artist, row.title), makeTitleKey(row.title), row.id);
+    }
   }
 
   db.prepare(
