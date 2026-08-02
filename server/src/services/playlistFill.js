@@ -142,10 +142,16 @@ export function fillPlaylist({
     }
   }
 
+  // Cap before budget: cappedOut is only ever set by a real, unblocked pick
+  // reaching the cap, so when it is true the cap genuinely bound the fill — a
+  // budget block can delay or prevent that, but never trigger it early. Without
+  // this order, an oversized track skipped on the way to a cap that was going
+  // to bind anyway gets reported as 'budget', which tells the user to raise a
+  // number that would not change the result.
   let stopped = 'exhausted';
   if (picked.length >= target) stopped = 'target';
-  else if (budgetBlocked) stopped = 'budget';
   else if (cappedOut) stopped = 'cap';
+  else if (budgetBlocked) stopped = 'budget';
 
   return { picked, cap, stopped };
 }

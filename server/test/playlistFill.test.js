@@ -117,6 +117,23 @@ test('reports the cap holding the fill back', () => {
   assert.equal(stopped, 'cap');
 });
 
+test('reports the cap, not the budget, when both were touched but the cap is what bound the fill', () => {
+  // A has 100 tracks: A-1 is 200MB, A-2..A-100 are 1MB each. B has 1 track at 1MB.
+  // target=50, byteBudget=50MB -> cap = ceil(50/2)+5 = 30. The oversized A-1 is
+  // skipped (budgetBlocked), but the fill still stops because A hits its cap of
+  // 30, not because the budget ran out -- raising the budget would not add more.
+  const pool = [
+    track('A', 1, { sizeBytes: 200_000_000 }),
+    ...Array.from({ length: 99 }, (_, i) => track('A', i + 2, { sizeBytes: 1_000_000 })),
+    track('B', 1, { sizeBytes: 1_000_000 }),
+  ];
+  const { picked, stopped } = fillPlaylist({
+    pool, target: 50, byteBudget: 50_000_000, method: 'popular',
+  });
+  assert.equal(picked.length, 31);
+  assert.equal(stopped, 'cap');
+});
+
 test('prefer-popular narrows the draw to the top slice', () => {
   const pool = Array.from({ length: 40 }, (_, i) => track('A', i + 1, { popularityRank: i }));
   const { picked, cap } = fillPlaylist({
