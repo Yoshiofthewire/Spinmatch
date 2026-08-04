@@ -165,6 +165,87 @@ test('Chance does not pay for popularity data its ordering ignores', async (t) =
   db.close();
 });
 
+test('a folded-title collision in the popularity list keeps the more-listened rank', async (t) => {
+  const db = openDb(':memory:');
+  repo.upsertLocalTrack(db, {
+    path: '/m/MA/Teardrop.flac', artist: 'Massive Attack', album: 'Mezzanine',
+    title: 'Teardrop', durationMs: 200_000, sizeBytes: 1000, year: 1998,
+    trackNumber: 1, changeKey: '1:1',
+  });
+  repo.upsertLocalTrack(db, {
+    path: '/m/MA/Control.flac', artist: 'Massive Attack', album: 'Mezzanine',
+    title: 'Control', durationMs: 200_000, sizeBytes: 1000, year: 1998,
+    trackNumber: 2, changeKey: '2:1',
+  });
+
+  t.mock.module('../src/services/libraryDiscovery.js', {
+    exports: {
+      resolveSeedArtists: async () => [{ artist: 'P', mbArtistId: 'seed-1' }],
+      collectNeighbours: async () => ({
+        artists: [{ mbid: 'nb-1', name: 'Massive Attack', score: 1, via: ['P'], kind: 'similar' }],
+        listenBrainz: 'ok',
+      }),
+    },
+  });
+  t.mock.module('../src/services/listenBrainz.js', {
+    exports: {
+      // 'Teardrop' (rank 0, the hit) and 'Teardrop (Remaster)' both fold to
+      // the titleKey 'teardrop'. rankTracks must keep the FIRST — most
+      // listened — occurrence. A regression to last-wins would overwrite
+      // Teardrop's rank with the obscure remaster's index (2), demoting it
+      // behind Control (rank 1) — the assertion below is what would catch
+      // that: with the correct first-wins rule Teardrop still outranks
+      // Control.
+      getTopRecordings: async () => [
+        { name: 'Teardrop', recordingMbid: null, listenCount: 999 },
+        { name: 'Control', recordingMbid: null, listenCount: 500 },
+        { name: 'Teardrop (Remaster)', recordingMbid: null, listenCount: 1 },
+      ],
+    },
+  });
+
+  const { suggestTracks } = await importSuggestTracks();
+  const result = await suggestTracks(db, { seedArtists: ['P'], method: 'popular', target: 2 });
+
+  assert.deepEqual(
+    result.picked.map((p) => p.title), ['Teardrop', 'Control'],
+    'Teardrop keeps its rank-0 popularity, not the remaster\'s rank-2',
+  );
+  db.close();
+});
+
+test('an empty popularity list is a real answer, not an outage', async (t) => {
+  const db = openDb(':memory:');
+  repo.upsertLocalTrack(db, {
+    path: '/m/MA/one.flac', artist: 'Massive Attack', album: 'Mezzanine',
+    title: 'One', durationMs: 200_000, sizeBytes: 1000, year: 1998,
+    trackNumber: 1, changeKey: '1:1',
+  });
+
+  t.mock.module('../src/services/libraryDiscovery.js', {
+    exports: {
+      resolveSeedArtists: async () => [{ artist: 'P', mbArtistId: 'seed-1' }],
+      collectNeighbours: async () => ({
+        artists: [{ mbid: 'nb-1', name: 'Massive Attack', score: 1, via: ['P'], kind: 'similar' }],
+        listenBrainz: 'ok',
+      }),
+    },
+  });
+  t.mock.module('../src/services/listenBrainz.js', {
+    // [] means ListenBrainz answered and this artist has no recorded
+    // listens — a real result, not the 500 that getTopRecordings turns into
+    // null. Reporting 'unavailable' here would be a false claim of outage.
+    exports: { getTopRecordings: async () => [] },
+  });
+
+  const { suggestTracks } = await importSuggestTracks();
+  const result = await suggestTracks(db, { seedArtists: ['P'], method: 'popular', target: 1 });
+
+  assert.equal(result.picked.length, 1);
+  assert.equal(result.popularity, 'ok');
+  db.close();
+});
+
 test('prefer-popular still asks, because the shuffle narrows on the answer', async (t) => {
   const db = openDb(':memory:');
   repo.upsertLocalTrack(db, {
