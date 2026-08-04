@@ -35,7 +35,7 @@ test('builds a pool from owned neighbours and reports popularity being down', as
   });
 
   t.mock.module('../src/services/libraryDiscovery.js', {
-    namedExports: {
+    exports: {
       resolveSeedArtists: async () => [{ artist: 'Portishead', mbArtistId: 'seed-1' }],
       collectNeighbours: async () => ({
         artists: [{ mbid: 'nb-1', name: 'Massive Attack', score: 2, via: ['Portishead'], kind: 'both' }],
@@ -44,7 +44,7 @@ test('builds a pool from owned neighbours and reports popularity being down', as
     },
   });
   t.mock.module('../src/services/listenBrainz.js', {
-    namedExports: { getTopRecordings: async () => null },  // the live 500
+    exports: { getTopRecordings: async () => null },  // the live 500
   });
 
   const { suggestTracks } = await importSuggestTracks();
@@ -70,7 +70,7 @@ test('ranks owned tracks by the popularity list when it answers', async (t) => {
   });
 
   t.mock.module('../src/services/libraryDiscovery.js', {
-    namedExports: {
+    exports: {
       resolveSeedArtists: async () => [{ artist: 'P', mbArtistId: 'seed-1' }],
       collectNeighbours: async () => ({
         artists: [{ mbid: 'nb-1', name: 'Massive Attack', score: 1, via: ['P'], kind: 'similar' }],
@@ -79,7 +79,7 @@ test('ranks owned tracks by the popularity list when it answers', async (t) => {
     },
   });
   t.mock.module('../src/services/listenBrainz.js', {
-    namedExports: {
+    exports: {
       getTopRecordings: async () => [
         { name: 'Gamma', recordingMbid: null, listenCount: 900 },
         { name: 'Alpha', recordingMbid: null, listenCount: 100 },
@@ -92,5 +92,107 @@ test('ranks owned tracks by the popularity list when it answers', async (t) => {
 
   assert.deepEqual(result.picked.map((p) => p.title), ['Gamma', 'Alpha', 'Beta']);
   assert.equal(result.popularity, 'ok');
+  db.close();
+});
+
+test('two owned copies of one recording are proposed once, keeping the better file', async (t) => {
+  const db = openDb(':memory:');
+  // The spec's own example: you own Creep on Pablo Honey and on a compilation.
+  // Both fold to one matchKey, both take the same popularityRank (rankTracks
+  // folds on titleKey), so they sorted adjacent and were both picked.
+  repo.upsertLocalTrack(db, {
+    path: '/m/RH/Pablo Honey/03.flac', artist: 'Radiohead', album: 'Pablo Honey',
+    title: 'Creep', durationMs: 240_000, sizeBytes: 40_000_000, year: 1993,
+    trackNumber: 3, changeKey: '1:1',
+  });
+  repo.upsertLocalTrack(db, {
+    path: '/m/RH/Hits/07.mp3', artist: 'Radiohead', album: 'Greatest Hits',
+    title: 'Creep', durationMs: 240_000, sizeBytes: 7_000_000, year: 2008,
+    trackNumber: 7, changeKey: '2:1',
+  });
+
+  t.mock.module('../src/services/libraryDiscovery.js', {
+    exports: {
+      resolveSeedArtists: async () => [{ artist: 'P', mbArtistId: 'seed-1' }],
+      collectNeighbours: async () => ({
+        artists: [{ mbid: 'nb-1', name: 'Radiohead', score: 1, via: ['P'], kind: 'similar' }],
+        listenBrainz: 'ok',
+      }),
+    },
+  });
+  t.mock.module('../src/services/listenBrainz.js', {
+    exports: { getTopRecordings: async () => [{ name: 'Creep', recordingMbid: null, listenCount: 9 }] },
+  });
+
+  const { suggestTracks } = await importSuggestTracks();
+  const result = await suggestTracks(db, { seedArtists: ['P'], method: 'popular', target: 10 });
+
+  assert.equal(result.picked.length, 1, 'one recording, one proposal');
+  // playlistRepo.preferBest's tie-break with no album named: the larger file.
+  assert.equal(result.picked[0].album, 'Pablo Honey');
+  db.close();
+});
+
+test('Chance does not pay for popularity data its ordering ignores', async (t) => {
+  const db = openDb(':memory:');
+  repo.upsertLocalTrack(db, {
+    path: '/m/MA/one.flac', artist: 'Massive Attack', album: 'Mezzanine',
+    title: 'One', durationMs: 200_000, sizeBytes: 1000, year: 1998,
+    trackNumber: 1, changeKey: '1:1',
+  });
+
+  let asked = 0;
+  t.mock.module('../src/services/libraryDiscovery.js', {
+    exports: {
+      resolveSeedArtists: async () => [{ artist: 'P', mbArtistId: 'seed-1' }],
+      collectNeighbours: async () => ({
+        artists: [{ mbid: 'nb-1', name: 'Massive Attack', score: 1, via: ['P'], kind: 'similar' }],
+        listenBrainz: 'ok',
+      }),
+    },
+  });
+  t.mock.module('../src/services/listenBrainz.js', {
+    exports: { getTopRecordings: async () => { asked += 1; return null; } },
+  });
+
+  const { suggestTracks } = await importSuggestTracks();
+  const result = await suggestTracks(db, { seedArtists: ['P'], method: 'random', target: 1 });
+
+  assert.equal(asked, 0, 'a shuffle never reads popularityRank, so it never asks for it');
+  assert.equal(result.picked.length, 1);
+  // Not 'unavailable': nothing was asked, so nothing can be reported down.
+  assert.equal(result.popularity, 'unused');
+  db.close();
+});
+
+test('prefer-popular still asks, because the shuffle narrows on the answer', async (t) => {
+  const db = openDb(':memory:');
+  repo.upsertLocalTrack(db, {
+    path: '/m/MA/two.flac', artist: 'Massive Attack', album: 'Mezzanine',
+    title: 'Two', durationMs: 200_000, sizeBytes: 1000, year: 1998,
+    trackNumber: 1, changeKey: '1:1',
+  });
+
+  let asked = 0;
+  t.mock.module('../src/services/libraryDiscovery.js', {
+    exports: {
+      resolveSeedArtists: async () => [{ artist: 'P', mbArtistId: 'seed-1' }],
+      collectNeighbours: async () => ({
+        artists: [{ mbid: 'nb-1', name: 'Massive Attack', score: 1, via: ['P'], kind: 'similar' }],
+        listenBrainz: 'ok',
+      }),
+    },
+  });
+  t.mock.module('../src/services/listenBrainz.js', {
+    exports: { getTopRecordings: async () => { asked += 1; return null; } },
+  });
+
+  const { suggestTracks } = await importSuggestTracks();
+  const result = await suggestTracks(db, {
+    seedArtists: ['P'], method: 'random', preferPopular: true, target: 1,
+  });
+
+  assert.equal(asked, 1);
+  assert.equal(result.popularity, 'unavailable');
   db.close();
 });

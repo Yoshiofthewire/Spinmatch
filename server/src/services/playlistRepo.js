@@ -26,7 +26,12 @@ function placeholders(n) {
 // Of several live files answering to one key, prefer the one whose album the
 // item actually named, then the biggest file — a guess, but one that only ever
 // decides which of two copies you already own reaches the player.
-function preferBest(candidates, album) {
+//
+// Exported for playlistDiscovery, which has to make the same choice when the
+// candidate pool reaches one track by two routes. One rule, in one place: two
+// copies of the same recording must not resolve differently depending on
+// whether the caller was resolving an item or building a suggestion.
+export function preferBest(candidates, album) {
   const wanted = album ? makeTitleKey(album) : null;
   const byAlbum = wanted
     ? candidates.filter((t) => makeTitleKey(t.album) === wanted)
