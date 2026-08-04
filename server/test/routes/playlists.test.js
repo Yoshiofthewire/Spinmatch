@@ -117,6 +117,10 @@ test('reports an existing drop-off folder instead of overwriting it', async () =
   assert.equal(res.status, 409);
   const body = await res.json();
   assert.equal(body.error.existing.fileCount, 1);
+  // The status and the count are not the guarantee — this is. A 409 means the
+  // export has not run, and this is the only test in the suite that pins
+  // "touches nothing" on the one endpoint in this app that deletes files.
+  assert.deepEqual(await fs.readdir(path.join(dropoffDir, 'Drop')), ['stale.mp3']);
 });
 
 test('config advertises whether export to player is available', async () => {

@@ -66,14 +66,38 @@ function dropoffDirFor(name) {
   return path.join(config.playlist.dropoffDir ?? '', segment);
 }
 
+// How much a wipe of this folder would hand back. Top-level regular files only:
+// an export writes a flat folder, so that is everything it put there, and
+// anything nested came from somewhere else. Counting less than fs.rm actually
+// frees only ever makes the free-space check stricter, which is the safe
+// direction to be wrong in. A file that vanishes between the readdir and the
+// stat counts as zero for the same reason.
+async function dirBytes(dir) {
+  let entries;
+  try {
+    entries = await fs.readdir(dir, { withFileTypes: true });
+  } catch (err) {
+    if (err.code === 'ENOENT') return 0;
+    throw err;
+  }
+  const sizes = await Promise.all(entries.filter((e) => e.isFile()).map(async (e) => {
+    try {
+      return (await fs.stat(path.join(dir, e.name))).size;
+    } catch {
+      return 0;
+    }
+  }));
+  return sizes.reduce((sum, n) => sum + n, 0);
+}
+
 /** What is already at the drop-off destination, so the caller can confirm. */
 export async function inspectDropoff(name) {
   const dir = await assertInsideDropoffDir(dropoffDirFor(name));
   try {
-    const [entries, stat] = await Promise.all([fs.readdir(dir), fs.stat(dir)]);
-    return { exists: true, dir, fileCount: entries.length, exportedAt: stat.mtimeMs };
+    const [entries, stat, bytes] = await Promise.all([fs.readdir(dir), fs.stat(dir), dirBytes(dir)]);
+    return { exists: true, dir, fileCount: entries.length, bytes, exportedAt: stat.mtimeMs };
   } catch (err) {
-    if (err.code === 'ENOENT') return { exists: false, dir, fileCount: 0, exportedAt: null };
+    if (err.code === 'ENOENT') return { exists: false, dir, fileCount: 0, bytes: 0, exportedAt: null };
     throw err;
   }
 }
@@ -94,22 +118,42 @@ async function freeBytes(dir) {
   return stat.bavail * stat.bsize;
 }
 
-// The library's size_bytes column isn't always populated (older scans, rows
-// written before the column existed) — `sizeBytes ?? 0` silently turned a
-// playlist of all-NULL sizes into a "0 bytes needed" check that always
-// passes, defeating the free-space guard entirely. Falling back to a real
-// fs.stat of the source keeps the pre-copy total accurate instead of
-// optimistic. Left to throw on a genuinely missing/unreadable source file:
-// that file was going to fail fs.copyFile later anyway, and failing here is
-// strictly better because it happens before the drop-off folder is wiped.
-async function trackBytes(track) {
+// One pass over the sources, doing two jobs that both have to happen before
+// anything is deleted.
+//
+// Readability. fs.access is what stands between a dropped NAS mount and an
+// export that deletes the previous one and copies nothing back. The index keeps
+// resolving every row when the volume goes away — size_bytes is a column, not a
+// stat — so a pre-flight that trusted that column touched no source file at
+// all: the wipe ran, and the first fs.copyFile threw ENOENT onto a folder that
+// had already been emptied. One access per track, in parallel, is cheap next to
+// the copies that follow.
+//
+// Size. The column isn't always populated (older scans, rows written before it
+// existed) — `sizeBytes ?? 0` silently turned a playlist of all-NULL sizes into
+// a "0 bytes needed" check that always passed, defeating the free-space guard
+// entirely. The fs.stat fallback keeps the total accurate instead of
+// optimistic, and only costs a second syscall on the rows that need it. Where
+// the column is populated it is preferred, so the number checked here is the
+// same one the playlist list and the size budget were computed from.
+async function checkedBytes(track) {
+  await fs.access(track.path, fs.constants.R_OK);
   if (track.sizeBytes != null) return track.sizeBytes;
   const stat = await fs.stat(track.path);
   return stat.size;
 }
 
 async function bytesFor(playable) {
-  return Promise.all(playable.map((item) => trackBytes(item.track)));
+  try {
+    return await Promise.all(playable.map((item) => checkedBytes(item.track)));
+  } catch (err) {
+    // The path is logged, not returned — error messages reach the browser.
+    console.warn(`playlistExport: source is not readable: ${err.path ?? '(unknown)'}`);
+    throw new BadRequestError(
+      'A track in this playlist is no longer readable, so nothing was copied or deleted. '
+      + 'Check that the music folder is mounted, then rescan the library.'
+    );
+  }
 }
 
 /**
@@ -119,25 +163,49 @@ async function bytesFor(playable) {
  * the caller has seen inspectDropoff's count and asked for it, and "delete the
  * folder, write it fresh" is a few lines that are easy to get right where a
  * diff-and-renumber has to reason about which files it owns.
+ *
+ * Everything that can refuse the export refuses it before fs.rm runs: an
+ * all-gap playlist, a source that isn't readable, and a total that doesn't fit.
+ * A rejected export leaves the previous one exactly as it was.
  */
 export async function exportToDropoff({ name, items, onProgress, signal }) {
   const dir = await assertInsideDropoffDir(dropoffDirFor(name));
   const playable = items.filter((i) => i.track);
   const skipped = items.length - playable.length;
 
+  // A playlist with nothing behind it would otherwise delete the last export
+  // and leave an empty folder in its place — the worst possible reading of
+  // "replace". Refused instead: no resolvable track is a statement about the
+  // library, not an instruction about the device.
+  if (!playable.length) {
+    throw new BadRequestError(
+      'Nothing to export: no track in this playlist resolves to a file on disk'
+    );
+  }
+
   return withFileLock(`dropoff:${dir}`, async () => {
     // Fail before copying — and before the existing folder is touched at
     // all — rather than halfway through filling a device. sizes is computed
     // once and reused below, so a track with no size_bytes only costs one
     // fs.stat rather than one here and another during the copy loop.
-    const [sizes, available] = await Promise.all([
+    //
+    // reclaimable is what the wipe below is about to hand back. Without it the
+    // most ordinary case there is — re-exporting an unchanged playlist onto a
+    // device sized for exactly that playlist — fails with "Not enough room",
+    // because `available` is measured while the previous copy still occupies
+    // the space. The check still runs before the delete; only the arithmetic
+    // knows about it.
+    const [sizes, available, reclaimable] = await Promise.all([
       bytesFor(playable),
       freeBytes(config.playlist.dropoffDir),
+      dirBytes(dir),
     ]);
     const totalBytes = sizes.reduce((sum, n) => sum + n, 0);
-    if (totalBytes > available) {
+    const room = available + reclaimable;
+    if (totalBytes > room) {
       throw new BadRequestError(
-        `Not enough room: the playlist needs ${totalBytes} bytes and ${available} are free`
+        `Not enough room: the playlist needs ${totalBytes} bytes and ${room} are free`
+        + (reclaimable ? ` (including ${reclaimable} reclaimed by replacing the existing folder)` : '')
       );
     }
 

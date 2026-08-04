@@ -87,6 +87,7 @@ test('an existing folder is reported rather than overwritten', async () => {
   const info = await inspectDropoff('Existing');
   assert.equal(info.exists, true);
   assert.equal(info.fileCount, 1);
+  assert.equal(info.bytes, 16, 'the size of what is there, so the caller can say how much is at stake');
 });
 
 test('replacing wipes the folder rather than merging into it', async () => {
@@ -168,6 +169,26 @@ test('the containment check refuses a drop-off folder that resolves to the music
   }
 });
 
+test('the containment check refuses a drop-off folder inside the music folder', async () => {
+  // The inverse of the parent case, and the one .env.example and the README
+  // only ever documented: fs.rm would delete inside the music root, the
+  // MUSIC_DIR watcher would rescan the whole library on every export, and the
+  // copies would be indexed as duplicates of their own sources.
+  const original = liveConfig.playlist.dropoffDir;
+  const inside = path.join(musicDir, 'Player');
+  await fs.mkdir(inside, { recursive: true });
+  liveConfig.playlist.dropoffDir = inside;
+  try {
+    await assert.rejects(
+      () => assertInsideDropoffDir(path.join(inside, 'Whatever')),
+      /outside the music folder/i,
+    );
+  } finally {
+    liveConfig.playlist.dropoffDir = original;
+    await fs.rm(inside, { recursive: true, force: true });
+  }
+});
+
 test('the containment check refuses a drop-off folder that resolves to a parent of the music folder', async () => {
   // This is the one that matters most: it is what stops the wipe-and-rewrite
   // step in exportToDropoff from ever pointing at the music library.
@@ -203,6 +224,61 @@ test('a failed space check happens before the wipe, so a rejected export leaves 
   // file is still there, untouched.
   const after = await fs.readdir(path.join(dropoffDir, 'Guarded'));
   assert.deepEqual(after, ['1 - A - Nine.mp3']);
+});
+
+test('an unreadable source fails before the wipe, so a dropped mount cannot empty the last export', async () => {
+  // The NAS case. size_bytes is a column, so every row still resolves after the
+  // volume goes away — a pre-flight that only read the index therefore touched
+  // no source file at all, deleted the previous export, and then threw ENOENT
+  // on the first copy.
+  const a = await seedFile('A/B/mounted.mp3');
+  await exportToDropoff({ name: 'Mounted', items: [item('A', 'Mounted', a)] });
+  assert.deepEqual(await fs.readdir(path.join(dropoffDir, 'Mounted')), ['1 - A - Mounted.mp3']);
+
+  await fs.rm(a);
+  await assert.rejects(
+    () => exportToDropoff({ name: 'Mounted', items: [item('A', 'Mounted', a)] }),
+    /no longer readable/i,
+  );
+  assert.deepEqual(
+    await fs.readdir(path.join(dropoffDir, 'Mounted')),
+    ['1 - A - Mounted.mp3'],
+    'the previous export is untouched',
+  );
+});
+
+test('a playlist with nothing behind it is refused rather than exported as an empty folder', async () => {
+  const a = await seedFile('A/B/allgaps.mp3');
+  await exportToDropoff({ name: 'AllGaps', items: [item('A', 'Real', a)] });
+
+  await assert.rejects(
+    () => exportToDropoff({ name: 'AllGaps', items: [item('Tricky', 'Aftermath', null)] }),
+    /nothing to export/i,
+  );
+  assert.deepEqual(
+    await fs.readdir(path.join(dropoffDir, 'AllGaps')),
+    ['1 - A - Real.mp3'],
+    'the previous export survives an all-gap replace',
+  );
+});
+
+test('the space check counts the room that replacing the existing folder frees', async () => {
+  // Re-exporting an unchanged playlist onto a device sized for it is the most
+  // common export there is, and it used to be the one that failed: `available`
+  // was measured while the previous copy still occupied the space.
+  const a = await seedFile('A/B/reclaim.mp3', 4096);
+  const sized = item('A', 'Reclaim', a, {
+    track: { path: a, artist: 'A', title: 'Reclaim', durationMs: 1000, sizeBytes: 4096, ext: '.mp3' },
+  });
+  await exportToDropoff({ name: 'Reclaimed', items: [sized] });
+
+  const huge = item('A', 'Huge', a, {
+    track: { path: a, artist: 'A', title: 'Huge', durationMs: 1000, sizeBytes: Number.MAX_SAFE_INTEGER, ext: '.mp3' },
+  });
+  await assert.rejects(
+    () => exportToDropoff({ name: 'Reclaimed', items: [huge] }),
+    /including 4096 reclaimed/,
+  );
 });
 
 test('a missing size_bytes falls back to a real fs.stat rather than being treated as zero', async () => {

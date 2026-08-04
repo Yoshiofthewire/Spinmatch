@@ -82,7 +82,19 @@ export async function assertInsideDropoffDir(destPath) {
   if (root === path.parse(root).root) {
     throw new BadRequestError('Refusing to use the filesystem root as a drop-off folder');
   }
-  if (musicRoot && (root === musicRoot || musicRoot.startsWith(root + path.sep))) {
+  // Three shapes, not two. Equal and "drop-off is a parent of the music folder"
+  // are the ones that put fs.rm on top of the library; the inverse — a drop-off
+  // folder *inside* MUSIC_DIR — is the one .env.example and the README tell
+  // people not to configure, and it was documented rather than refused. Its
+  // consequences are just as real: the delete lands inside the music root, the
+  // MUSIC_DIR watcher debounces into a full scanLibrary() on every export, and
+  // the copies get indexed as duplicates of the very files they were copied
+  // from.
+  if (musicRoot && (
+    root === musicRoot
+    || musicRoot.startsWith(root + path.sep)
+    || root.startsWith(musicRoot + path.sep)
+  )) {
     throw new BadRequestError('The drop-off folder must be outside the music folder');
   }
 
