@@ -33,3 +33,7 @@ coverage/
 
 # Scratch output from browser-automation tooling (snapshots, screenshots, logs)
 .playwright-mcp/
+
+# Superpowers session scratch. The spec and plan under docs/superpowers/ are
+# the deliberate, tracked artifacts; everything here is working notes.
+.superpowers/
