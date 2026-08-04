@@ -1,8 +1,11 @@
 import { useState } from 'react';
 import EqualizerLoader from './EqualizerLoader.jsx';
 
-export default function SearchBox({ onSearch, loading }) {
-  const [value, setValue] = useState('');
+// `initialValue` only seeds the input on first mount (useState reads it once) —
+// it's for a caller that arrives with a query already decided (a link into
+// `/?q=...`), not a controlled value that would need to track further changes.
+export default function SearchBox({ onSearch, loading, initialValue = '' }) {
+  const [value, setValue] = useState(initialValue);
 
   function handleSubmit(e) {
     e.preventDefault();

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import EqualizerLoader from '../EqualizerLoader.jsx';
-import VerifyButton from '../VerifyButton.jsx';
 import { useConfig } from '../../ConfigContext.jsx';
 import { formatBytes, formatDuration } from '../../lib/format.js';
 import { streamEvents } from '../../lib/eventStream.js';
@@ -413,20 +413,25 @@ export default function PlaylistDetail({ id, onPlay, onDeleted }) {
                   {item.seedArtist && <span className="muted"> from {item.seedArtist}</span>}
                 </td>
                 <td className="playlist-row-actions">
-                  {/* A gap has no file to play — the same "find it on YouTube"
-                      flow every other missing track in the app uses. Unlike
-                      every other caller of VerifyButton, a playlist item never
-                      carries a duration (see the item shape in api/playlists.js
-                      — there is no lengthMs anywhere on a gap), and POST
-                      /verify requires one. So this button, reached honestly
-                      through the same route as everywhere else, will answer
-                      with "lengthMs must be a duration…" rather than a video
-                      until either the server accepts an unknown length or
-                      something upstream of this row learns one. Flagged for
-                      the reviewer rather than worked around here, since
-                      relaxing the server's requirement is outside a client-only
-                      task. */}
-                  {!item.track && <VerifyButton artist={item.artist} title={item.title} album={item.album} />}
+                  {/* Not a VerifyButton: a gap has no local file and no
+                      MusicBrainz lookup behind it, so it can never supply the
+                      duration POST /verify requires (requireLengthMs in
+                      server/src/routes/verify.js rejects a missing lengthMs
+                      outright — the same reason MissingTrackCell hides
+                      VerifyButton when a length is unknown). A VerifyButton
+                      here would only ever 400. Routing to the Search page
+                      instead reaches a result that carries its own length and
+                      its own working Find on YouTube button — the door a user
+                      would walk through by hand anyway. Do not swap this back
+                      for a VerifyButton; it will just rediscover the 400. */}
+                  {!item.track && (
+                    <Link
+                      className="chip-button"
+                      to={`/?q=${encodeURIComponent([item.artist, item.title].filter(Boolean).join(' '))}`}
+                    >
+                      Find this track
+                    </Link>
+                  )}
                   <button type="button" className="link-button" onClick={() => removeItem(item.id)}>
                     Remove
                   </button>
