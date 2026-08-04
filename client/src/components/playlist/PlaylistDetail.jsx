@@ -288,11 +288,18 @@ export default function PlaylistDetail({ id, onPlay, onDeleted }) {
         {m3uState === 'error' && <p className="banner banner-error">{m3uError}</p>}
 
         {dropoffState === 'confirm' && (
+          /* Names the folder rather than calling it "this playlist's". The
+             server refuses outright when another playlist's last export is
+             already there (two names can sanitize to one folder), but a folder
+             Spinmatch never created has nothing to attribute it to — so the
+             path and the size are what the user gets to judge by. */
           <p className="banner banner-rate-limited">
-            A folder for this playlist already exists
-            {dropoffConfirm?.fileCount != null && ` with ${dropoffConfirm.fileCount} file${dropoffConfirm.fileCount === 1 ? '' : 's'}`}
+            A folder already exists
+            {dropoffConfirm?.dir ? <> at <span className="mono">{dropoffConfirm.dir}</span></> : ''}
+            {dropoffConfirm?.fileCount != null && `, with ${dropoffConfirm.fileCount} file${dropoffConfirm.fileCount === 1 ? '' : 's'}`}
+            {dropoffConfirm?.bytes ? ` (${formatBytes(dropoffConfirm.bytes)})` : ''}
             {dropoffConfirm?.exportedAt
-              ? `, last exported ${new Date(dropoffConfirm.exportedAt).toLocaleString()}`
+              ? `, last written ${new Date(dropoffConfirm.exportedAt).toLocaleString()}`
               : ''}.
             {' '}Replacing it deletes what&apos;s there first.{' '}
             <button type="button" className="chip-button" onClick={() => runDropoffExport(true)}>

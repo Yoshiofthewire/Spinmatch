@@ -135,6 +135,21 @@ export function deletePlaylist(db, id) {
   db.prepare('DELETE FROM playlists WHERE id = ?').run(id);
 }
 
+/**
+ * The playlist, if any, whose last export landed in exactly this folder.
+ *
+ * Two names can sanitize to one drop-off folder — "Mix: 2024" and "Mix 2024"
+ * are two playlists (name_key only lowercases) with one destination — and the
+ * replace confirmation would happily call the other one's export "this
+ * playlist's". last_export_dir is the only record of who wrote what, so this is
+ * what lets the export refuse by name rather than delete by accident.
+ */
+export function findPlaylistByExportDir(db, dir, { excludeId = null } = {}) {
+  return db.prepare(
+    'SELECT id, name FROM playlists WHERE last_export_dir = ? AND id IS NOT ?'
+  ).get(dir, excludeId) ?? null;
+}
+
 export function noteExport(db, id, dir) {
   db.prepare('UPDATE playlists SET last_exported_at = ?, last_export_dir = ? WHERE id = ?')
     .run(Date.now(), dir, id);

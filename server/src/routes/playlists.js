@@ -3,7 +3,7 @@ import { libraryEnabled, playlistExportEnabled } from '../config.js';
 import { getDb } from '../lib/db.js';
 import {
   createPlaylist, listPlaylists, getPlaylist, renamePlaylist, deletePlaylist,
-  addItems, removeItem, reorderItems, noteExport,
+  addItems, removeItem, reorderItems, noteExport, findPlaylistByExportDir,
 } from '../services/playlistRepo.js';
 import { suggestTracks } from '../services/playlistDiscovery.js';
 import { writeM3u, inspectDropoff, exportToDropoff } from '../services/playlistExport.js';
@@ -173,19 +173,35 @@ playlistsRouter.get('/:id/export/dropoff', sameOriginOnly, async (req, res, next
       throw new NotFoundError('No drop-off folder is configured');
     }
     const playlist = loadPlaylist(req.params.id);
+    const existing = await inspectDropoff(playlist.name);
 
-    if (req.query.replace !== '1') {
-      const existing = await inspectDropoff(playlist.name);
-      if (existing.exists) {
-        res.status(409).json({
-          error: {
-            code: 'DROPOFF_EXISTS',
-            message: 'That folder already exists. Confirm to replace it.',
-            existing: { fileCount: existing.fileCount, exportedAt: existing.exportedAt },
+    // Checked on the replace path too, and refused rather than confirmed. The
+    // folder name is the playlist name with / \ : * ? " < > | stripped, so two
+    // playlists can share one — and the only thing the confirmation showed was
+    // a file count, which reads as "yours, from last time" no matter whose it
+    // is. There is no safe way to answer "replace?" here, so it isn't asked.
+    const owner = findPlaylistByExportDir(getDb(), existing.dir, { excludeId: playlist.id });
+    if (owner) {
+      throw new BadRequestError(
+        `That folder is the last export of the playlist "${owner.name}", whose name lands in `
+        + 'the same place once it is made safe for a filesystem. Rename one of the two.'
+      );
+    }
+
+    if (req.query.replace !== '1' && existing.exists) {
+      res.status(409).json({
+        error: {
+          code: 'DROPOFF_EXISTS',
+          message: 'That folder already exists. Confirm to replace it.',
+          existing: {
+            dir: existing.dir,
+            fileCount: existing.fileCount,
+            bytes: existing.bytes,
+            exportedAt: existing.exportedAt,
           },
-        });
-        return;
-      }
+        },
+      });
+      return;
     }
 
     await sseStream(async ({ send, signal }) => {

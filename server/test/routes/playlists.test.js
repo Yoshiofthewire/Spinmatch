@@ -123,6 +123,32 @@ test('reports an existing drop-off folder instead of overwriting it', async () =
   assert.deepEqual(await fs.readdir(path.join(dropoffDir, 'Drop')), ['stale.mp3']);
 });
 
+test('refuses to export over the folder another playlist last exported to', async () => {
+  // "Mix: 2024" and "Mix 2024" are two playlists — name_key only lowercases —
+  // but sanitizeSegment strips the colon, so both land in DROPOFF_DIR/Mix 2024.
+  const first = await (await postJson(`${baseUrl}/api/playlists`, { name: 'Mix 2024' })).json();
+  await postJson(`${baseUrl}/api/playlists/${first.id}/items`, {
+    items: [{ artist: 'A', title: 'One', source: 'manual' }],
+  });
+  const exported = await fetch(`${baseUrl}/api/playlists/${first.id}/export/dropoff`, {
+    headers: { 'Sec-Fetch-Site': 'same-origin' },
+  });
+  assert.match(await exported.text(), /event: done/);
+
+  const second = await (await postJson(`${baseUrl}/api/playlists`, { name: 'Mix: 2024' })).json();
+  await postJson(`${baseUrl}/api/playlists/${second.id}/items`, {
+    items: [{ artist: 'A', title: 'One', source: 'manual' }],
+  });
+  // ?replace=1 is the dangerous click: the one that used to delete the other
+  // playlist's export after a confirmation that called it this playlist's.
+  const res = await fetch(`${baseUrl}/api/playlists/${second.id}/export/dropoff?replace=1`, {
+    headers: { 'Sec-Fetch-Site': 'same-origin' },
+  });
+  assert.equal(res.status, 400);
+  assert.match((await res.json()).error.message, /Mix 2024/);
+  assert.deepEqual(await fs.readdir(path.join(dropoffDir, 'Mix 2024')), ['1 - A - One.mp3']);
+});
+
 test('config advertises whether export to player is available', async () => {
   const body = await (await fetch(`${baseUrl}/api/config`)).json();
   assert.equal(body.playlistExportEnabled, true);
