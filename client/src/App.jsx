@@ -7,6 +7,7 @@ import AboutPage from './pages/AboutPage.jsx';
 import AccountPage from './pages/AccountPage.jsx';
 import IngestPage from './pages/IngestPage.jsx';
 import LibraryPage from './pages/LibraryPage.jsx';
+import PlaylistsPage from './pages/PlaylistsPage.jsx';
 import Logo from './components/Logo.jsx';
 import { useConfig } from './ConfigContext.jsx';
 import { useAuth } from './AuthContext.jsx';
@@ -33,6 +34,7 @@ export default function App() {
           <NavLink to="/" end className={navLinkClass}>Search</NavLink>
           {ingestEnabled && <NavLink to="/ingest" className={navLinkClass}>Ingest</NavLink>}
           {libraryEnabled && <NavLink to="/library" className={navLinkClass}>Library</NavLink>}
+          {libraryEnabled && <NavLink to="/playlists" className={navLinkClass}>Playlists</NavLink>}
           <NavLink to="/history" className={navLinkClass}>History</NavLink>
           <NavLink to="/about" className={navLinkClass}>About</NavLink>
           <NavLink to="/account" className={navLinkClass}>
@@ -50,6 +52,7 @@ export default function App() {
           <Route path="/release-group/:mbid" element={<AlbumPage />} />
           {ingestEnabled && <Route path="/ingest" element={<IngestPage />} />}
           {libraryEnabled && <Route path="/library" element={<LibraryPage />} />}
+          {libraryEnabled && <Route path="/playlists" element={<PlaylistsPage />} />}
           <Route path="/history" element={<HistoryPage />} />
           <Route path="/about" element={<AboutPage />} />
           <Route path="/account" element={<AccountPage />} />

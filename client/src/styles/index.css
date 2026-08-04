@@ -1091,6 +1091,95 @@ a:hover {
   font-size: 0.85rem;
 }
 
+/* ---------- Playlists page ---------- */
+
+.playlist-create-form {
+  display: flex;
+  gap: 0.6rem;
+  margin-bottom: 1.5rem;
+}
+
+.playlist-create-form input {
+  flex: 0 1 320px;
+  min-width: 140px;
+  padding: 0.55rem 0.85rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-alt);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 0.95rem;
+}
+
+.playlist-create-form input:focus-visible {
+  border-color: var(--lock);
+}
+
+.playlist-detail-header {
+  margin-bottom: 1.5rem;
+  padding-bottom: 1.25rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.playlist-rename-form {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.3rem;
+}
+
+.playlist-rename-form input {
+  padding: 0.5rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-alt);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 1rem;
+}
+
+.playlist-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.playlist-delete-confirm {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.playlist-add-tracks-slot:empty {
+  display: none;
+}
+
+.playlist-reorder {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.playlist-reorder .chip-button {
+  padding: 0.25rem 0.5rem;
+  line-height: 1;
+}
+
+.playlist-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  white-space: nowrap;
+}
+
+/* A track's provenance within a playlist — how it got there, distinct from
+   the confirmed/unverified/none vocabulary badge-* otherwise carries. */
+.badge-source {
+  background: rgba(148, 143, 160, 0.15);
+  color: var(--muted);
+}
+
 /* ---------- Bulk tag repair ---------- */
 
 .bulk-fix-sources {
