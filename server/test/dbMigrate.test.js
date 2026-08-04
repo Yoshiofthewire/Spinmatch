@@ -207,6 +207,81 @@ test('re-opening a v5 database leaves remembered links alone', () => {
   });
 });
 
+// The exact local_tracks shape that shipped at v6: every column up to and
+// including album_synthesized/title_synthesized/dup_key, but genuinely
+// without match_key/title_key. The test above opens a fresh :memory: DB,
+// where SCHEMA's CREATE TABLE already includes match_key/title_key — so
+// addMissingColumns(db, 'local_tracks', V7_TRACK_COLUMNS) finds both columns
+// already present and its ALTER TABLE branch never runs. This schema is
+// missing them for real, the way an actual v6 install's database file is.
+const V6_SCHEMA = `
+CREATE TABLE local_tracks (
+  id                 INTEGER PRIMARY KEY,
+  path               TEXT UNIQUE NOT NULL,
+  artist             TEXT,
+  album              TEXT,
+  title              TEXT,
+  album_synthesized  INTEGER NOT NULL DEFAULT 0,
+  title_synthesized  INTEGER NOT NULL DEFAULT 0,
+  dup_key            TEXT,
+  duration_ms        INTEGER,
+  track_number       INTEGER,
+  disc               INTEGER,
+  year               INTEGER,
+  genre              TEXT,
+  has_cover_art      INTEGER NOT NULL DEFAULT 0,
+  ext                TEXT,
+  size_bytes         INTEGER,
+  mtime_ms           INTEGER,
+  change_key         TEXT NOT NULL,
+  removed            INTEGER NOT NULL DEFAULT 0,
+  added_at           INTEGER,
+  updated_at         INTEGER NOT NULL
+);
+CREATE TABLE meta (
+  key   TEXT PRIMARY KEY,
+  value TEXT
+);
+`;
+
+function withV6Db(fn) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'spinmatch-migrate-v6-'));
+  const dbPath = path.join(dir, 'library.db');
+  const seed = new DatabaseSync(dbPath);
+  seed.exec(V6_SCHEMA);
+  seed.prepare("INSERT INTO meta (key, value) VALUES ('schema_version', '6')").run();
+  seed.prepare(
+    'INSERT INTO local_tracks (path, artist, album, title, change_key, updated_at) '
+    + 'VALUES (?, ?, ?, ?, ?, ?)'
+  ).run('/m/a.mp3', 'Portishead', 'Dummy', 'Roads [Live]', 'kept-key', 1);
+  seed.close();
+  try {
+    fn(dbPath);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+test('v7 adds match_key and title_key to a database that genuinely lacks them', () => {
+  withV6Db((dbPath) => {
+    const db = openDb(dbPath);
+    const cols = new Set(db.prepare('PRAGMA table_info(local_tracks)').all().map((c) => c.name));
+    assert.ok(cols.has('match_key'), 'match_key was added by ALTER TABLE, not already present');
+    assert.ok(cols.has('title_key'), 'title_key was added by ALTER TABLE, not already present');
+
+    const row = db.prepare(
+      "SELECT match_key AS m, title_key AS t, change_key AS c FROM local_tracks WHERE path = '/m/a.mp3'"
+    ).get();
+    assert.equal(row.m, 'portisheadroads');
+    assert.equal(row.t, 'roads');
+    // Confirmed on a database where the columns had to be added by ALTER
+    // TABLE, not just backfilled: this is the branch the other v7 test can't
+    // reach.
+    assert.equal(row.c, 'kept-key', 'change_key must not be cleared by the v7 migration');
+    db.close();
+  });
+});
+
 test('v7 backfills match_key and title_key without re-reading files', () => {
   const db = openDb(':memory:');
   // Simulate a v6 install: drop the new columns' values and rewind the version.
