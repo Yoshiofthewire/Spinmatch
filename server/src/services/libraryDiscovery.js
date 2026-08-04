@@ -1,10 +1,11 @@
 import { getDb } from '../lib/db.js';
-import { listArtists, listArtistNames, listTracks } from './libraryRepo.js';
+import { listArtists, listArtistNames } from './libraryRepo.js';
 import { resolveArtist } from './libraryDiscography.js';
 import { getRelatedArtists, browseReleaseGroupsByArtist } from './musicbrainz.js';
 import { getSimilarArtists as fetchSimilar } from './listenBrainz.js';
 import { config } from '../config.js';
-import { normalizeTitle } from '../lib/normalize.js';
+import { normalizeTitle, makeMatchKey, makeTitleKey } from '../lib/normalize.js';
+import { resolveItems } from './playlistRepo.js';
 
 // Discovery: music you don't have, reached from music you do.
 //
@@ -322,37 +323,48 @@ async function computeRecommendations({ db, limit }) {
  * Playlist reconstruction: given remembered track names, what you already have
  * and what you'd need to find.
  *
- * Entirely offline. Each line is matched against the index on the same
- * normalization ownership uses, and "Artist - Title" is split when present
- * because that's how anyone pastes a playlist.
+ * Entirely offline, and resolved by playlistRepo.resolveItems — the same two
+ * indexed passes a playlist's own rows go through. That is not a tidiness
+ * argument. The version this replaces ran one `LIKE` query per line capped at
+ * 25 candidates and filtered them in JS, so a title with more than 25 hits in
+ * the index was reported "Not in your library" here while resolveItems found a
+ * file for it the instant the user clicked Add anyway — two resolvers
+ * disagreeing about the same library on the same screen.
+ *
+ * "Artist - Title" is split when present because that's how anyone pastes a
+ * playlist; resolveItems' own title-only fallback is what forgives a remembered
+ * artist that doesn't match the file's tag.
  *
  * @param {string[]} lines
  */
 export function reconstructPlaylist(lines, { db = getDb() } = {}) {
-  const found = [];
-  const missing = [];
-
+  const parsed = [];
   for (const raw of lines) {
     const line = String(raw).trim();
     if (!line) continue;
 
-    // "Artist - Title" is the common paste format; a line without a dash is
-    // treated as a title alone rather than guessed at.
+    // A line without a dash is treated as a title alone rather than guessed at.
     const split = line.match(/^(.*?)\s+[-–—]\s+(.*)$/);
     const artist = split ? split[1].trim() : null;
     const title = split ? split[2].trim() : line;
 
-    // One indexed query per line, on the title, then narrowed here — searching
-    // on the whole line would miss every entry whose separator differs.
-    const { tracks } = listTracks(db, { q: title, limit: 25 });
-    const wanted = normalizeTitle(title);
-    const match = tracks.find((t) => normalizeTitle(t.title) === wanted
-      && (!artist || normalizeTitle(t.artist ?? '') === normalizeTitle(artist)))
-      ?? tracks.find((t) => normalizeTitle(t.title) === wanted);
-
-    if (match) found.push({ line, track: match });
-    else missing.push({ line, artist, title });
+    parsed.push({
+      line,
+      artist,
+      title,
+      // No album to name from a pasted line, so preferBest falls through to its
+      // size tie-break — the same copy the item would resolve to once added.
+      album: null,
+      matchKey: makeMatchKey(artist, title),
+      titleKey: makeTitleKey(title),
+    });
   }
 
+  const found = [];
+  const missing = [];
+  for (const item of resolveItems(db, parsed)) {
+    if (item.track) found.push({ line: item.line, track: item.track });
+    else missing.push({ line: item.line, artist: item.artist, title: item.title });
+  }
   return { found, missing };
 }

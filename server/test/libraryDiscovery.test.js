@@ -272,6 +272,26 @@ test('the same title by a different artist is not counted as a match', async () 
   db.close();
 });
 
+test('a title with more index hits than the old 25-row cap is still found', async () => {
+  // The Paste tab and the playlist itself have to agree about the same library.
+  // The version this replaces asked for 25 candidates per line and filtered
+  // them in JS, so a common title reported "Not in your library" here — and
+  // then resolved to a file the moment the user clicked Add anyway.
+  const db = openDb(':memory:');
+  setDbForTest(db);
+  const covers = Array.from({ length: 40 }, (_, i) => ({
+    artist: `Covers Band ${i}`, album: 'Tribute', title: 'Yesterday',
+  }));
+  seedLibrary(db, [...covers, { artist: 'The Beatles', album: 'Help!', title: 'Yesterday' }]);
+
+  const { reconstructPlaylist } = await freshDiscovery();
+  const result = reconstructPlaylist(['The Beatles - Yesterday'], { db });
+
+  assert.equal(result.missing.length, 0);
+  assert.equal(result.found[0].track.artist, 'The Beatles');
+  db.close();
+});
+
 test('empty and whitespace-only lines are ignored', async () => {
   const db = openDb(':memory:');
   setDbForTest(db);
