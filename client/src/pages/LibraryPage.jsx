@@ -10,7 +10,6 @@ import IncompleteTab from '../components/library/IncompleteTab.jsx';
 import HealthTab from '../components/library/HealthTab.jsx';
 import DuplicatesTab from '../components/library/DuplicatesTab.jsx';
 import DiscoveryPanel from '../components/library/DiscoveryPanel.jsx';
-import PlaylistPanel from '../components/library/PlaylistPanel.jsx';
 import ArtistDetail from '../components/library/ArtistDetail.jsx';
 import AlbumDetail from '../components/library/AlbumDetail.jsx';
 import PlayerBar from '../components/library/PlayerBar.jsx';
@@ -275,15 +274,12 @@ export default function LibraryPage() {
               {tab === 'duplicates' && (
                 <DuplicatesTab onPlay={(track, queue) => setPlaying({ track, queue })} />
               )}
-              {/* The one tab that looks outward. Both panels are opt-in: the
-                  discovery half walks the rate-limited MusicBrainz queue, and
-                  the playlist half needs input before it has anything to do. */}
-              {tab === 'discover' && (
-                <>
-                  <DiscoveryPanel />
-                  <PlaylistPanel onPlay={(track, queue) => setPlaying({ track, queue })} />
-                </>
-              )}
+              {/* The one tab that looks outward — opt-in, since it walks the
+                  rate-limited MusicBrainz queue. Playlist reconstruction used
+                  to live here too (PastePanel, now under the Playlists page):
+                  two places that built a playlist and only one that could
+                  save it would be worse than moving it. */}
+              {tab === 'discover' && <DiscoveryPanel />}
             </>
           )}
         </>

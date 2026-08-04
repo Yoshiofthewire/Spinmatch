@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import EqualizerLoader from '../EqualizerLoader.jsx';
+import AddTracksPanel from './AddTracksPanel.jsx';
 import { useConfig } from '../../ConfigContext.jsx';
 import { formatBytes, formatDuration } from '../../lib/format.js';
 import { streamEvents } from '../../lib/eventStream.js';
@@ -343,11 +344,7 @@ export default function PlaylistDetail({ id, onPlay, onDeleted }) {
         )}
       </div>
 
-      {/* TODO(task-9b): render <AddTracksPanel playlistId={id} onAdded={load} />
-          here — the Suggest / paste / library-search tabs for adding tracks to
-          this playlist. Left as a slot rather than a stub because the next
-          agent owns its shape. */}
-      <div className="playlist-add-tracks-slot" />
+      <AddTracksPanel playlistId={id} onAdded={load} />
 
       {actionError && <p className="banner banner-error">{actionError}</p>}
 

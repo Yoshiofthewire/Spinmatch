@@ -6,6 +6,7 @@ import ResultsGroup from '../components/ResultsGroup.jsx';
 import CoverArt from '../components/CoverArt.jsx';
 import VerifyButton from '../components/VerifyButton.jsx';
 import OwnedBadge from '../components/OwnedBadge.jsx';
+import AddToPlaylistButton from '../components/AddToPlaylistButton.jsx';
 import { useConfig } from '../ConfigContext.jsx';
 import { useOwned } from '../lib/useOwned.js';
 
@@ -101,6 +102,9 @@ export default function SearchPage() {
                   <OwnedBadge owned={owned.has(r.mbid)} />
                 </span>
                 <VerifyButton artist={r.artist} title={r.title} album={r.releaseGroupTitle} lengthMs={r.lengthMs} />
+                {libraryEnabled && (
+                  <AddToPlaylistButton artist={r.artist} title={r.title} album={r.releaseGroupTitle} />
+                )}
               </div>
             )}
           />
