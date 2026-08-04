@@ -6,7 +6,9 @@ import {
   addItems, removeItem, reorderItems, noteExport, findPlaylistByExportDir,
 } from '../services/playlistRepo.js';
 import { suggestTracks } from '../services/playlistDiscovery.js';
-import { writeM3u, inspectDropoff, exportToDropoff } from '../services/playlistExport.js';
+import {
+  writeM3u, inspectM3u, inspectDropoff, exportToDropoff,
+} from '../services/playlistExport.js';
 import { MIN_DURATION_MS, MAX_DURATION_MS } from '../services/playlistFill.js';
 import { NotFoundError, BadRequestError } from '../lib/httpErrors.js';
 import { sameOriginOnly } from '../middleware/sameOriginOnly.js';
@@ -155,9 +157,27 @@ playlistsRouter.post('/:id/suggest', async (req, res, next) => {
   }
 });
 
+// The same confirmation the drop-off export has, for the same reason: the
+// filename is the playlist name with the unsafe characters removed, so two
+// playlists can produce one file — and MUSIC_DIR/Road Trip.m3u might be
+// somebody's hand-written playlist that Spinmatch never created. Nothing
+// records who wrote it, so the file itself is what gets reported.
 playlistsRouter.post('/:id/export/m3u', async (req, res, next) => {
   try {
     const playlist = loadPlaylist(req.params.id);
+    if (req.body?.replace !== true) {
+      const existing = await inspectM3u(playlist.name);
+      if (existing.exists) {
+        res.status(409).json({
+          error: {
+            code: 'M3U_EXISTS',
+            message: 'A file already exists at that path. Confirm to replace it.',
+            existing: { path: existing.path, bytes: existing.bytes, writtenAt: existing.writtenAt },
+          },
+        });
+        return;
+      }
+    }
     const result = await writeM3u({ name: playlist.name, items: playlist.items });
     res.json(result);
   } catch (err) {

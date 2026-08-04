@@ -7,6 +7,12 @@ async function request(path, options) {
     const error = new Error(body?.error?.message || `Request failed: ${response.status}`);
     error.code = body?.error?.code || 'UNKNOWN';
     error.status = response.status;
+    // Whatever else the error object carries beyond message/code — e.g. the m3u
+    // export's `existing: { path, bytes, writtenAt }` on a 409 — under the same
+    // name lib/eventStream.js puts it, so a caller handling both looks in one
+    // place.
+    const { message: _m, code: _c, ...details } = body?.error ?? {};
+    error.details = details;
     // A 401 means the session lapsed or first-run setup is pending. Broadcast
     // it so the auth gate can re-render setup/login without every caller
     // having to handle it. Guard against SSR/non-browser environments.

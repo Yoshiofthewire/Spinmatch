@@ -15,6 +15,28 @@ function m3uPathFor(name) {
 }
 
 /**
+ * What is already at the m3u destination, so the caller can confirm.
+ *
+ * The same collision the drop-off folder has, one directory up and with less to
+ * go on: two playlist names sanitize to one filename, and MUSIC_DIR/Road
+ * Trip.m3u may just as easily be a file written by hand years ago that
+ * Spinmatch has never heard of. Nothing records who wrote it, so the honest
+ * answer is to report the file and let the person decide, rather than to
+ * overwrite it silently the way this used to.
+ */
+export async function inspectM3u(name) {
+  const target = m3uPathFor(name);
+  assertInsideMusicDir(target);
+  try {
+    const stat = await fs.stat(target);
+    return { exists: true, path: target, bytes: stat.size, writtenAt: stat.mtimeMs };
+  } catch (err) {
+    if (err.code === 'ENOENT') return { exists: false, path: target, bytes: 0, writtenAt: null };
+    throw err;
+  }
+}
+
+/**
  * Extended M3U at MUSIC_DIR/<name>.m3u.
  *
  * Paths are relative to the music root: the file sits at that root, and a

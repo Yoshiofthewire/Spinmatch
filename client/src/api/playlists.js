@@ -37,8 +37,11 @@ export function suggestPlaylistTracks(id, options) {
   return post(`/playlists/${id}/suggest`, options);
 }
 
-export function exportM3u(id) {
-  return post(`/playlists/${id}/export/m3u`, {});
+// `replace` is the second step of the same confirmation the drop-off export
+// uses: without it, a file already at the target path comes back as a 409
+// rather than being overwritten.
+export function exportM3u(id, { replace = false } = {}) {
+  return post(`/playlists/${id}/export/m3u`, { replace });
 }
 
 // A GET because EventSource only does GET; the caller opens the stream itself

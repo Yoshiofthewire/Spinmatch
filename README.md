@@ -423,13 +423,20 @@ A playlist page offers two exports:
 - **Export m3u** writes an Extended M3U to the root of your music folder, named after the playlist.
   Each entry's path is relative to that root, so the file still works when you read it from another
   machine or under a different mount point. A gap is written as a comment line instead of a path, so
-  the file stays a complete record of the playlist instead of a silently shortened one.
+  the file stays a complete record of the playlist instead of a silently shortened one. If a file is
+  already at that path, Spinmatch reports it and waits for you to confirm the replacement: nothing
+  records which playlist wrote which m3u, and the file may be one Spinmatch never wrote at all.
 - **Export to player** copies the playlist's tracks into a folder at `DROPOFF_DIR`, flat, one file per
   track. Each filename is numbered so that a player which sorts by filename plays them back in
   playlist order. Spinmatch checks free space at `DROPOFF_DIR` before it copies anything, and refuses
   to start if the playlist would not fit. Exporting a playlist that already has a folder there asks
   for confirmation first: **Replace** deletes what is there and writes the export fresh, and nothing
-  is copied until you confirm. This action is hidden unless `DROPOFF_DIR` is set. See
+  is copied until you confirm. Two playlist names can reduce to the same folder name once the
+  characters a filesystem will not take are removed; when that folder is another playlist's last
+  export, Spinmatch refuses and names the other playlist rather than offering to replace it. An
+  export also refuses to start if any of its tracks is not readable, so a music folder that has gone
+  offline cannot delete the last export and copy nothing back. This action is hidden unless
+  `DROPOFF_DIR` is set. See
   [Configuration](#configuration).
 
 ## Adding new files: the Ingest page

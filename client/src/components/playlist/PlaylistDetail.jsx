@@ -123,19 +123,28 @@ export default function PlaylistDetail({ id, onPlay, onDeleted }) {
   }
 
   // ---- Export: m3u ----
-  const [m3uState, setM3uState] = useState('idle'); // idle | running | done | error
+  const [m3uState, setM3uState] = useState('idle'); // idle | running | confirm | done | error
   const [m3uResult, setM3uResult] = useState(null);
+  const [m3uConfirm, setM3uConfirm] = useState(null); // { path, bytes, writtenAt }
   const [m3uError, setM3uError] = useState(null);
 
-  async function handleExportM3u() {
+  async function handleExportM3u(replace) {
     setM3uState('running');
     setM3uError(null);
     setM3uResult(null);
     try {
-      const result = await exportM3u(id);
+      const result = await exportM3u(id, { replace });
       setM3uResult(result);
       setM3uState('done');
     } catch (err) {
+      // A file is already at that path. Like the drop-off 409 this is the
+      // confirmation gate rather than a failure: the file may be another
+      // playlist's export, or one Spinmatch never wrote at all.
+      if (err.code === 'M3U_EXISTS') {
+        setM3uConfirm(err.details?.existing ?? null);
+        setM3uState('confirm');
+        return;
+      }
       setM3uError(err.message);
       setM3uState('error');
     }
@@ -245,7 +254,7 @@ export default function PlaylistDetail({ id, onPlay, onDeleted }) {
           <button
             type="button"
             className="chip-button"
-            onClick={handleExportM3u}
+            onClick={() => handleExportM3u(false)}
             disabled={m3uState === 'running'}
           >
             {m3uState === 'running' ? 'Exporting…' : 'Export m3u'}
@@ -286,6 +295,27 @@ export default function PlaylistDetail({ id, onPlay, onDeleted }) {
           </p>
         )}
         {m3uState === 'error' && <p className="banner banner-error">{m3uError}</p>}
+
+        {m3uState === 'confirm' && (
+          /* Spinmatch keeps no record of which playlist wrote which m3u, and
+             the file at that path may well be one it never wrote — so the
+             prompt describes the file rather than claiming it. */
+          <p className="banner banner-rate-limited">
+            A file already exists at{' '}
+            <span className="mono">{m3uConfirm?.path ?? 'that path'}</span>
+            {m3uConfirm?.bytes ? ` (${formatBytes(m3uConfirm.bytes)})` : ''}
+            {m3uConfirm?.writtenAt
+              ? `, last written ${new Date(m3uConfirm.writtenAt).toLocaleString()}`
+              : ''}.
+            {' '}Spinmatch may not have written it.{' '}
+            <button type="button" className="chip-button" onClick={() => handleExportM3u(true)}>
+              Replace
+            </button>
+            <button type="button" className="link-button" onClick={() => setM3uState('idle')}>
+              Cancel
+            </button>
+          </p>
+        )}
 
         {dropoffState === 'confirm' && (
           /* Names the folder rather than calling it "this playlist's". The

@@ -99,6 +99,34 @@ test('exports an m3u to the music root', async () => {
   assert.match(text, /A\/Al\/01\.mp3/);
 });
 
+test('reports an existing m3u instead of overwriting it, including one it did not write', async () => {
+  // A hand-written MUSIC_DIR/Road Trip.m3u that Spinmatch has never heard of is
+  // the case with the least to go on and the most to lose: nothing records who
+  // wrote an m3u, so the only safe move is to describe the file and ask.
+  await fs.writeFile(path.join(musicDir, 'Road Trip.m3u'), 'hand written\n');
+
+  const created = await (await postJson(`${baseUrl}/api/playlists`, { name: 'Road Trip' })).json();
+  await postJson(`${baseUrl}/api/playlists/${created.id}/items`, {
+    items: [{ artist: 'A', title: 'One', source: 'manual' }],
+  });
+
+  const res = await postJson(`${baseUrl}/api/playlists/${created.id}/export/m3u`, {});
+  assert.equal(res.status, 409);
+  const body = await res.json();
+  assert.equal(body.error.code, 'M3U_EXISTS');
+  assert.equal(body.error.existing.path, path.join(musicDir, 'Road Trip.m3u'));
+  assert.equal(
+    await fs.readFile(path.join(musicDir, 'Road Trip.m3u'), 'utf8'), 'hand written\n',
+    'the 409 wrote nothing',
+  );
+
+  const confirmed = await postJson(
+    `${baseUrl}/api/playlists/${created.id}/export/m3u`, { replace: true },
+  );
+  assert.equal(confirmed.status, 200);
+  assert.match(await fs.readFile(path.join(musicDir, 'Road Trip.m3u'), 'utf8'), /^#EXTM3U/);
+});
+
 test('reports an existing drop-off folder instead of overwriting it', async () => {
   const created = await (await postJson(`${baseUrl}/api/playlists`, { name: 'Drop' })).json();
   await postJson(`${baseUrl}/api/playlists/${created.id}/items`, {
