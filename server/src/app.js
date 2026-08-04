@@ -10,6 +10,7 @@ import { coverRouter } from './routes/cover.js';
 import { configRouter } from './routes/config.js';
 import { ingestRouter } from './routes/ingest.js';
 import { libraryRouter } from './routes/library.js';
+import { playlistsRouter } from './routes/playlists.js';
 import { authRouter } from './routes/auth.js';
 import { requireAuth } from './middleware/requireAuth.js';
 import { errorHandler } from './middleware/errorHandler.js';
@@ -76,6 +77,7 @@ export function createApp({ gate = requireAuth } = {}) {
   app.use('/api/cover', gate, coverRouter);
   app.use('/api/ingest', gate, ingestRouter);
   app.use('/api/library', gate, libraryRouter);
+  app.use('/api/playlists', gate, playlistsRouter);
 
   // In production, the client is pre-built by Vite; serve it and fall back to
   // index.html for client-side routing on any non-API path.
