@@ -194,6 +194,66 @@ test('refuses to export over the folder another playlist last exported to', asyn
   assert.deepEqual(await fs.readdir(path.join(dropoffDir, 'Mix 2024')), ['1 - A - One.mp3']);
 });
 
+test('a 409 on drop-off touches no byte of what is already there', async () => {
+  // The existing 'reports an existing drop-off folder' test above asserts
+  // presence (the filename survives). This asserts content: a truncate that
+  // ran before the export failed would leave the filename in place but the
+  // bytes gone, and readdir alone would not catch that.
+  const created = await (await postJson(`${baseUrl}/api/playlists`, { name: 'DropContent' })).json();
+  await postJson(`${baseUrl}/api/playlists/${created.id}/items`, {
+    items: [{ artist: 'A', title: 'One', source: 'manual' }],
+  });
+  await fs.mkdir(path.join(dropoffDir, 'DropContent'), { recursive: true });
+  const staleContent = 'not touched by a refused export';
+  await fs.writeFile(path.join(dropoffDir, 'DropContent', 'stale.mp3'), staleContent);
+
+  const res = await fetch(`${baseUrl}/api/playlists/${created.id}/export/dropoff`, {
+    headers: { 'Sec-Fetch-Site': 'same-origin' },
+  });
+  assert.equal(res.status, 409);
+  assert.equal(
+    await fs.readFile(path.join(dropoffDir, 'DropContent', 'stale.mp3'), 'utf8'),
+    staleContent,
+    'the bytes are untouched, not just the filename',
+  );
+});
+
+test('a playlist name that sanitizes to "Unknown" still exports', async () => {
+  // cleanName only trims and length-checks — it does not run sanitizeSegment
+  // — so a name of nothing but characters sanitizeSegment strips (/ \ : * ?
+  // " < > | and friends) is a legal playlist name. The export path is where
+  // sanitizeSegment actually runs, folding it to the 'Unknown' fallback.
+  const created = await (await postJson(`${baseUrl}/api/playlists`, { name: '???' })).json();
+  await postJson(`${baseUrl}/api/playlists/${created.id}/items`, {
+    items: [{ artist: 'A', title: 'One', source: 'manual' }],
+  });
+  const res = await postJson(`${baseUrl}/api/playlists/${created.id}/export/m3u`, {});
+  assert.equal(res.status, 200);
+  const text = await fs.readFile(path.join(musicDir, 'Unknown.m3u'), 'utf8');
+  assert.match(text, /A\/Al\/01\.mp3/);
+});
+
+test('deleting a playlist over HTTP removes its item rows, not just the 200', async () => {
+  const created = await (await postJson(`${baseUrl}/api/playlists`, { name: 'CascadeMe' })).json();
+  await postJson(`${baseUrl}/api/playlists/${created.id}/items`, {
+    items: [{ artist: 'A', title: 'One', source: 'manual' }],
+  });
+  assert.equal(
+    db.prepare('SELECT COUNT(*) AS n FROM playlist_items WHERE playlist_id = ?').get(created.id).n,
+    1,
+  );
+
+  const res = await fetch(`${baseUrl}/api/playlists/${created.id}`, {
+    method: 'DELETE', headers: { Origin: baseUrl },
+  });
+  assert.equal(res.status, 200);
+  assert.equal(
+    db.prepare('SELECT COUNT(*) AS n FROM playlist_items WHERE playlist_id = ?').get(created.id).n,
+    0,
+    'the item rows are gone from the table, not just unreachable through the deleted playlist',
+  );
+});
+
 test('config advertises whether export to player is available', async () => {
   const body = await (await fetch(`${baseUrl}/api/config`)).json();
   assert.equal(body.playlistExportEnabled, true);
