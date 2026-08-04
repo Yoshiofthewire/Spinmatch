@@ -81,6 +81,67 @@ test('drop-off numbering pads to the width of the track count', async () => {
   assert.equal(files[9], '10 - A - T10.mp3');
 });
 
+test('drop-off numbering does not pad to two digits below ten', async () => {
+  // The 10-track test above can't distinguish padStart(2) from
+  // padStart(width): both agree for 1..10. Nine tracks is the smallest count
+  // that tells them apart — width is 1, so the first file must be named "1 -
+  // ...", not "01 - ...".
+  const items = [];
+  for (let i = 1; i <= 9; i += 1) {
+    items.push(item('A', `Nine${i}`, await seedFile(`A/B/nine${i}.mp3`)));
+  }
+  const { dir, copied } = await exportToDropoff({ name: 'NineTracks', items });
+  assert.equal(copied, 9);
+  const files = (await fs.readdir(dir)).sort();
+  assert.equal(files[0], '1 - A - Nine1.mp3');
+  assert.equal(files[8], '9 - A - Nine9.mp3');
+});
+
+test('drop-off numbering pads to three digits at a hundred tracks', async () => {
+  const items = [];
+  for (let i = 1; i <= 100; i += 1) {
+    items.push(item('A', `Hundred${i}`, await seedFile(`A/B/hundred${i}.mp3`)));
+  }
+  const { dir, copied } = await exportToDropoff({ name: 'HundredTracks', items });
+  assert.equal(copied, 100);
+  const files = (await fs.readdir(dir)).sort();
+  assert.equal(files[0], '001 - A - Hundred1.mp3');
+  assert.equal(files[99], '100 - A - Hundred100.mp3');
+});
+
+test('two concurrent exports of one playlist serialize, leaving a coherent folder', async () => {
+  // Both calls target the same drop-off directory (same playlist name), with
+  // deliberately distinct item sets so an interleaved wipe-and-copy would be
+  // visible as a mix of both sets' filenames rather than either one cleanly.
+  // withFileLock is what has to prevent that: exportToDropoff computes `dir`
+  // and locks on `dropoff:${dir}`, so the second call's wipe-and-copy can only
+  // begin once the first has fully finished.
+  const alphaFiles = await Promise.all(
+    [1, 2, 3].map((i) => seedFile(`A/B/alpha${i}.mp3`))
+  );
+  const betaFiles = await Promise.all(
+    [1, 2].map((i) => seedFile(`A/B/beta${i}.mp3`))
+  );
+  const alphaItems = alphaFiles.map((f, i) => item('A', `Alpha${i + 1}`, f));
+  const betaItems = betaFiles.map((f, i) => item('B', `Beta${i + 1}`, f));
+
+  const [alphaResult, betaResult] = await Promise.all([
+    exportToDropoff({ name: 'Concurrent', items: alphaItems }),
+    exportToDropoff({ name: 'Concurrent', items: betaItems }),
+  ]);
+  assert.equal(alphaResult.dir, betaResult.dir);
+
+  const files = (await fs.readdir(alphaResult.dir)).sort();
+  const alphaNames = ['1 - A - Alpha1.mp3', '2 - A - Alpha2.mp3', '3 - A - Alpha3.mp3'].sort();
+  const betaNames = ['1 - B - Beta1.mp3', '2 - B - Beta2.mp3'].sort();
+  const isCoherentAlpha = JSON.stringify(files) === JSON.stringify(alphaNames);
+  const isCoherentBeta = JSON.stringify(files) === JSON.stringify(betaNames);
+  assert.ok(
+    isCoherentAlpha || isCoherentBeta,
+    `expected exactly one export's files, got a mix: ${JSON.stringify(files)}`,
+  );
+});
+
 test('an existing folder is reported rather than overwritten', async () => {
   const a = await seedFile('A/B/three.mp3');
   await exportToDropoff({ name: 'Existing', items: [item('A', 'Three', a)] });
