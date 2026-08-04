@@ -16,11 +16,19 @@ import { TTLCache } from '../lib/cache.js';
 // covered 7 artists the relationship graph knew nothing about while the reverse
 // was true only once.
 //
-// IMPORTANT: this is `labs.` — explicitly experimental infrastructure. The
-// algorithm parameter is a long opaque string that could change or disappear,
-// and the service advertises no rate-limit headers. So every failure here is
-// non-fatal by construction: callers get null and fall back to the relationship
-// graph rather than seeing discovery break.
+// This module talks to two ListenBrainz hosts with different stability
+// guarantees, and the difference matters:
+//
+//   labs.api.listenbrainz.org  - similar artists. Explicitly EXPERIMENTAL. The
+//     algorithm parameter is a long opaque string that could change or vanish,
+//     and the service advertises no rate-limit headers.
+//   api.listenbrainz.org       - popularity. The main, documented API.
+//
+// Sturdier is not sturdy: as of 2026-08-02 the popularity endpoints answer 500
+// with "Popularity API currently disabled due to high load on the server". So
+// the contract is the same for both halves — every failure returns null, callers
+// degrade rather than break, and null is never cached. Playlist fill treats a
+// null here as "rank this artist chronologically instead".
 
 const BASE_URL = 'https://labs.api.listenbrainz.org';
 
@@ -102,4 +110,67 @@ export async function getSimilarArtists(artistMbid) {
 // Test seam: the in-process cache would otherwise carry answers between cases.
 export function resetSimilarCacheForTest() {
   cache.store.clear();
+}
+
+const API_BASE_URL = 'https://api.listenbrainz.org';
+
+// Popularity shifts slowly and the endpoint is expensive enough upstream to be
+// switched off under load, so this is cached for a day rather than an hour.
+const POPULARITY_TTL_MS = 24 * 60 * 60 * 1000;
+
+const popularityCache = new TTLCache({ maxEntries: 1000 });
+
+/**
+ * An artist's most-listened recordings, most listened first.
+ *
+ * @param {string} artistMbid
+ * @returns {Promise<Array<{name, recordingMbid, listenCount}>|null>}
+ *   an array (possibly empty — a real "nothing recorded") on success, or `null`
+ *   when the service could not be reached or is disabled. Same distinction the
+ *   similar-artist half makes: an empty result is worth caching, an outage is
+ *   not.
+ */
+export async function getTopRecordings(artistMbid) {
+  if (!artistMbid || !config.discovery.listenBrainzEnabled) return null;
+
+  const cached = popularityCache.get(artistMbid);
+  if (cached !== undefined) return cached;
+
+  const url = new URL(`/1/popularity/top-recordings-for-artist/${artistMbid}`, API_BASE_URL);
+
+  const result = await rateLimiter.schedule(async () => {
+    let response;
+    try {
+      response = await fetch(url, {
+        headers: { 'User-Agent': userAgent(), Accept: 'application/json' },
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+    } catch {
+      return null;
+    }
+    // 500 is the current steady state of this endpoint, not an exceptional
+    // event. It takes the same path as any other failure.
+    if (!response.ok) return null;
+    try {
+      const json = await response.json();
+      if (!Array.isArray(json)) return null;
+      return json
+        .filter((r) => r?.recording_name)
+        .map((r) => ({
+          name: r.recording_name,
+          recordingMbid: r.recording_mbid ?? null,
+          listenCount: r.total_listen_count ?? 0,
+        }));
+    } catch {
+      return null;
+    }
+  });
+
+  if (result !== null) popularityCache.set(artistMbid, result, POPULARITY_TTL_MS);
+  return result;
+}
+
+// Test seam, matching resetSimilarCacheForTest above.
+export function resetPopularityCacheForTest() {
+  popularityCache.store.clear();
 }

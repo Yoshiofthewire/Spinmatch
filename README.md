@@ -8,7 +8,7 @@ Point Spinmatch at a music folder and it becomes a collection manager as well: i
 files, finds the albums with gaps in them, repairs tags, lists duplicates, and suggests artists you
 do not have yet.
 
-Spinmatch **only finds and verifies YouTube links**. It does not download or copy audio.
+Spinmatch **only finds and verifies YouTube links**. It does not download audio.
 
 ![The Kid A tracklist verified against YouTube, each row showing the MusicBrainz length, the YouTube length, and the difference](docs/screenshots/verify-album.png)
 
@@ -21,6 +21,7 @@ Spinmatch **only finds and verifies YouTube links**. It does not download or cop
   - [MusicBrainz checks](#musicbrainz-checks)
   - [Discovery](#discovery)
   - [The preview player](#the-preview-player)
+- [Playlists](#playlists)
 - [Adding new files: the Ingest page](#adding-new-files-the-ingest-page)
 - [History](#history)
 - [First-run login](#first-run-login)
@@ -312,11 +313,6 @@ the reverse. It reaches music that you do not have from music that you do:
 - **Suggest albums** — the same idea, one step further. It lists the studio discographies of the
   first few discovered artists, without the records that you already own. Each cover links to the
   release-group page, where the existing verify flow continues.
-- **Rebuild a playlist** — paste one track for each line, as `Artist - Title` or as a title alone.
-  Spinmatch reports what you already have and what you must still find. This works offline. It
-  matches against the index and makes no upstream request, so it works when MusicBrainz does not.
-
-  ![Rebuild a playlist: seven pasted lines, four matched to files on disk and three listed as not in your library](docs/screenshots/library-playlist.png)
 
 Spinmatch keeps the two signals separate instead of combining them, because they make different
 claims. MusicBrainz records facts, not taste. A "member of band" edge is a documented connection,
@@ -359,6 +355,89 @@ foot of the page, and the [Tracks tab screenshot](#your-library) above shows it 
 This is a preview on purpose. It is a way to confirm that a file is what its tags claim, and it is
 not a music server. There is no queue management, no transcoding, and no playback outside the
 Library page. Point Navidrome or Jellyfin at `MUSIC_DIR` for those features.
+
+## Playlists
+
+`MUSIC_DIR` also enables a **Playlists** page. A playlist is a named, ordered list of tracks, held
+alongside the rest of the library index.
+
+There are three ways to add tracks to a playlist:
+
+- **From the library.** Every row on the Tracks tab, and every row of an album's tracklist, has an
+  **Add to playlist** button. You already named the track, so there is nothing to review.
+- **From a pasted list.** The playlist's **Paste** tab takes one track per line, as `Artist - Title`
+  or as a title alone, and matches each line against the index. This is the same reconstruction that
+  used to live in the Discover tab, moved here because a match now lands directly in the playlist
+  you're building instead of a page with nowhere to put it. It works offline: it matches against your
+  files only and makes no MusicBrainz or ListenBrainz request. A line that matches nothing can still
+  be added — it becomes a gap. See below.
+- **From discovery.** The playlist's **Suggest** tab proposes tracks the way [Find similar
+  artists](#discovery) does: pick one or more artists that you already own, and Spinmatch draws
+  tracks by the artists connected to them that you also own. Nothing is added until you review the
+  proposal and press **Add selected**.
+
+### Choosing tracks
+
+The Suggest tab offers two selection methods:
+
+- **Popular** ordinarily ranks tracks by ListenBrainz popularity. That API is currently disabled
+  upstream — as of 2026-08-02 it answers every request with HTTP 500 and the message "Popularity API
+  currently disabled due to high load on the server." Until MetaBrainz turns it back on, **Popular**
+  orders by album year and then track number instead: a chronological walk of what you own by an
+  artist, not a claim about what is popular. Spinmatch says this on the page rather than presenting a
+  release-date ordering as a popularity ranking. If the endpoint returns, Popular starts using it
+  again with no change on your part. This is the same honesty the [Discovery](#discovery) section
+  above already applies to the experimental `labs.` subdomain.
+- **Chance** shuffles each artist's tracks and draws at random. An optional "Favour popular tracks
+  within the shuffle" checkbox narrows the shuffle, per artist, to their most popular tracks first,
+  for an artist where popularity data exists.
+
+Both methods draw round-robin across the artists connected to your seeds rather than filling one
+artist to its cap before touching the next, so the result is spread across artists instead of
+proportional to how much of one you happen to own. That cap exists so that a handful of artists you
+own heavily cannot fill the whole playlist by themselves: `ceil(target / artists) + 5`. Requesting 50
+tracks drawn from 5 artists therefore caps each one at `ceil(50 / 5) + 5 = 15`. The computed number is
+shown on screen beside the results, because it can behave oddly at a small target or a large artist
+count and you should be able to see why.
+
+A duration filter excludes anything shorter than 60 seconds or longer than 12 minutes by default;
+both limits are fields on the Suggest tab. A track with no readable duration is excluded outright,
+never kept. The Health tab already establishes what a missing duration means: the scanner could not
+decode the audio stream, so the file is damaged, not merely untagged.
+
+### Gaps
+
+A playlist can hold a track that you do not own. A row with no local file behind it shows as a gap,
+with a **Find this track** link into a Search for it — a pasted line that matched nothing, and a
+discovery pick you added anyway, both take this shape.
+
+A gap fills itself in once a matching file lands in your library, with nothing further to do. A
+playlist item stores its artist and title as text, not a reference to a specific file, and every read
+of a playlist resolves those items against the library index fresh. Once a file with a matching
+artist and title exists on disk, the same row resolves to it on the next visit to the page.
+
+### Exporting
+
+A playlist page offers two exports:
+
+- **Export m3u** writes an Extended M3U to the root of your music folder, named after the playlist.
+  Each entry's path is relative to that root, so the file still works when you read it from another
+  machine or under a different mount point. A gap is written as a comment line instead of a path, so
+  the file stays a complete record of the playlist instead of a silently shortened one. If a file is
+  already at that path, Spinmatch reports it and waits for you to confirm the replacement: nothing
+  records which playlist wrote which m3u, and the file may be one Spinmatch never wrote at all.
+- **Export to player** copies the playlist's tracks into a folder at `DROPOFF_DIR`, flat, one file per
+  track. Each filename is numbered so that a player which sorts by filename plays them back in
+  playlist order. Spinmatch checks free space at `DROPOFF_DIR` before it copies anything, and refuses
+  to start if the playlist would not fit. Exporting a playlist that already has a folder there asks
+  for confirmation first: **Replace** deletes what is there and writes the export fresh, and nothing
+  is copied until you confirm. Two playlist names can reduce to the same folder name once the
+  characters a filesystem will not take are removed; when that folder is another playlist's last
+  export, Spinmatch refuses and names the other playlist rather than offering to replace it. An
+  export also refuses to start if any of its tracks is not readable, so a music folder that has gone
+  offline cannot delete the last export and copy nothing back. This action is hidden unless
+  `DROPOFF_DIR` is set. See
+  [Configuration](#configuration).
 
 ## Adding new files: the Ingest page
 
@@ -516,6 +595,7 @@ Every other variable is optional. `.env.example` carries the same list with long
 | `YTDLP_PATH` | `yt-dlp` | Path to the `yt-dlp` program, when it is not on `PATH`. |
 | `MUSIC_DIR` | unset | Your music folder. Setting it enables [Your Library](#your-library). |
 | `INGEST_DIR` | unset | The drop folder. Set it *and* `MUSIC_DIR` to enable [Ingest](#adding-new-files-the-ingest-page). |
+| `DROPOFF_DIR` | unset | The folder that **Export to player** copies into. Optional; unset hides that action. Set it *and* `MUSIC_DIR` to enable [Export to player](#playlists). Keep it outside `MUSIC_DIR` — a folder inside it puts the copies on the music volume, where the scanner indexes them as duplicates of the tracks they came from. |
 | `LIBRARY_DB` | `data/library.db` | The SQLite file. It always holds the login, plus the library index when `MUSIC_DIR` is set. The Docker image sets it to `/data/db/library.db`. |
 | `ACOUSTID_API_KEY` | unset | Turns on fingerprint identification, for ingest and for **Identify by audio**. |
 | `FPCALC_PATH` | `fpcalc` | Path to the Chromaprint program, when it is not on `PATH`. |

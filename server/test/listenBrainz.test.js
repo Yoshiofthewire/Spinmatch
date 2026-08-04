@@ -6,7 +6,10 @@ import assert from 'node:assert/strict';
 
 process.env.MB_CONTACT_EMAIL = 'test@example.com';
 
-const { getSimilarArtists, resetSimilarCacheForTest } = await import('../src/services/listenBrainz.js');
+const configModule = await import('../src/config.js');
+const {
+  getSimilarArtists, resetSimilarCacheForTest, getTopRecordings, resetPopularityCacheForTest,
+} = await import('../src/services/listenBrainz.js');
 
 const MBID = 'a74b1b7f-71a5-4011-9441-d0b5e4122711';
 const OTHER = '5b11f4ce-a62d-471e-81fc-a69a8278c7da';
@@ -113,4 +116,69 @@ test('the request carries a timeout signal', async () => {
   stubFetch((_url, opts) => { signal = opts?.signal; return jsonResponse([]); });
   await getSimilarArtists(MBID);
   assert.ok(signal, 'an AbortSignal is attached so a hung request cannot stall discovery');
+});
+
+test('maps top recordings onto the shape the sampler expects', async () => {
+  resetPopularityCacheForTest();
+  stubFetch(() => jsonResponse([
+    { recording_name: 'Roads', recording_mbid: OTHER, total_listen_count: 900 },
+    { recording_name: 'Glory Box', recording_mbid: MBID, total_listen_count: 700 },
+  ]));
+  const result = await getTopRecordings(MBID);
+  assert.deepEqual(result, [
+    { name: 'Roads', recordingMbid: OTHER, listenCount: 900 },
+    { name: 'Glory Box', recordingMbid: MBID, listenCount: 700 },
+  ]);
+});
+
+test('uses the main API host, not the experimental labs one', async () => {
+  resetPopularityCacheForTest();
+  stubFetch(() => jsonResponse([]));
+  await getTopRecordings(MBID);
+  assert.match(calls[0], /^https:\/\/api\.listenbrainz\.org\/1\/popularity\/top-recordings-for-artist\//);
+  assert.doesNotMatch(calls[0], /labs\./);
+});
+
+// The live service currently answers this endpoint with a 500 ("Popularity API
+// currently disabled due to high load"). That has to degrade, not throw, and
+// must never be cached as "this artist has no popular tracks".
+test('a disabled upstream yields null and is not cached', async () => {
+  resetPopularityCacheForTest();
+  let hits = 0;
+  stubFetch(() => { hits += 1; return { ok: false, status: 500, json: async () => ({ code: 500 }) }; });
+  assert.equal(await getTopRecordings(MBID), null);
+  assert.equal(await getTopRecordings(MBID), null);
+  assert.equal(hits, 2, 'an outage must be retried, not remembered');
+});
+
+test('an empty list is a real answer and is cached', async () => {
+  resetPopularityCacheForTest();
+  let hits = 0;
+  stubFetch(() => { hits += 1; return jsonResponse([]); });
+  assert.deepEqual(await getTopRecordings(MBID), []);
+  assert.deepEqual(await getTopRecordings(MBID), []);
+  assert.equal(hits, 1);
+});
+
+test('a shape change degrades to null rather than throwing', async () => {
+  resetPopularityCacheForTest();
+  stubFetch(() => jsonResponse({ unexpected: true }));
+  assert.equal(await getTopRecordings(MBID), null);
+});
+
+// The README documents LISTENBRAINZ_ENABLED=0 as how a user turns this off
+// deliberately, on the promise that Spinmatch then sends nothing upstream.
+// getTopRecordings has to honour that promise itself rather than relying on
+// a caller to check the flag first.
+test('the disabled flag short-circuits getTopRecordings before any fetch', async () => {
+  resetPopularityCacheForTest();
+  stubFetch(() => jsonResponse([{ recording_name: 'Roads', recording_mbid: OTHER, total_listen_count: 900 }]));
+  const original = configModule.config.discovery.listenBrainzEnabled;
+  configModule.config.discovery.listenBrainzEnabled = false;
+  try {
+    assert.equal(await getTopRecordings(MBID), null);
+    assert.equal(calls.length, 0, 'a disabled flag must not reach the network at all');
+  } finally {
+    configModule.config.discovery.listenBrainzEnabled = original;
+  }
 });

@@ -1,10 +1,11 @@
 import { getDb } from '../lib/db.js';
-import { listArtists, listArtistNames, listTracks } from './libraryRepo.js';
+import { listArtists, listArtistNames } from './libraryRepo.js';
 import { resolveArtist } from './libraryDiscography.js';
 import { getRelatedArtists, browseReleaseGroupsByArtist } from './musicbrainz.js';
 import { getSimilarArtists as fetchSimilar } from './listenBrainz.js';
 import { config } from '../config.js';
-import { normalizeTitle } from '../lib/normalize.js';
+import { normalizeTitle, makeMatchKey, makeTitleKey } from '../lib/normalize.js';
+import { resolveItems } from './playlistRepo.js';
 
 // Discovery: music you don't have, reached from music you do.
 //
@@ -160,12 +161,25 @@ export function getSimilarArtists({ db = getDb(), limit = 30 } = {}) {
   return shared(`similar:${limit}`, () => computeSimilarArtists({ db, limit }));
 }
 
-async function computeSimilarArtists({ db, limit }) {
-  const seeds = await seedArtists(db, SEED_ARTISTS);
+/**
+ * The artists a caller-supplied list of seeds points at, ranked by how many of
+ * them agree.
+ *
+ * `excludeOwned` is the CALLER'S policy, not this function's behaviour, and that
+ * is the whole point of the split. The Discover tab wants music you don't have,
+ * so it passes true. A playlist wants the opposite — the neighbours you own are
+ * exactly the ones it can put on a device — so it passes false. One walk of the
+ * signals, one cache, two meanings.
+ *
+ * @returns {Promise<{artists: object[], listenBrainz: 'ok'|'unavailable'|'disabled'}>}
+ */
+export async function collectNeighbours(db, { seeds, excludeOwned = true, limit = 30 }) {
   // Everything already on disk, so discovery never suggests what you have.
   // Compared on artistKey, which also drops a leading article — see the note
-  // there for why that folding is local to discovery.
-  const owned = new Set(listArtistNames(db).map(artistKey));
+  // there for why that folding is local to discovery. Null when the caller
+  // wants the owned artists kept, so the filter isn't merely bypassed but
+  // never built.
+  const owned = excludeOwned ? new Set(listArtistNames(db).map(artistKey)) : null;
 
   const found = new Map();
   let listenBrainzAnswered = false;
@@ -174,7 +188,7 @@ async function computeSimilarArtists({ db, limit }) {
   // reached by both signals is a stronger suggestion than one reached by either,
   // and the UI says which.
   function note(candidate, seed, kind, rank) {
-    if (owned.has(artistKey(candidate.name))) return;
+    if (owned && owned.has(artistKey(candidate.name))) return;
     const existing = found.get(candidate.mbid);
     if (existing) {
       existing.score += 1;
@@ -229,13 +243,39 @@ async function computeSimilarArtists({ db, limit }) {
     .slice(0, limit);
 
   return {
-    seeds: seeds.map((s) => ({ artist: s.artist, trackCount: s.trackCount })),
     artists,
     // Lets the UI say discovery is running on half its signal rather than
     // silently showing thinner results.
     listenBrainz: config.discovery.listenBrainzEnabled
       ? (listenBrainzAnswered ? 'ok' : 'unavailable')
       : 'disabled',
+  };
+}
+
+/**
+ * Seeds from names the caller supplies rather than from the top of the
+ * collection. Exported so a playlist can start from an artist the user picked;
+ * seedArtists stays private because only discovery wants "whoever you own most
+ * of", and only it needs the trackCount those rows carry.
+ */
+export async function resolveSeedArtists(db, names) {
+  const seeds = [];
+  for (const artist of names) {
+    const { mbArtistId } = await resolveArtist(artist, { db });
+    if (mbArtistId) seeds.push({ artist, mbArtistId });
+  }
+  return seeds;
+}
+
+async function computeSimilarArtists({ db, limit }) {
+  const seeds = await seedArtists(db, SEED_ARTISTS);
+  const { artists, listenBrainz } = await collectNeighbours(db, {
+    seeds, excludeOwned: true, limit,
+  });
+  return {
+    seeds: seeds.map((s) => ({ artist: s.artist, trackCount: s.trackCount })),
+    artists,
+    listenBrainz,
   };
 }
 
@@ -283,37 +323,48 @@ async function computeRecommendations({ db, limit }) {
  * Playlist reconstruction: given remembered track names, what you already have
  * and what you'd need to find.
  *
- * Entirely offline. Each line is matched against the index on the same
- * normalization ownership uses, and "Artist - Title" is split when present
- * because that's how anyone pastes a playlist.
+ * Entirely offline, and resolved by playlistRepo.resolveItems — the same two
+ * indexed passes a playlist's own rows go through. That is not a tidiness
+ * argument. The version this replaces ran one `LIKE` query per line capped at
+ * 25 candidates and filtered them in JS, so a title with more than 25 hits in
+ * the index was reported "Not in your library" here while resolveItems found a
+ * file for it the instant the user clicked Add anyway — two resolvers
+ * disagreeing about the same library on the same screen.
+ *
+ * "Artist - Title" is split when present because that's how anyone pastes a
+ * playlist; resolveItems' own title-only fallback is what forgives a remembered
+ * artist that doesn't match the file's tag.
  *
  * @param {string[]} lines
  */
 export function reconstructPlaylist(lines, { db = getDb() } = {}) {
-  const found = [];
-  const missing = [];
-
+  const parsed = [];
   for (const raw of lines) {
     const line = String(raw).trim();
     if (!line) continue;
 
-    // "Artist - Title" is the common paste format; a line without a dash is
-    // treated as a title alone rather than guessed at.
+    // A line without a dash is treated as a title alone rather than guessed at.
     const split = line.match(/^(.*?)\s+[-–—]\s+(.*)$/);
     const artist = split ? split[1].trim() : null;
     const title = split ? split[2].trim() : line;
 
-    // One indexed query per line, on the title, then narrowed here — searching
-    // on the whole line would miss every entry whose separator differs.
-    const { tracks } = listTracks(db, { q: title, limit: 25 });
-    const wanted = normalizeTitle(title);
-    const match = tracks.find((t) => normalizeTitle(t.title) === wanted
-      && (!artist || normalizeTitle(t.artist ?? '') === normalizeTitle(artist)))
-      ?? tracks.find((t) => normalizeTitle(t.title) === wanted);
-
-    if (match) found.push({ line, track: match });
-    else missing.push({ line, artist, title });
+    parsed.push({
+      line,
+      artist,
+      title,
+      // No album to name from a pasted line, so preferBest falls through to its
+      // size tie-break — the same copy the item would resolve to once added.
+      album: null,
+      matchKey: makeMatchKey(artist, title),
+      titleKey: makeTitleKey(title),
+    });
   }
 
+  const found = [];
+  const missing = [];
+  for (const item of resolveItems(db, parsed)) {
+    if (item.track) found.push({ line: item.line, track: item.track });
+    else missing.push({ line: item.line, artist: item.artist, title: item.title });
+  }
   return { found, missing };
 }

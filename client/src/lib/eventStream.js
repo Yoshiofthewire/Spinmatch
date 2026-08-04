@@ -43,8 +43,12 @@ function dispatch(frame, handlers) {
 async function openFailed(res) {
   let message;
   let code;
+  // Whatever else the server's error object carries beyond message/code — e.g.
+  // the dropoff export's `existing: { fileCount, exportedAt }` on a 409 — so a
+  // caller that needs it doesn't have to re-read a body already consumed here.
+  let details;
   try {
-    ({ message, code } = (await res.json()).error ?? {});
+    ({ message, code, ...details } = (await res.json()).error ?? {});
   } catch {
     // Not JSON: an empty body, or a proxy's own HTML error page.
   }
@@ -60,7 +64,7 @@ async function openFailed(res) {
   }
   return Object.assign(new Error(
     message ? `${message} (HTTP ${res.status})` : `The server answered HTTP ${res.status}.`
-  ), { code, status: res.status });
+  ), { code, status: res.status, details });
 }
 
 export async function streamEvents(url, handlers, { signal } = {}) {

@@ -482,6 +482,16 @@ tbody tr:hover {
   font-weight: 600;
 }
 
+/* Context about how a result is shaped, not a report that something failed —
+   the ListenBrainz-popularity-unavailable line in SuggestPanel is the reason
+   this exists, and is also currently the normal state (the upstream endpoint
+   answers 500), so it deliberately reads calmer than banner-rate-limited. */
+.banner-note {
+  background: rgba(47, 217, 196, 0.08);
+  border-color: rgba(47, 217, 196, 0.2);
+  color: var(--muted);
+}
+
 /* ---------- Bulk verify panel ---------- */
 
 .bulk-verify-panel {
@@ -1088,6 +1098,274 @@ a:hover {
   margin: 0.25rem 0 0;
   padding-left: 1.2rem;
   color: var(--muted);
+  font-size: 0.85rem;
+}
+
+/* ---------- Playlists page ---------- */
+
+.playlist-create-form {
+  display: flex;
+  gap: 0.6rem;
+  margin-bottom: 1.5rem;
+}
+
+.playlist-create-form input {
+  flex: 0 1 320px;
+  min-width: 140px;
+  padding: 0.55rem 0.85rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-alt);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 0.95rem;
+}
+
+.playlist-create-form input:focus-visible {
+  border-color: var(--lock);
+}
+
+.playlist-detail-header {
+  margin-bottom: 1.5rem;
+  padding-bottom: 1.25rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.playlist-rename-form {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.3rem;
+}
+
+.playlist-rename-form input {
+  padding: 0.5rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-alt);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 1rem;
+}
+
+.playlist-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.playlist-delete-confirm {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.playlist-reorder {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.playlist-reorder .chip-button {
+  padding: 0.25rem 0.5rem;
+  line-height: 1;
+}
+
+.playlist-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  white-space: nowrap;
+}
+
+/* A track's provenance within a playlist — how it got there, distinct from
+   the confirmed/unverified/none vocabulary badge-* otherwise carries. */
+.badge-source {
+  background: rgba(148, 143, 160, 0.15);
+  color: var(--muted);
+}
+
+/* ---------- Add tracks to a playlist (Task 9b) ---------- */
+
+.add-tracks-panel {
+  margin-top: 1.5rem;
+}
+
+.add-tracks-panel h3 {
+  margin-top: 0;
+}
+
+.add-tracks-tabs {
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 1rem;
+}
+
+.suggest-panel,
+.paste-panel,
+.library-search-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.suggest-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  max-width: 28rem;
+}
+
+/* Label to the left, control to the right — the same shape TagEditPanel's
+   .tag-edit-row already uses for a form field. */
+.suggest-field {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.suggest-field input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0.45rem 0.7rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-alt);
+  color: var(--text);
+  font-family: var(--font-body);
+}
+
+.suggest-method {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+
+.suggest-method legend {
+  padding: 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.suggest-method label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.9rem;
+}
+
+.suggest-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.suggest-duration {
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.suggest-duration summary {
+  cursor: pointer;
+  color: var(--text);
+}
+
+.suggest-duration .suggest-field {
+  margin-top: 0.5rem;
+}
+
+.suggest-seed-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-width: 28rem;
+}
+
+.suggest-seed-matches,
+.suggest-seed-chosen {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.suggest-seed-chosen li {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.suggest-results {
+  margin-top: 0.5rem;
+}
+
+.paste-missing-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+/* A track row's own picker, e.g. the Tracks tab or a release tracklist. Needs
+   its own stacking context: the menu pops out over the table row beneath it,
+   not inside the cell's own layout flow. */
+.add-to-playlist {
+  position: relative;
+  display: inline-block;
+}
+
+.add-to-playlist-menu {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 0.35rem);
+  right: 0;
+  width: 16rem;
+  padding: 0.75rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.add-to-playlist-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 12rem;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.add-to-playlist-new {
+  display: flex;
+  gap: 0.4rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--border);
+}
+
+.add-to-playlist-new input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0.4rem 0.6rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-alt);
+  color: var(--text);
+  font-family: var(--font-body);
   font-size: 0.85rem;
 }
 

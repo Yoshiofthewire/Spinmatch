@@ -1,11 +1,12 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { get } from '../api/client.js';
 import SearchBox from '../components/SearchBox.jsx';
 import ResultsGroup from '../components/ResultsGroup.jsx';
 import CoverArt from '../components/CoverArt.jsx';
 import VerifyButton from '../components/VerifyButton.jsx';
 import OwnedBadge from '../components/OwnedBadge.jsx';
+import AddToPlaylistButton from '../components/AddToPlaylistButton.jsx';
 import { useConfig } from '../ConfigContext.jsx';
 import { useOwned } from '../lib/useOwned.js';
 
@@ -15,6 +16,10 @@ export default function SearchPage() {
   const [error, setError] = useState(null);
   const navigate = useNavigate();
   const { libraryEnabled } = useConfig();
+  // A link elsewhere in the app (a playlist gap row's "Find this track") can
+  // land here with the search already decided.
+  const [searchParams] = useSearchParams();
+  const initialQuery = searchParams.get('q') ?? '';
 
   // The library knows instantly whether a result is already on disk, so say so
   // rather than making the user go and check.
@@ -42,9 +47,20 @@ export default function SearchPage() {
     }
   }
 
+  // Runs the search once for a query arriving in the URL. Keyed on the param's
+  // *value*, not on `searchParams` itself (a new object every render) or on
+  // `handleSearch` (a new function every render) — either of those would fire
+  // this on every render and hammer /search in a loop. Keying on the string
+  // means it runs once on mount when `?q=` is present, and again only if the
+  // value in the URL genuinely changes, never on an unrelated re-render.
+  useEffect(() => {
+    if (initialQuery) handleSearch(initialQuery);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- deliberately keyed on the value, not on handleSearch's identity
+  }, [initialQuery]);
+
   return (
     <div className="search-page">
-      <SearchBox onSearch={handleSearch} loading={loading} />
+      <SearchBox onSearch={handleSearch} loading={loading} initialValue={initialQuery} />
 
       {error && <p className="banner banner-error">{error.message}</p>}
 
@@ -86,6 +102,9 @@ export default function SearchPage() {
                   <OwnedBadge owned={owned.has(r.mbid)} />
                 </span>
                 <VerifyButton artist={r.artist} title={r.title} album={r.releaseGroupTitle} lengthMs={r.lengthMs} />
+                {libraryEnabled && (
+                  <AddToPlaylistButton artist={r.artist} title={r.title} album={r.releaseGroupTitle} />
+                )}
               </div>
             )}
           />

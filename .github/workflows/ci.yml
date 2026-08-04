@@ -27,7 +27,7 @@ permissions:
 
 jobs:
   test:
-    name: Server tests and client build
+    name: Server tests, client tests, and client build
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -73,9 +73,19 @@ jobs:
       - name: Run server tests
         run: npm test
 
-      # The client has no test suite, so the Vite build is what stands between a
-      # broken import and a container that serves a blank page. It is also the
-      # only place the client is exercised at all in CI.
+      # Vitest + Testing Library, jsdom environment. Fetch is stubbed per test
+      # (see client/src/test/fetchMock.js) so this needs no network and no
+      # server running alongside it — same reasoning as the server suite above.
+      # A separate step from the build below so a red run points at "the
+      # components lied about what they'd request" rather than "something
+      # failed to compile".
+      - name: Run client tests
+        run: npm run test:run -w client
+
+      # The client build is what stands between a broken import and a
+      # container that serves a blank page. The test step above now covers
+      # the playlist feature's riskiest behaviour, but it does not import
+      # every file the way a full build does, so this stays as its own check.
       - name: Build the client
         run: npm run build
 

@@ -3,6 +3,7 @@ import Pagination from '../Pagination.jsx';
 import SortSelect from './SortSelect.jsx';
 import EqualizerLoader from '../EqualizerLoader.jsx';
 import TagEditPanel from './TagEditPanel.jsx';
+import AddToPlaylistButton from '../AddToPlaylistButton.jsx';
 import { getLibraryTracks } from '../../api/library.js';
 import { formatDuration } from '../../lib/format.js';
 
@@ -91,6 +92,7 @@ export default function TracksTab({ onPlay }) {
                 <th aria-label="Play" />
                 <th>#</th><th>Title</th><th>Artist</th><th>Album</th>
                 <th>Length</th><th>Year</th><th>Format</th>
+                <th aria-label="Add to playlist" />
                 <th aria-label="Edit" />
               </tr>
             </thead>
@@ -116,6 +118,9 @@ export default function TracksTab({ onPlay }) {
                     <td className="mono">{t.year ?? '—'}</td>
                     <td className="mono">{t.ext ?? '—'}</td>
                     <td>
+                      <AddToPlaylistButton artist={t.artist} title={t.title} album={t.album} />
+                    </td>
+                    <td>
                       <button
                         type="button"
                         className="chip-button"
@@ -127,7 +132,7 @@ export default function TracksTab({ onPlay }) {
                   </tr>
                   {editing === t.id && (
                     <tr className="track-row-panel">
-                      <td colSpan="9">
+                      <td colSpan="10">
                         <TagEditPanel
                           track={t}
                           onSaved={() => {

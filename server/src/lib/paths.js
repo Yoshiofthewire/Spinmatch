@@ -46,3 +46,69 @@ export async function assertReadableInsideMusicDir(filePath) {
   }
   return real;
 }
+
+// The write-side containment check for the drop-off folder, and the guard on the
+// one path in this app that deletes files it did not create. Stricter than the
+// MUSIC_DIR equivalent because of that: the root is resolved through realpath so
+// a symlinked DROPOFF_DIR can't point the delete at the music library, and a
+// root that resolves to MUSIC_DIR, to a parent of it, or to the filesystem root
+// is refused outright.
+export async function assertInsideDropoffDir(destPath) {
+  const configured = config.playlist.dropoffDir;
+  if (!configured) throw new BadRequestError('No drop-off folder is configured');
+
+  let root;
+  try {
+    root = await fs.realpath(path.resolve(configured));
+  } catch {
+    throw new BadRequestError('The drop-off folder is not readable');
+  }
+
+  // Realpath'd like root, so a MUSIC_DIR that is itself a symlink (e.g. onto a
+  // NAS mount) is compared by where it actually points rather than by the
+  // symlink's own lexical path — otherwise DROPOFF_DIR pointed straight at
+  // that same target would not match the string comparison below and the
+  // wipe would land inside the live music library. An unreadable MUSIC_DIR
+  // falls back to a lexical resolve rather than throwing: this function has
+  // to keep working when only DROPOFF_DIR is configured/relevant.
+  let musicRoot = path.resolve(config.ingest.musicDir ?? '');
+  if (config.ingest.musicDir) {
+    try {
+      musicRoot = await fs.realpath(musicRoot);
+    } catch {
+      // Fall back to the lexical resolve computed above.
+    }
+  }
+  if (root === path.parse(root).root) {
+    throw new BadRequestError('Refusing to use the filesystem root as a drop-off folder');
+  }
+  // Three shapes, not two. Equal and "drop-off is a parent of the music folder"
+  // are the ones that put fs.rm on top of the library; the inverse — a drop-off
+  // folder *inside* MUSIC_DIR — is the one .env.example and the README tell
+  // people not to configure, and it was documented rather than refused. Its
+  // consequences are just as real: the delete lands inside the music root, the
+  // MUSIC_DIR watcher debounces into a full scanLibrary() on every export, and
+  // the copies get indexed as duplicates of the very files they were copied
+  // from.
+  if (musicRoot && (
+    root === musicRoot
+    || musicRoot.startsWith(root + path.sep)
+    || root.startsWith(musicRoot + path.sep)
+  )) {
+    throw new BadRequestError('The drop-off folder must be outside the music folder');
+  }
+
+  // No `resolved === root` exemption: the bare root must never pass. A name
+  // that sanitizes to '.' (e.g. ' . ') makes path.join(root, '.') collapse
+  // back to root itself, and letting that through here means
+  // exportToDropoff's fs.rm(dir, { recursive: true, force: true }) deletes
+  // everything in DROPOFF_DIR, not just the one playlist folder. No caller
+  // needs the bare root to pass: dropoffDirFor always appends a segment, and
+  // the per-file check always has a filename.
+  const resolved = path.resolve(destPath);
+  if (!resolved.startsWith(root + path.sep)) {
+    console.warn(`paths: refusing to write outside DROPOFF_DIR: ${destPath}`);
+    throw new BadRequestError('Refusing to write outside the drop-off folder');
+  }
+  return resolved;
+}

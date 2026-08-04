@@ -1,5 +1,7 @@
 import { Router } from 'express';
-import { config, ingestEnabled, libraryEnabled } from '../config.js';
+import {
+  config, ingestEnabled, libraryEnabled, playlistExportEnabled,
+} from '../config.js';
 import { getDb } from '../lib/db.js';
 import { adminExists, sessionFromToken } from '../services/auth.js';
 import { SESSION_COOKIE } from '../middleware/requireAuth.js';
@@ -25,6 +27,7 @@ configRouter.get('/', (req, res) => {
   res.json({
     ingestEnabled: ingestEnabled(),
     libraryEnabled: libraryEnabled(),
+    playlistExportEnabled: playlistExportEnabled(),
     acoustidConfigured: Boolean(config.acoustidApiKey),
     // Present only for a logged-in caller; `null` reads to the client exactly
     // like "MeTube isn't configured", which hides the button either way.

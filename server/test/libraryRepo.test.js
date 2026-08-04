@@ -57,6 +57,31 @@ test('hasRecording matches artist+title case-insensitively, ignoring removed row
   db.close();
 });
 
+test('upsert stores the normalized match and title keys', () => {
+  const db = openDb(':memory:');
+  repo.upsertLocalTrack(db, {
+    path: '/m/R/Kid A/01.flac', artist: 'Radiohead', album: 'Kid A',
+    title: 'Everything In Its Right Place (Remastered 2011)',
+    durationMs: 251000, changeKey: '1:1',
+  });
+  const row = db.prepare('SELECT match_key AS matchKey, title_key AS titleKey FROM local_tracks').get();
+  assert.equal(row.matchKey, 'radiohead\u001feverything in its right place');
+  assert.equal(row.titleKey, 'everything in its right place');
+  db.close();
+});
+
+test('a null artist still yields a usable title key', () => {
+  const db = openDb(':memory:');
+  repo.upsertLocalTrack(db, {
+    path: '/m/x.mp3', artist: null, album: null, title: 'Idioteque',
+    durationMs: 1000, changeKey: '2:1',
+  });
+  const row = db.prepare('SELECT match_key AS matchKey, title_key AS titleKey FROM local_tracks').get();
+  assert.equal(row.matchKey, '\u001fidioteque');
+  assert.equal(row.titleKey, 'idioteque');
+  db.close();
+});
+
 test('a track with a NULL artist but a non-null album still counts toward total_albums', () => {
   const db = seeded();
   repo.upsertLocalTrack(db, { path: '/m/Unknown/Comp/01.mp3', artist: null, album: 'Comp', title: 'Mystery', durationMs: 1500, changeKey: '40:1' });

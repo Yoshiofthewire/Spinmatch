@@ -272,6 +272,26 @@ test('the same title by a different artist is not counted as a match', async () 
   db.close();
 });
 
+test('a title with more index hits than the old 25-row cap is still found', async () => {
+  // The Paste tab and the playlist itself have to agree about the same library.
+  // The version this replaces asked for 25 candidates per line and filtered
+  // them in JS, so a common title reported "Not in your library" here — and
+  // then resolved to a file the moment the user clicked Add anyway.
+  const db = openDb(':memory:');
+  setDbForTest(db);
+  const covers = Array.from({ length: 40 }, (_, i) => ({
+    artist: `Covers Band ${i}`, album: 'Tribute', title: 'Yesterday',
+  }));
+  seedLibrary(db, [...covers, { artist: 'The Beatles', album: 'Help!', title: 'Yesterday' }]);
+
+  const { reconstructPlaylist } = await freshDiscovery();
+  const result = reconstructPlaylist(['The Beatles - Yesterday'], { db });
+
+  assert.equal(result.missing.length, 0);
+  assert.equal(result.found[0].track.artist, 'The Beatles');
+  db.close();
+});
+
 test('empty and whitespace-only lines are ignored', async () => {
   const db = openDb(':memory:');
   setDbForTest(db);
@@ -411,6 +431,95 @@ test('a successful run caches both signals together', async () => {
   assert.equal(relationLookups.length, 1);
   assert.equal(result.artists.length, 2, 'both signals survive the cache round-trip');
   assert.deepEqual(result.artists.map((a) => a.kind).sort(), ['related', 'similar']);
+  db.close();
+});
+
+// --- The owned filter is the caller's, not discovery's -----------------------
+//
+// Discovery wants the artists you don't have; a playlist wants exactly the ones
+// you do, because those are the only ones it can put on a device. Same walk of
+// the same two signals, opposite policies, so the filter belongs to the caller.
+
+test('excludeOwned false keeps neighbours already in the library', async () => {
+  const db = openDb(':memory:');
+  setDbForTest(db);
+  // Seeded so that a neighbour of the seed is itself an owned artist.
+  seedLibrary(db, [
+    { artist: 'Portishead', album: 'Dummy', title: 'a' },
+    { artist: 'Massive Attack', album: 'Mezzanine', title: 'b' },
+  ]);
+
+  const { collectNeighbours } = await freshDiscovery({
+    resolve: { Portishead: 'seed-1', 'Massive Attack': 'mb-owned' },
+    related: { 'seed-1': [{ mbid: 'nb-1', name: 'Massive Attack', relation: 'collaboration' }] },
+  });
+  const seeds = [{ artist: 'Portishead', mbArtistId: 'seed-1' }];
+
+  const excluded = await collectNeighbours(db, { seeds, excludeOwned: true });
+  assert.equal(excluded.artists.find((a) => a.name === 'Massive Attack'), undefined);
+
+  const included = await collectNeighbours(db, { seeds, excludeOwned: false });
+  assert.ok(
+    included.artists.find((a) => a.name === 'Massive Attack'),
+    'a playlist needs exactly the neighbours the Discover tab throws away',
+  );
+  db.close();
+});
+
+test('the Discover tab still excludes owned artists by default', async () => {
+  const db = openDb(':memory:');
+  setDbForTest(db);
+  seedLibrary(db, [
+    { artist: 'Portishead', album: 'Dummy', title: 'a' },
+    { artist: 'Massive Attack', album: 'Mezzanine', title: 'b' },
+  ]);
+
+  const { getSimilarArtists } = await freshDiscovery({
+    resolve: { Portishead: 'seed-1', 'Massive Attack': 'mb-owned' },
+    related: {
+      'seed-1': [{ mbid: 'nb-1', name: 'Massive Attack', relation: 'collaboration' }],
+      'mb-owned': [],
+    },
+  });
+  const { artists } = await getSimilarArtists({ db, limit: 30 });
+
+  assert.equal(artists.find((a) => a.name === 'Massive Attack'), undefined);
+  db.close();
+});
+
+// collectNeighbours defaults to discovery's policy, so a caller that forgets the
+// flag gets the safe answer rather than the one that leaks owned artists.
+test('collectNeighbours excludes owned artists when not told otherwise', async () => {
+  const db = openDb(':memory:');
+  setDbForTest(db);
+  seedLibrary(db, [
+    { artist: 'Portishead', album: 'Dummy', title: 'a' },
+    { artist: 'Massive Attack', album: 'Mezzanine', title: 'b' },
+  ]);
+
+  const { collectNeighbours } = await freshDiscovery({
+    resolve: { Portishead: 'seed-1' },
+    related: { 'seed-1': [{ mbid: 'nb-1', name: 'Massive Attack', relation: 'collaboration' }] },
+  });
+  const { artists } = await collectNeighbours(db, {
+    seeds: [{ artist: 'Portishead', mbArtistId: 'seed-1' }],
+  });
+
+  assert.deepEqual(artists.map((a) => a.name), []);
+  db.close();
+});
+
+test('resolveSeedArtists keeps the names it can resolve and drops the rest', async () => {
+  const db = openDb(':memory:');
+  setDbForTest(db);
+  seedLibrary(db, [{ artist: 'Portishead', album: 'Dummy', title: 'a' }]);
+
+  const { resolveSeedArtists } = await freshDiscovery({
+    resolve: { Portishead: 'seed-1' },
+  });
+  const seeds = await resolveSeedArtists(db, ['Portishead', 'Unknowable']);
+
+  assert.deepEqual(seeds, [{ artist: 'Portishead', mbArtistId: 'seed-1' }]);
   db.close();
 });
 
