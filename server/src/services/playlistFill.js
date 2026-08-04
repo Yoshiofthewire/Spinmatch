@@ -16,6 +16,27 @@
 export const MIN_DURATION_MS = 60_000;
 export const MAX_DURATION_MS = 720_000;
 
+// A day. Like MAX_TARGET and MAX_BYTE_BUDGET in routes/playlists.js this is a
+// sanity ceiling rather than a real limit — it exists so a request can't hand
+// the filter an absurd number, not because anything near it is meaningful.
+export const MAX_DURATION_BOUND = 24 * 60 * 60 * 1000;
+
+/**
+ * A duration bound as it arrives from a request: clamped, not trusted.
+ *
+ * `Number(x) || fallback` treats a legitimate 0 as absent, and 0 is exactly
+ * what the client sends for an emptied "Shortest (seconds)" field — so asking
+ * for no lower bound silently got the 60s default back. Number.isFinite is what
+ * tells "not a number" apart from "zero"; an absent value is still the caller's
+ * default, since omitting minMs is not the same request as asking for 0.
+ */
+export function clampDuration(raw, fallback) {
+  if (raw === null || raw === undefined || raw === '') return fallback;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(MAX_DURATION_BOUND, Math.max(0, n));
+}
+
 /**
  * A null duration is excluded, not kept. The Health tab already establishes what
  * it means: the scanner could not decode the audio stream, so the file is

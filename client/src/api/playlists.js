@@ -44,9 +44,9 @@ export function exportM3u(id, { replace = false } = {}) {
   return post(`/playlists/${id}/export/m3u`, { replace });
 }
 
-// A GET because EventSource only does GET; the caller opens the stream itself
-// via lib/eventStream.js. Exposed as a URL rather than a fetch so the 409
-// pre-check and the stream can share one path.
+// A GET because every SSE route in this app is one (see routes/playlists.js);
+// the caller opens the stream itself via lib/eventStream.js. Exposed as a URL
+// rather than a fetch so the 409 pre-check and the stream can share one path.
 export function dropoffUrl(id, { replace = false } = {}) {
   return `/api/playlists/${id}/export/dropoff${replace ? '?replace=1' : ''}`;
 }

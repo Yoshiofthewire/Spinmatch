@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 const {
-  filterByDuration, perArtistCap, fillPlaylist,
-  MIN_DURATION_MS, MAX_DURATION_MS,
+  filterByDuration, perArtistCap, fillPlaylist, clampDuration,
+  MIN_DURATION_MS, MAX_DURATION_MS, MAX_DURATION_BOUND,
 } = await import('../src/services/playlistFill.js');
 
 // A deterministic stand-in for Math.random: cycles a fixed sequence so a
@@ -159,4 +159,27 @@ test('an already-present key is never picked again', () => {
   });
   assert.equal(picked.length, 3);
   assert.ok(!picked.some((p) => p.matchKey === 'A-1'));
+});
+
+// --- Duration bounds off the wire ---------------------------------------------
+
+test('a duration bound of 0 is honoured rather than read as absent', () => {
+  // The client sends 0 for an emptied "Shortest (seconds)" field. Under
+  // `Number(x) || MIN_DURATION_MS` that came straight back as the 60s default,
+  // so the one setting whose whole point is "no lower bound" could not be set.
+  assert.equal(clampDuration(0, MIN_DURATION_MS), 0);
+  assert.equal(clampDuration('0', MIN_DURATION_MS), 0);
+});
+
+test('an absent or unusable duration bound falls back to the default', () => {
+  assert.equal(clampDuration(undefined, MIN_DURATION_MS), MIN_DURATION_MS);
+  assert.equal(clampDuration(null, MIN_DURATION_MS), MIN_DURATION_MS);
+  assert.equal(clampDuration('', MAX_DURATION_MS), MAX_DURATION_MS);
+  assert.equal(clampDuration('soon', MAX_DURATION_MS), MAX_DURATION_MS);
+  assert.equal(clampDuration(Infinity, MAX_DURATION_MS), MAX_DURATION_MS);
+});
+
+test('a duration bound is clamped at both ends', () => {
+  assert.equal(clampDuration(-5000, MIN_DURATION_MS), 0);
+  assert.equal(clampDuration(Number.MAX_SAFE_INTEGER, MAX_DURATION_MS), MAX_DURATION_BOUND);
 });

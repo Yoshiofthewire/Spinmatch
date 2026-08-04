@@ -9,7 +9,7 @@ import { suggestTracks } from '../services/playlistDiscovery.js';
 import {
   writeM3u, inspectM3u, inspectDropoff, exportToDropoff,
 } from '../services/playlistExport.js';
-import { MIN_DURATION_MS, MAX_DURATION_MS } from '../services/playlistFill.js';
+import { MIN_DURATION_MS, MAX_DURATION_MS, clampDuration } from '../services/playlistFill.js';
 import { NotFoundError, BadRequestError } from '../lib/httpErrors.js';
 import { sameOriginOnly } from '../middleware/sameOriginOnly.js';
 import { sseStream } from '../lib/sse.js';
@@ -86,7 +86,19 @@ playlistsRouter.get('/:id', (req, res) => {
 
 playlistsRouter.patch('/:id', (req, res) => {
   const playlist = loadPlaylist(req.params.id);
-  renamePlaylist(getDb(), playlist.id, cleanName(req.body?.name));
+  const name = cleanName(req.body?.name);
+  try {
+    renamePlaylist(getDb(), playlist.id, name);
+  } catch (err) {
+    // Same UNIQUE index, same answer as POST /. Without this the rename form
+    // rendered "Internal server error" — and the log got a stack trace — for
+    // the most ordinary mistake there is.
+    if (String(err.message).includes('UNIQUE')) {
+      res.status(409).json({ error: { code: 'DUPLICATE_NAME', message: 'A playlist with that name already exists' } });
+      return;
+    }
+    throw err;
+  }
   res.json({ ok: true });
 });
 
@@ -147,8 +159,8 @@ playlistsRouter.post('/:id/suggest', async (req, res, next) => {
       target,
       byteBudget,
       preferPopular: Boolean(req.body?.preferPopular),
-      minMs: Number(req.body?.minMs) || MIN_DURATION_MS,
-      maxMs: Number(req.body?.maxMs) || MAX_DURATION_MS,
+      minMs: clampDuration(req.body?.minMs, MIN_DURATION_MS),
+      maxMs: clampDuration(req.body?.maxMs, MAX_DURATION_MS),
       existingKeys: new Set(playlist.items.map((i) => i.matchKey)),
     });
     res.json(result);
@@ -185,8 +197,18 @@ playlistsRouter.post('/:id/export/m3u', async (req, res, next) => {
   }
 });
 
-// GET, not POST: EventSource only issues GET requests, which is why every SSE
-// stream in this app is a GET that opts into the CSRF guard by hand.
+// GET, not POST: house convention. Every SSE stream in this app is a GET that
+// opts into the CSRF guard by hand, and one shared client helper
+// (lib/eventStream.js) that opens all of them beats protocol purity for a
+// single route.
+//
+// It is not a capability claim. The reason given here used to be "EventSource
+// only issues GET requests", but the client abandoned EventSource for fetch —
+// its own header explains why at length — so POST was available the whole time.
+// That distinction has teeth: sameOriginOnly accepts Sec-Fetch-Site: none,
+// which is a user-initiated navigation, so this URL pasted into the address bar
+// of a logged-in browser starts a real export with no confirmation step in
+// front of it. A POST would not have been reachable that way.
 playlistsRouter.get('/:id/export/dropoff', sameOriginOnly, async (req, res, next) => {
   try {
     if (!playlistExportEnabled()) {

@@ -71,6 +71,23 @@ test('rejects a duplicate name with a 409', async () => {
   assert.equal(res.status, 409);
 });
 
+test('rejects a rename onto an existing name with a 409, not a 500', async () => {
+  await postJson(`${baseUrl}/api/playlists`, { name: 'Taken' });
+  const other = await (await postJson(`${baseUrl}/api/playlists`, { name: 'Free' })).json();
+
+  const res = await fetch(`${baseUrl}/api/playlists/${other.id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', Origin: baseUrl },
+    body: JSON.stringify({ name: 'taken' }),
+  });
+  assert.equal(res.status, 409);
+  const body = await res.json();
+  assert.equal(body.error.code, 'DUPLICATE_NAME');
+  // The message is what the rename form renders — "Internal server error" is
+  // not something a user can act on.
+  assert.match(body.error.message, /already exists/i);
+});
+
 test('rejects an over-long name', async () => {
   const res = await postJson(`${baseUrl}/api/playlists`, { name: 'x'.repeat(300) });
   assert.equal(res.status, 400);
