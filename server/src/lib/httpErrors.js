@@ -25,6 +25,15 @@ export class BadRequestError extends Error {
   }
 }
 
+export class ForbiddenError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'ForbiddenError';
+    this.code = 'FORBIDDEN';
+    this.status = 403;
+  }
+}
+
 export class RateLimitedError extends Error {
   constructor(message) {
     super(message);

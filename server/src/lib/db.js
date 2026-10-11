@@ -5,7 +5,7 @@ import { config } from '../config.js';
 import { makeDupKey, makeMatchKey, makeTitleKey } from './normalize.js';
 
 // Bump with a matching step in migrate().
-const SCHEMA_VERSION = 10;
+const SCHEMA_VERSION = 11;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS meta (
@@ -202,6 +202,18 @@ CREATE TABLE IF NOT EXISTS verify_history (
   created_at     INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_vh_created ON verify_history(created_at);
+
+-- Bearer tokens for scripts (services/apiTokens.js). Only a hash is kept; the token is
+-- shown once. Revoked rows stay so the Account page can show what was revoked.
+CREATE TABLE IF NOT EXISTS api_tokens (
+  id           INTEGER PRIMARY KEY,
+  name         TEXT NOT NULL,
+  hash         TEXT UNIQUE NOT NULL,
+  scope        TEXT NOT NULL CHECK (scope IN ('read', 'full')),
+  created_at   INTEGER NOT NULL,
+  last_used_at INTEGER,
+  revoked_at   INTEGER
+);
 `;
 
 // After migrate(): upgraded installs lack these columns until it runs.
@@ -354,6 +366,7 @@ export function migrate(db) {
 
   // v9: tag_batches/tag_writes, new tables only, created by SCHEMA.
   // v10: verify_history, new table only, created by SCHEMA.
+  // v11: api_tokens, new table only, created by SCHEMA.
 
   db.prepare(
     "INSERT INTO meta (key, value) VALUES ('schema_version', ?) " +

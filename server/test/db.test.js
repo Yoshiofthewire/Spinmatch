@@ -72,7 +72,7 @@ test('openDb waits for a concurrent migration instead of racing it', async () =>
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'spinmatch-db-migrate-'));
   const dbPath = path.join(dir, 'library.db');
   const seed = openDb(dbPath);
-  seed.exec("UPDATE meta SET value = '9' WHERE key = 'schema_version'");
+  seed.exec("UPDATE meta SET value = '10' WHERE key = 'schema_version'");
   seed.close();
 
   const source = `
@@ -80,7 +80,7 @@ test('openDb waits for a concurrent migration instead of racing it', async () =>
     const { workerData, parentPort } = require('node:worker_threads');
     const db = new DatabaseSync(workerData.dbPath);
     db.exec('BEGIN IMMEDIATE');
-    db.exec("UPDATE meta SET value = '10' WHERE key = 'schema_version'");
+    db.exec("UPDATE meta SET value = '11' WHERE key = 'schema_version'");
     parentPort.postMessage('migrating');
     setTimeout(() => { db.exec('COMMIT'); db.close(); }, 250);
   `;
@@ -91,7 +91,7 @@ test('openDb waits for a concurrent migration instead of racing it', async () =>
   });
   try {
     const db = openDb(dbPath);
-    assert.equal(db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value, '10');
+    assert.equal(db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value, '11');
     db.close();
   } finally {
     await worker.terminate();

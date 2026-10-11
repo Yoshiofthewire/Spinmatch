@@ -9,7 +9,7 @@ export function createAttemptLimiter({ max, windowMs, now = () => Date.now() }) 
     }
   }
 
-  return function limit(key) {
+  function limit(key) {
     const t = now();
     if (hits.size > 1000) prune(t);
     const entry = hits.get(key);
@@ -20,5 +20,13 @@ export function createAttemptLimiter({ max, windowMs, now = () => Date.now() }) 
     entry.count += 1;
     if (entry.count > max) return { allowed: false, retryAfterMs: entry.resetAt - t };
     return { allowed: true };
+  }
+
+  // For callers that record failures only: ms until `key` may try again, 0 if it may now.
+  limit.blockedFor = (key) => {
+    const t = now();
+    const entry = hits.get(key);
+    return entry && entry.resetAt > t && entry.count >= max ? entry.resetAt - t : 0;
   };
+  return limit;
 }
