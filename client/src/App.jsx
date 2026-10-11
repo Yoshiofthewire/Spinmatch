@@ -26,7 +26,7 @@ export default function App() {
   const { username, logout } = useAuth();
 
   // Best-effort: on failure the browser copy stays and the next load retries.
-  useEffect(() => { importLegacyHistory().catch(() => {}); }, []);
+  useEffect(() => { importLegacyHistory(); }, []);
 
   return (
     <div className="app">

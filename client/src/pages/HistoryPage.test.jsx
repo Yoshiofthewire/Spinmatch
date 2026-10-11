@@ -13,6 +13,19 @@ const ENTRIES = [
 ];
 
 describe('HistoryPage', () => {
+  it('on a first visit, lists only after the browser copy has been imported', async () => {
+    localStorage.setItem('spinmatch:history', JSON.stringify([{ track: 'Old', artist: 'A', action: 'verified', timestamp: 1 }]));
+    const calls = installFetchMock([
+      { method: 'POST', test: (url) => url === '/api/history/import', respond: () => jsonResponse({ imported: 1, skipped: 0 }) },
+      { test: isList, respond: () => jsonResponse({ entries: [{ id: 1, title: 'Old', artist: 'A', action: 'verified', status: null, videoId: null, createdAt: 1 }], total: 1 }) },
+    ]);
+    render(<HistoryPage />);
+
+    expect(await screen.findByText('Old')).toBeInTheDocument();
+    expect(calls.map((c) => c.url.split('?')[0])).toEqual(['/api/history/import', '/api/history']);
+    expect(localStorage.getItem('spinmatch:history')).toBeNull();
+  });
+
   it('renders server entries with their status and an encoded YouTube link', async () => {
     const calls = installFetchMock([
       { test: isList, respond: () => jsonResponse({ entries: ENTRIES, total: 2 }) },
