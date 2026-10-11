@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import EqualizerLoader from '../components/EqualizerLoader.jsx';
+import ErrorBanner from '../components/ErrorBanner.jsx';
 import PlaylistDetail from '../components/playlist/PlaylistDetail.jsx';
 import PlayerBar from '../components/library/PlayerBar.jsx';
 import { listPlaylists, createPlaylist } from '../api/playlists.js';
@@ -102,7 +103,7 @@ export default function PlaylistsPage() {
           </form>
           {createError && <p className="banner banner-error">{createError}</p>}
 
-          {error && <p className="banner banner-error">{error}</p>}
+          {error && <ErrorBanner message={error} onRetry={load} />}
           {state === 'loading' && <EqualizerLoader label="Loading playlists…" />}
 
           {state === 'ready' && (playlists.length === 0 ? (
