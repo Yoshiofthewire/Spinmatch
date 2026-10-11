@@ -26,6 +26,7 @@ Spinmatch **only finds and verifies YouTube links**. It does not download audio.
 - [Adding new files: the Ingest page](#adding-new-files-the-ingest-page)
 - [History](#history)
 - [First-run login](#first-run-login)
+- [API tokens](#api-tokens)
 - [Prerequisites](#prerequisites)
 - [Installing yt-dlp](#installing-yt-dlp)
 - [Configuration](#configuration)
@@ -552,8 +553,8 @@ exists, the server prints a new one-time token to its log at every start:
 docker logs spinmatch 2>&1 | grep 'First-run setup token'
 ```
 
-The token lives in memory only. It is spent by a successful setup; restart to get a fresh one. All `/api` routes need a valid session, except
-`/api/health` and `/api/config`.
+The token lives in memory only. It is spent by a successful setup; restart to get a fresh one. All `/api` routes need a valid session or [API token](#api-tokens),
+except `/api/health` and `/api/config`.
 
 ![The first-run setup screen, asking for a username and a password](docs/screenshots/first-run-setup.png)
 
@@ -593,6 +594,38 @@ header that any client can send.
 Permitted values are a hop count (`1`), `true`, `false`, a subnet (`10.0.0.0/8`), or a named preset
 (`loopback`). If the value is not valid, the server stops at startup and prints a message. It does
 not start with the setting silently inactive.
+
+## API tokens
+
+Scripts and other tools use an API token instead of the login. Create one in the **API tokens**
+section of the **Account** page. The page shows the token once, at creation. Spinmatch stores only
+its SHA-256 hash, so a lost token cannot be recovered: revoke it and create another.
+
+```sh
+curl -H "Authorization: Bearer spm_…" http://host:3000/api/library/stats
+```
+
+Each token has one of two scopes:
+
+- **Read-only** (the default) allows `GET` and `HEAD` requests only. It also cannot open the streams
+  that do work, such as ingest processing or a missing-tracks check.
+- **Full access** allows every method on the library, playlist, search, verify, ingest and history
+  routes. A request with a token needs no `Origin` header, because a browser never sends a token
+  on its own.
+
+No token can use `/api/auth` (status, login, logout, password) or `/api/tokens`, whatever its scope.
+Those need a signed-in session. A request that carries a token is treated as a token request even if
+it also carries a session cookie. An invalid or revoked token is refused with 401 and never falls
+back to the cookie. After 20 failed token attempts in 5 minutes, an IP address is locked out of token
+access for the rest of that window.
+
+Tokens are separate credentials. **Log out** and a password change do not revoke them. Use
+**Revoke** or **Revoke all tokens** on the Account page. Recreating the admin account (see above)
+revokes every token.
+
+A token is sent in clear text with every request, like a password. Use HTTPS (for example through a
+[reverse proxy](#running-behind-a-reverse-proxy)) whenever Spinmatch is reachable from outside your
+LAN.
 
 ## Prerequisites
 
