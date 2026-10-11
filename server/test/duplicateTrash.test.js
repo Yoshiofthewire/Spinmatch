@@ -23,15 +23,20 @@ const configModule = await import('../src/config.js');
 // The scanner re-reads tags on the restore path; no real audio file is involved
 // in these tests, so readTags is mocked the way libraryFix.test.js does it.
 const { mock } = await import('node:test');
+// The real exports too, so the route test can load the whole app.
+const realTags = await import('../src/services/tags.js');
 mock.module('../src/services/tags.js', {
   namedExports: {
+    ...realTags,
     readTags: async () => ({ artist: 'A', album: 'Al', title: 'One', durationMs: 1000 }),
     readCoverArt: async () => null,
     writeTags: async () => ({ filledFields: [] }),
   },
 });
 
-const { trashDuplicate, restoreDuplicate, trashPathFor, TRASH_DIR_NAME } = await import('../src/services/duplicateTrash.js');
+const {
+  trashDuplicate, restoreDuplicate, trashPathFor, TRASH_DIR_NAME, listTrash, restoreFromTrash,
+} = await import('../src/services/duplicateTrash.js');
 
 // Two copies of one track, both as real (empty) files, both indexed. Returns
 // their ids in path order.
@@ -290,4 +295,156 @@ test('undo recreates the album directory if it was cleaned up in the meantime', 
 
   await restoreDuplicate({ trackId: first.id, db });
   assert.ok(fsSync.existsSync(first.path));
+});
+
+test('undo refuses a removed row whose file is not in the trash, and claims nothing', async () => {
+  const db = freshDb();
+  const [first] = await seedTwoCopies(db);
+  // Removed by a scan (deleted outside the app), never trashed.
+  await fs.unlink(first.path);
+  repo.markRemovedByPath(db, first.path);
+
+  await assert.rejects(restoreDuplicate({ trackId: first.id, db }), (err) => err.status === 404);
+  assert.ok(!fsSync.existsSync(first.path), 'no placeholder was left at the original path');
+});
+
+// --- The trash as a folder ---------------------------------------------------
+
+const trashFile = (...parts) => path.join(musicDir, TRASH_DIR_NAME, ...parts);
+
+async function putInTrash(rel, bytes = 'x') {
+  const full = trashFile(rel);
+  await fs.mkdir(path.dirname(full), { recursive: true });
+  await fs.writeFile(full, bytes);
+  return full;
+}
+
+test('listTrash is empty when there is no trash folder', async () => {
+  assert.deepEqual(await listTrash({ limit: 10, offset: 0 }), {
+    entries: [], total: 0, totals: { count: 0, bytes: 0 },
+  });
+});
+
+test('listTrash walks nested folders, skips symlinks, totals bytes and pages', async () => {
+  await putInTrash('A/Al/a.flac', '12345');
+  await putInTrash('B/Deep/Er/b.mp3', '123');
+  const outside = path.join(os.tmpdir(), 'spinmatch-outside-target.flac');
+  await fs.writeFile(outside, 'secret');
+  await fs.symlink(outside, trashFile('A', 'Al', 'link.flac'));
+  await fs.symlink(path.dirname(outside), trashFile('dirlink'));
+  // The original of a.flac is back in the library already.
+  await fs.mkdir(path.join(musicDir, 'A', 'Al'), { recursive: true });
+  await fs.writeFile(path.join(musicDir, 'A', 'Al', 'a.flac'), 'new');
+
+  const all = await listTrash({ limit: 10, offset: 0 });
+  assert.deepEqual(all.entries.map((e) => [e.relPath, e.originalPath, e.size, e.restorable]), [
+    ['A/Al/a.flac', 'A/Al/a.flac', 5, false],
+    ['B/Deep/Er/b.mp3', 'B/Deep/Er/b.mp3', 3, true],
+  ]);
+  assert.ok(all.entries[0].mtimeMs > 0);
+  assert.deepEqual(all.totals, { count: 2, bytes: 8 });
+
+  const second = await listTrash({ limit: 1, offset: 1 });
+  assert.deepEqual(second.entries.map((e) => e.relPath), ['B/Deep/Er/b.mp3']);
+  assert.equal(second.total, 2);
+  await fs.rm(outside, { force: true });
+});
+
+test('a symlinked trash folder is not listed', async () => {
+  const elsewhere = await fs.mkdtemp(path.join(os.tmpdir(), 'spinmatch-elsewhere-'));
+  await fs.writeFile(path.join(elsewhere, 'x.flac'), 'x');
+  await fs.symlink(elsewhere, trashFile());
+  assert.equal((await listTrash({ limit: 10, offset: 0 })).total, 0);
+  await assert.rejects(restoreFromTrash({ relPath: 'x.flac' }), (err) => err.status === 400);
+  assert.ok(fsSync.existsSync(path.join(elsewhere, 'x.flac')));
+  await fs.rm(elsewhere, { recursive: true, force: true });
+});
+
+test('restoreFromTrash moves the file back and indexes it', async () => {
+  const db = freshDb();
+  await putInTrash('A/Al/a.flac', 'the bytes');
+
+  const result = await restoreFromTrash({ relPath: 'A/Al/a.flac' });
+
+  const original = path.join(musicDir, 'A', 'Al', 'a.flac');
+  assert.equal(result.restoredPath, original);
+  assert.equal(await fs.readFile(original, 'utf8'), 'the bytes');
+  assert.ok(!fsSync.existsSync(trashFile('A', 'Al', 'a.flac')));
+  assert.ok(db.prepare('SELECT 1 FROM local_tracks WHERE path = ? AND removed = 0').get(original));
+});
+
+// purgeRemoved drops tombstones after 30 days; the file in the trash outlives them.
+test('restoreFromTrash works after the removed row was purged', async () => {
+  const db = freshDb();
+  const [first] = await seedTwoCopies(db);
+  await trashDuplicate({ trackId: first.id, db });
+  assert.equal(repo.purgeRemoved(db, { olderThanMs: -1000 }), 1, 'the tombstone is gone');
+
+  await restoreFromTrash({ relPath: 'A/Al/a.flac' });
+  const row = db.prepare('SELECT removed FROM local_tracks WHERE path = ?').get(first.path);
+  assert.equal(row.removed, 0, 'a fresh live row');
+});
+
+test('restoreFromTrash refuses with 409 when the original path is occupied', async () => {
+  freshDb();
+  const trashed = await putInTrash('A/Al/a.flac', 'trashed');
+  const original = path.join(musicDir, 'A', 'Al', 'a.flac');
+  await fs.mkdir(path.dirname(original), { recursive: true });
+  await fs.writeFile(original, 'occupant');
+
+  await assert.rejects(restoreFromTrash({ relPath: 'A/Al/a.flac' }), (err) => err.status === 409);
+  assert.equal(await fs.readFile(original, 'utf8'), 'occupant');
+  assert.equal(await fs.readFile(trashed, 'utf8'), 'trashed');
+});
+
+test('restoreFromTrash rejects traversal, absolute paths, NUL and symlinks with 400', async () => {
+  freshDb();
+  await putInTrash('A/Al/a.flac');
+  const outsideDir = await fs.mkdtemp(path.join(os.tmpdir(), 'spinmatch-outside-'));
+  const outside = path.join(outsideDir, 'x.flac');
+  await fs.writeFile(outside, 'outside');
+  await fs.symlink(outside, trashFile('A', 'Al', 'out.flac'));
+  await fs.symlink(trashFile('A', 'Al', 'a.flac'), trashFile('A', 'Al', 'in.flac'));
+  await fs.symlink(outsideDir, trashFile('outdir'));
+
+  for (const relPath of [
+    '../A/Al/x.flac', 'A/../../x.flac', outside, '/etc/passwd', 'A/Al/a.flac\0', '', 42,
+    'A/Al/out.flac', 'A/Al/in.flac', 'outdir/x.flac', 'A',
+  ]) {
+    await assert.rejects(
+      restoreFromTrash({ relPath }),
+      (err) => err.status === 400,
+      `accepted ${JSON.stringify(relPath)}`,
+    );
+  }
+  assert.equal(await fs.readFile(outside, 'utf8'), 'outside', 'the outside file is untouched');
+  assert.ok(!fsSync.existsSync(path.join(musicDir, 'A', 'Al', 'out.flac')));
+  assert.ok(!fsSync.existsSync(path.join(musicDir, 'outdir')));
+  await fs.rm(outsideDir, { recursive: true, force: true });
+});
+
+test('the trash routes list and restore, and reject traversal with 400', async () => {
+  freshDb();
+  await putInTrash('A/Al/a.flac');
+  const { createApp } = await import('../src/app.js');
+  const server = createApp({ gate: (req, res, next) => next() }).listen(0);
+  await new Promise((resolve) => server.once('listening', resolve));
+  const base = `http://localhost:${server.address().port}/api/library`;
+  const restore = (relPath) => fetch(`${base}/trash/restore`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Sec-Fetch-Site': 'same-origin' },
+    body: JSON.stringify({ relPath }),
+  });
+  try {
+    const list = await (await fetch(`${base}/trash?limit=5`)).json();
+    assert.equal(list.total, 1);
+    assert.equal(list.limit, 5);
+    assert.equal(list.entries[0].relPath, 'A/Al/a.flac');
+
+    assert.equal((await restore('../../etc/passwd')).status, 400);
+    assert.equal((await restore('A/Al/a.flac')).status, 200);
+    assert.equal((await restore('A/Al/a.flac')).status, 404, 'already restored');
+  } finally {
+    server.close();
+  }
 });

@@ -15,7 +15,9 @@ import { getFixCandidates, getFingerprintCandidates, applyFix } from '../service
 import { previewBulkFix, applyBulkFix, MAX_BULK_FIX } from '../services/libraryBulkFix.js';
 import { editTrackTags, editAlbumTags } from '../services/tagEdit.js';
 import { listChanges, undoBatch } from '../services/tagJournal.js';
-import { trashDuplicate, restoreDuplicate } from '../services/duplicateTrash.js';
+import {
+  trashDuplicate, restoreDuplicate, listTrash, restoreFromTrash,
+} from '../services/duplicateTrash.js';
 import {
   getSimilarArtists, getRecommendations, reconstructPlaylist,
 } from '../services/libraryDiscovery.js';
@@ -423,6 +425,24 @@ libraryRouter.post('/track/:id/restore', async (req, res, next) => {
     const trackId = Number(req.params.id);
     if (!trackId) throw new BadRequestError('a track id is required');
     res.json(await restoreDuplicate({ trackId }));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Read-only view of the trash; emptying it is left to the user, outside Spinmatch.
+libraryRouter.get('/trash', async (req, res, next) => {
+  try {
+    const { limit, offset } = paging(req, 100);
+    res.json({ ...(await listTrash({ limit, offset })), limit, offset });
+  } catch (err) {
+    next(err);
+  }
+});
+
+libraryRouter.post('/trash/restore', async (req, res, next) => {
+  try {
+    res.json(await restoreFromTrash({ relPath: req.body?.relPath }));
   } catch (err) {
     next(err);
   }

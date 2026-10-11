@@ -75,6 +75,8 @@ test('every /api route requires a session except the documented public ones', as
     '/api/library/health',
     '/api/library/incomplete',
     '/api/library/duplicates',
+    '/api/library/scan/status',
+    '/api/library/trash',
     '/api/library/cover/1',
     '/api/library/stream/1',
     '/api/ingest/scan',
@@ -166,7 +168,7 @@ test('cross-site state-changing requests are refused across the whole API', asyn
   }));
   const POSTS = ['/api/verify', '/api/verify/album/11111111-1111-4111-8111-111111111111',
     '/api/library/scan', '/api/library/fix', '/api/library/owned', '/api/library/rescan',
-    '/api/library/artist-link', '/api/ingest/process', '/api/ingest/file/resolve'];
+    '/api/library/artist-link', '/api/library/trash/restore', '/api/ingest/process', '/api/ingest/file/resolve'];
   for (const url of POSTS) {
     const res = await fetch(baseUrl + url, {
       method: 'POST',
