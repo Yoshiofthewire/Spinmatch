@@ -5,6 +5,7 @@ import path from 'node:path';
 import { File, Picture, PictureType, ByteVector } from 'node-taglib-sharp';
 import { MAX_IMAGE_BYTES } from '../lib/imageBytes.js';
 import { noteWrite } from '../lib/recentWrites.js';
+import { fsyncPath } from '../lib/moveFile.js';
 
 const FIELD_TO_TAG_PROP = {
   artist: 'performers',
@@ -158,24 +159,14 @@ async function saveViaTemp(filePath, edit) {
     const { mode } = await fs.stat(filePath);
     await fs.copyFile(filePath, tmp, fsConstants.COPYFILE_EXCL);
     withFile(tmp, edit);
-    const fh = await fs.open(tmp, 'r+');
-    try {
-      await fh.sync();
-    } finally {
-      await fh.close();
-    }
+    await fsyncPath(tmp);
     await fs.chmod(tmp, mode);
     await fs.rename(tmp, filePath);
   } catch (err) {
     await fs.rm(tmp, { force: true });
     throw err;
   }
-  const dh = await fs.open(dir, 'r');
-  try {
-    await dh.sync();
-  } finally {
-    await dh.close();
-  }
+  await fsyncPath(dir);
 }
 
 function applyTags(tag, desired, { coverImage, overwrite, replaceCoverArt }) {
