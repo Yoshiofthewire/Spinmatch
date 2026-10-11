@@ -7,6 +7,7 @@ import { tagsFromPath } from './libraryPathTags.js';
 import { getRecording, resolvePrimaryReleaseForGroup, getReleaseWithTracks } from './musicbrainz.js';
 import { getFrontCoverImage } from './coverArt.js';
 import { writeTags } from './tags.js';
+import { openJournal } from './tagJournal.js';
 import { reindexFile } from './libraryScanner.js';
 import { assertReadableInsideMusicDir } from '../lib/paths.js';
 import { withFileLock } from '../lib/fileLock.js';
@@ -69,6 +70,7 @@ export async function applyFix({ trackId, recordingMbid, overwrite = false, repl
     ? await getFrontCoverImage(releaseGroupMbid)
     : null;
 
+  const journal = openJournal(getDb(), 'fix', `Fixed from MusicBrainz: ${recording.artist ?? 'Unknown artist'} – ${recording.title}`);
   // Concurrent whole-file rewrites corrupt the file (a double-click does it). Re-index
   // inside the lock too, or it can read a half-written file.
   const filledFields = await withFileLock(real, async () => {
@@ -80,12 +82,14 @@ export async function applyFix({ trackId, recordingMbid, overwrite = false, repl
       trackNumber: position.trackNumber ?? null,
       disc: position.disc ?? null,
     }, { coverImage, overwrite, replaceCoverArt });
+    await journal.record({ trackId, real }, written);
     await reindexFile(real);
     return written.filledFields;
   });
 
   return {
     filledFields,
+    batchId: journal.batchId,
     overwritten: overwrite,
     track: getTrackById(getDb(), trackId),
     recording: { mbid: recording.mbid, title: recording.title, artist: recording.artist },

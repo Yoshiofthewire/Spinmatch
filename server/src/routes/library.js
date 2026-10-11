@@ -14,6 +14,7 @@ import {
 import { getFixCandidates, getFingerprintCandidates, applyFix } from '../services/libraryFix.js';
 import { previewBulkFix, applyBulkFix, MAX_BULK_FIX } from '../services/libraryBulkFix.js';
 import { editTrackTags, editAlbumTags } from '../services/tagEdit.js';
+import { listChanges, undoBatch } from '../services/tagJournal.js';
 import { trashDuplicate, restoreDuplicate } from '../services/duplicateTrash.js';
 import {
   getSimilarArtists, getRecommendations, reconstructPlaylist,
@@ -350,7 +351,11 @@ libraryRouter.patch('/track/:id/tags', async (req, res, next) => {
   try {
     const trackId = Number(req.params.id);
     if (!trackId) throw new BadRequestError('a track id is required');
-    res.json(await editTrackTags({ trackId, fields: req.body?.fields }));
+    const expectedMtimeMs = req.body?.expectedMtimeMs ?? null;
+    if (expectedMtimeMs !== null && !Number.isInteger(expectedMtimeMs)) {
+      throw new BadRequestError('expectedMtimeMs must be a whole number');
+    }
+    res.json(await editTrackTags({ trackId, fields: req.body?.fields, expectedMtimeMs }));
   } catch (err) {
     next(err);
   }
@@ -372,6 +377,23 @@ libraryRouter.post('/album/tags', async (req, res, next) => {
       perTrack,
       trackIds,
     }));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Journaled tag writes, newest first.
+libraryRouter.get('/changes', (req, res) => {
+  const { limit, offset } = paging(req, 50);
+  res.json({ ...listChanges(getDb(), { limit, offset }), limit, offset });
+});
+
+// Skips (never overwrites) any file that changed after the journaled write.
+libraryRouter.post('/changes/:batchId/undo', async (req, res, next) => {
+  try {
+    const batchId = Number(req.params.batchId);
+    if (!Number.isInteger(batchId) || batchId <= 0) throw new BadRequestError('a change id is required');
+    res.json(await undoBatch(batchId));
   } catch (err) {
     next(err);
   }

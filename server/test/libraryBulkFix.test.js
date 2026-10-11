@@ -77,7 +77,7 @@ async function freshBulkFix({ resolveAlbum, writeTags, ...mbMocks } = {}) {
         const filledFields = Object.keys(desired)
           .filter((k) => desired[k] != null && current[k] == null);
         writes.push({ filePath, desired, filledFields });
-        return { filledFields };
+        return { filledFields, before: {} };
       }),
     },
   });
@@ -514,7 +514,7 @@ test('one unwritable file is reported without abandoning the rest of the album',
         throw err;
       }
       writes.push({ filePath, desired });
-      return { filledFields: Object.keys(desired).filter((k) => desired[k] != null) };
+      return { filledFields: Object.keys(desired).filter((k) => desired[k] != null), before: {} };
     },
   });
   const result = await applyBulkFix({ artist: null, album: 'Album', source: 'path', trackIds: ids, db });
