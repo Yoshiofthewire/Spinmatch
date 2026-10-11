@@ -8,14 +8,16 @@ import {
 import { SESSION_COOKIE, requireAuth } from '../middleware/requireAuth.js';
 import { serializeCookie, parseCookies } from '../lib/cookies.js';
 import { createAttemptLimiter } from '../lib/attemptLimiter.js';
-import { BadRequestError, RateLimitedError } from '../lib/httpErrors.js';
+import { BadRequestError, ForbiddenError, RateLimitedError } from '../lib/httpErrors.js';
+import { oidcEnabled, passwordLoginBlocked, endSessionUrl, describe } from '../services/oidc.js';
+import { config } from '../config.js';
 
 export const authRouter = Router();
 
 const SESSION_MAX_AGE_S = 30 * 24 * 60 * 60;
 
 // Per-IP throttle, one bucket per endpoint so password changes can't lock out login.
-function rateLimitBy(limiter) {
+export function rateLimitBy(limiter) {
   return function rateLimit(req, res, next) {
     const key = req.ip || req.socket?.remoteAddress || 'unknown';
     const { allowed, retryAfterMs } = limiter(key);
@@ -32,9 +34,9 @@ const rateLimitSetup = rateLimitBy(createAttemptLimiter({ max: 10, windowMs: 5 *
 const rateLimitPassword = rateLimitBy(createAttemptLimiter({ max: 10, windowMs: 5 * 60 * 1000 }));
 
 // req.secure honours X-Forwarded-Proto only under TRUST_PROXY; never read the header directly.
-function setSession(req, res, username, epoch) {
+export function setSession(req, res, username, epoch) {
   const token = issueToken(getSigningSecret(getDb()), username, epoch);
-  res.setHeader('Set-Cookie', serializeCookie(SESSION_COOKIE, token, {
+  res.append('Set-Cookie', serializeCookie(SESSION_COOKIE, token, {
     maxAge: SESSION_MAX_AGE_S,
     httpOnly: true,
     sameSite: 'Strict',
@@ -43,7 +45,7 @@ function setSession(req, res, username, epoch) {
 }
 
 function clearSession(req, res) {
-  res.setHeader('Set-Cookie', serializeCookie(SESSION_COOKIE, '', {
+  res.append('Set-Cookie', serializeCookie(SESSION_COOKIE, '', {
     maxAge: 0,
     httpOnly: true,
     sameSite: 'Strict',
@@ -75,6 +77,7 @@ authRouter.get('/status', (req, res) => {
     setupRequired: false,
     authenticated: Boolean(session),
     username: session ? session.username : undefined,
+    oidc: oidcEnabled() ? { enabled: true, only: config.oidc.only } : { enabled: false },
   });
 });
 
@@ -107,6 +110,9 @@ authRouter.post('/setup', rateLimitSetup, async (req, res, next) => {
 
 authRouter.post('/login', rateLimitLogin, async (req, res, next) => {
   try {
+    if (passwordLoginBlocked(getDb())) {
+      throw new ForbiddenError('Password sign-in is turned off (OIDC_ONLY). Use single sign-on.');
+    }
     const { username, password } = req.body || {};
     const admin = getAdmin(getDb());
     // Always hash (dummyHash on a miss) so timing doesn't reveal the username.
@@ -151,8 +157,12 @@ authRouter.post('/password', requireAuth, rateLimitPassword, async (req, res, ne
 });
 
 // Tokens are stateless, so logout must revoke server-side; this signs out every device.
+// With a linked IdP that advertises it, the client then ends the IdP session too.
 authRouter.post('/logout', requireAuth, (req, res) => {
-  revokeSessions(getDb());
+  const db = getDb();
+  revokeSessions(db);
   clearSession(req, res);
-  res.json({ ok: true });
+  endSessionUrl(db)
+    .catch((err) => console.warn(`OIDC end-session URL unavailable: ${describe(err)}`))
+    .then((url) => res.json(url ? { ok: true, endSessionUrl: url } : { ok: true }));
 });

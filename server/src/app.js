@@ -14,6 +14,7 @@ import { playlistsRouter } from './routes/playlists.js';
 import { historyRouter } from './routes/history.js';
 import { authRouter } from './routes/auth.js';
 import { tokensRouter } from './routes/tokens.js';
+import { oidcRouter, BACKCHANNEL_PATH } from './routes/oidc.js';
 import { requireAuth, sessionOnly } from './middleware/requireAuth.js';
 import { bearerAuth } from './middleware/bearerAuth.js';
 import { errorHandler } from './middleware/errorHandler.js';
@@ -51,8 +52,11 @@ export function createApp({ gate = requireAuth, clientDist = CLIENT_DIST } = {})
   app.use((req, res, next) => (req.path === '/api/playlists/import' ? next() : json(req, res, next)));
 
   // CSRF guard for all unsafe methods; SSE GETs that do real work opt in per route.
+  // Back-channel logout is exempt: the IdP posts it server to server with no Origin, and
+  // its signed token is the only credential (it carries no cookie to forge with).
   app.use('/api', (req, res, next) => (
     req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS'
+      || (req.method === 'POST' && req.originalUrl === BACKCHANNEL_PATH)
       ? next()
       : sameOriginOnly(req, res, next)
   ));
@@ -62,6 +66,7 @@ export function createApp({ gate = requireAuth, clientDist = CLIENT_DIST } = {})
   // Public routes.
   app.get('/api/health', (req, res) => res.json({ ok: true }));
   app.use('/api/config', configRouter);
+  app.use('/api/auth/oidc', sessionOnly, oidcRouter);
   app.use('/api/auth', sessionOnly, authRouter);
 
   // Everything else requires a session or an API token; credentials need a session.
