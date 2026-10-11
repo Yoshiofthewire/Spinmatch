@@ -21,7 +21,9 @@ import { config } from './config.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // `gate` is injectable for tests; not a boolean flag, so prod can't be switched off.
-export function createApp({ gate = requireAuth } = {}) {
+const CLIENT_DIST = path.join(__dirname, '..', '..', 'client', 'dist');
+
+export function createApp({ gate = requireAuth, clientDist = CLIENT_DIST } = {}) {
   const app = express();
   // Governs req.ip (login rate limiter) and req.secure (Secure cookie).
   // `!= null`: 0 and false are meaningful ("trust nothing").
@@ -65,12 +67,12 @@ export function createApp({ gate = requireAuth } = {}) {
   app.use('/api/playlists', gate, playlistsRouter);
 
   // Built client; SPA fallback to index.html for non-API paths.
-  const clientDist = path.join(__dirname, '..', '..', 'client', 'dist');
   app.use(express.static(clientDist));
   app.get(/^(?!\/api).*/, (req, res) => {
-    const indexHtml = path.join(clientDist, 'index.html');
-    if (fs.existsSync(indexHtml)) {
-      res.sendFile(indexHtml);
+    if (fs.existsSync(path.join(clientDist, 'index.html'))) {
+      // With `root`, Express 5 applies its dot-file refusal only below clientDist, so an
+      // install under a dot directory (~/.local/...) still serves the app.
+      res.sendFile('index.html', { root: clientDist });
     } else {
       res.status(404).send('Client build not found. Run `npm run build` first.');
     }
