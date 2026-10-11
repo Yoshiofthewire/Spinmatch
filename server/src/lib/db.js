@@ -160,7 +160,7 @@ CREATE TABLE IF NOT EXISTS playlist_items (
   album       TEXT,
   match_key   TEXT NOT NULL,
   title_key   TEXT NOT NULL,
-  -- manual | popular | random | paste. 'random' is what the UI labels "Chance".
+  -- manual | popular | random | paste | import. 'random' is what the UI labels "Chance".
   source      TEXT NOT NULL,
   seed_artist TEXT,
   added_at    INTEGER NOT NULL

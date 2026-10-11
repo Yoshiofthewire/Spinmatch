@@ -13,7 +13,7 @@ import {
 
 // The UI calls the sampler's `random` method "Chance".
 const SOURCE_LABELS = {
-  manual: 'Manual', popular: 'Popular', random: 'Chance', paste: 'Pasted',
+  manual: 'Manual', popular: 'Popular', random: 'Chance', paste: 'Pasted', import: 'Imported',
 };
 
 // Reorder uses up/down buttons, not drag-and-drop: predictable and keyboard-accessible.

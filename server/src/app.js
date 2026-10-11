@@ -41,7 +41,10 @@ export function createApp({ gate = requireAuth, clientDist = CLIENT_DIST } = {})
     }
   }
   app.use(securityHeaders);
-  app.use(express.json({ limit: '256kb' }));
+  // m3u import parses its own 2mb body behind the gate. Any other spelling of the
+  // path gets this 256kb parser, so a mismatch fails small.
+  const json = express.json({ limit: '256kb' });
+  app.use((req, res, next) => (req.path === '/api/playlists/import' ? next() : json(req, res, next)));
 
   // CSRF guard for all unsafe methods; SSE GETs that do real work opt in per route.
   app.use('/api', (req, res, next) => (

@@ -1,11 +1,12 @@
-import { Router } from 'express';
-import { libraryEnabled, playlistExportEnabled } from '../config.js';
+import express, { Router } from 'express';
+import { config, libraryEnabled, playlistExportEnabled } from '../config.js';
 import { getDb } from '../lib/db.js';
 import {
   createPlaylist, listPlaylists, getPlaylist, renamePlaylist, deletePlaylist,
   addItems, removeItem, reorderItems, noteExport, findPlaylistByExportDir,
 } from '../services/playlistRepo.js';
 import { suggestTracks } from '../services/playlistDiscovery.js';
+import { parseM3u, m3uItems } from '../services/m3uImport.js';
 import {
   writeM3u, inspectM3u, inspectDropoff, exportToDropoff,
 } from '../services/playlistExport.js';
@@ -63,18 +64,38 @@ playlistsRouter.get('/', (req, res) => {
   res.json({ playlists: listPlaylists(getDb()) });
 });
 
-playlistsRouter.post('/', (req, res) => {
-  const name = cleanName(req.body?.name);
+// UNIQUE index on name_key enforces this; no check-then-act race. Null after a 409.
+function createOr409(res, name) {
   try {
-    res.json(createPlaylist(getDb(), { name }));
+    return createPlaylist(getDb(), { name });
   } catch (err) {
-    // UNIQUE index on name_key enforces this; no check-then-act race.
     if (String(err.message).includes('UNIQUE')) {
       res.status(409).json({ error: { code: 'DUPLICATE_NAME', message: 'A playlist with that name already exists' } });
-      return;
+      return null;
     }
     throw err;
   }
+}
+
+playlistsRouter.post('/', (req, res) => {
+  const playlist = createOr409(res, cleanName(req.body?.name));
+  if (playlist) res.json(playlist);
+});
+
+// The only route past the global 256kb JSON limit (app.js skips it here), parsed after the gate.
+playlistsRouter.post('/import', express.json({ limit: '2mb' }), (req, res) => {
+  const name = cleanName(req.body?.name);
+  if (typeof req.body?.text !== 'string') throw new BadRequestError('text must be the playlist file');
+  const { entries, truncated } = parseM3u(req.body.text, config.ingest.musicDir, MAX_ITEMS_PER_REQUEST);
+  if (!entries.length) throw new BadRequestError('No tracks found in that file');
+
+  const db = getDb();
+  const items = m3uItems(db, entries).map((item) => ({ ...item, source: 'import' }));
+  const playlist = createOr409(res, name);
+  if (!playlist) return;
+  addItems(db, playlist.id, items);
+  const gaps = getPlaylist(db, playlist.id).items.filter((i) => !i.track).length;
+  res.json({ playlist, added: items.length, gaps, truncated });
 });
 
 playlistsRouter.get('/:id', (req, res) => {

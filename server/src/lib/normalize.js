@@ -31,3 +31,11 @@ export function makeDupKey(artist, album, title) {
 export function makeTitleKey(title) {
   return normalizeTitle(title);
 }
+
+// "Artist - Title" (hyphen, en or em dash); no dash means title only.
+export function splitArtistTitle(line) {
+  const split = line.match(/^(.*?)\s+[-–—]\s+(.*)$/);
+  return split
+    ? { artist: split[1].trim(), title: split[2].trim() }
+    : { artist: null, title: line };
+}

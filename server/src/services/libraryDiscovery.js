@@ -4,7 +4,9 @@ import { resolveArtist } from './libraryDiscography.js';
 import { getRelatedArtists, browseReleaseGroupsByArtist } from './musicbrainz.js';
 import { getSimilarArtists as fetchSimilar } from './listenBrainz.js';
 import { config } from '../config.js';
-import { normalizeTitle, makeMatchKey, makeTitleKey } from '../lib/normalize.js';
+import {
+  normalizeTitle, makeMatchKey, makeTitleKey, splitArtistTitle,
+} from '../lib/normalize.js';
 import { resolveItems } from './playlistRepo.js';
 
 // Discovery: artists you don't own, seeded from the ones you own most of.
@@ -221,10 +223,7 @@ export function reconstructPlaylist(lines, { db = getDb() } = {}) {
     const line = String(raw).trim();
     if (!line) continue;
 
-    // "Artist - Title"; no dash means title only.
-    const split = line.match(/^(.*?)\s+[-–—]\s+(.*)$/);
-    const artist = split ? split[1].trim() : null;
-    const title = split ? split[2].trim() : line;
+    const { artist, title } = splitArtistTitle(line);
 
     parsed.push({
       line,
