@@ -15,11 +15,13 @@ export default function AlbumPage() {
   const [error, setError] = useState(null);
 
   useEffect(() => {
+    let cancelled = false;
     setData(null);
     setError(null);
     get(`/releases/${mbid}/tracks`)
-      .then(setData)
-      .catch(setError);
+      .then((d) => { if (!cancelled) setData(d); })
+      .catch((err) => { if (!cancelled) setError(err); });
+    return () => { cancelled = true; };
   }, [mbid]);
 
   if (error) return <p className="banner banner-error">{error.message}</p>;

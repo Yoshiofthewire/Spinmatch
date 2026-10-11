@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom';
 import { get } from '../api/client.js';
 import AlbumGrid from '../components/AlbumGrid.jsx';
 import EqualizerLoader from '../components/EqualizerLoader.jsx';
+import ErrorBanner from '../components/ErrorBanner.jsx';
 import Breadcrumbs from '../components/Breadcrumbs.jsx';
 import { useConfig } from '../ConfigContext.jsx';
 import { useOwned } from '../lib/useOwned.js';
@@ -12,14 +13,17 @@ export default function ArtistPage() {
   const { libraryEnabled } = useConfig();
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
+    let cancelled = false;
     setData(null);
     setError(null);
     get(`/artists/${mbid}/albums`)
-      .then(setData)
-      .catch(setError);
-  }, [mbid]);
+      .then((d) => { if (!cancelled) setData(d); })
+      .catch((err) => { if (!cancelled) setError(err); });
+    return () => { cancelled = true; };
+  }, [mbid, attempt]);
 
   // Turns this page into a coverage view of the artist: which of their albums
   // you have and which you don't, without a second lookup.
@@ -30,7 +34,7 @@ export default function ArtistPage() {
     })),
   });
 
-  if (error) return <p className="banner banner-error">{error.message}</p>;
+  if (error) return <ErrorBanner message={error.message} onRetry={() => setAttempt((n) => n + 1)} />;
   if (!data) return <EqualizerLoader label="Loading albums…" />;
 
   return (
