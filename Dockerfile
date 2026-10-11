@@ -1,5 +1,5 @@
 # ---- Build stage: install all workspace deps, build the Vite client ----
-FROM node:24-alpine AS build
+FROM node:26-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 COPY server/package.json server/package.json
@@ -12,7 +12,7 @@ COPY client client
 RUN npm run build
 
 # ---- Runtime stage: server + its production deps + the built client only ----
-FROM node:24-alpine AS runtime
+FROM node:26-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 # The SQLite index (and the admin login stored alongside it) must live on a
