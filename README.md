@@ -549,8 +549,7 @@ not start with the setting silently inactive.
 
 ## Prerequisites
 
-- Node.js 20 or later. Node 24 is preferred, because this project uses the native `fetch` and
-  `--env-file`.
+- Node.js 26 or later, the version the Docker image ships.
 - [`yt-dlp`](https://github.com/yt-dlp/yt-dlp), installed and on `PATH`.
 
 ## Installing yt-dlp
@@ -636,7 +635,7 @@ can see changes.
 
 The built-in `node:sqlite` module of Node is still experimental. On some versions of Node you
 therefore see a single `ExperimentalWarning: SQLite is an experimental feature` on stderr at startup.
-This warning did not appear on Node 24.16. It is expected and harmless.
+It is expected and harmless.
 
 ## Running locally
 
