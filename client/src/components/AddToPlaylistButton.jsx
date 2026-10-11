@@ -28,19 +28,23 @@ export default function AddToPlaylistButton({ artist, title, album }) {
       setOpen(false);
       triggerRef.current?.focus();
     }
-    // The menu is fixed to where the button was, so a page scroll would strand it.
+    // The menu is fixed to where the button was, so a page scroll or resize would
+    // strand it. Scrolling inside the menu itself is fine.
     function onScroll(e) {
-      if (!boxRef.current?.contains(e.target)) setOpen(false);
+      if (!(e.target instanceof Node && boxRef.current?.contains(e.target))) setOpen(false);
+    }
+    function onResize() {
+      setOpen(false);
     }
     document.addEventListener('mousedown', onOutside);
     document.addEventListener('keydown', onKey);
     window.addEventListener('scroll', onScroll, true);
-    window.addEventListener('resize', onScroll);
+    window.addEventListener('resize', onResize);
     return () => {
       document.removeEventListener('mousedown', onOutside);
       document.removeEventListener('keydown', onKey);
       window.removeEventListener('scroll', onScroll, true);
-      window.removeEventListener('resize', onScroll);
+      window.removeEventListener('resize', onResize);
     };
   }, [open]);
 
@@ -141,13 +145,25 @@ export default function AddToPlaylistButton({ artist, title, album }) {
 }
 
 // position: fixed escapes the table's overflow wrapper, which clipped an absolute menu.
-// Opens upward when there isn't room below the button.
+// Opens on the side with more room and never runs past the viewport: when the menu is
+// taller than that room it scrolls inside itself (page scrolling would close it).
 const MENU_ROOM = 320;
-function menuPosition(trigger) {
+const GAP = 6;
+const EDGE = 8;
+export function menuPosition(trigger, viewportHeight = window.innerHeight) {
   if (!trigger) return null;
   const r = trigger.getBoundingClientRect();
   const right = window.innerWidth - r.right;
-  return r.bottom + MENU_ROOM > window.innerHeight && r.top > MENU_ROOM
-    ? { position: 'fixed', right, top: 'auto', bottom: window.innerHeight - r.top + 6 }
-    : { position: 'fixed', right, top: r.bottom + 6 };
+  const below = viewportHeight - r.bottom - GAP - EDGE;
+  const above = r.top - GAP - EDGE;
+  const down = below >= MENU_ROOM || below >= above;
+  return {
+    position: 'fixed',
+    right,
+    overflowY: 'auto',
+    maxHeight: Math.max(down ? below : above, 0),
+    ...(down
+      ? { top: r.bottom + GAP, bottom: 'auto' }
+      : { top: 'auto', bottom: viewportHeight - r.top + GAP }),
+  };
 }

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import AddToPlaylistButton from './AddToPlaylistButton.jsx';
+import AddToPlaylistButton, { menuPosition } from './AddToPlaylistButton.jsx';
 import { installFetchMock, jsonResponse } from '../test/fetchMock.js';
 
 afterEach(cleanup);
@@ -19,6 +19,32 @@ describe('AddToPlaylistButton', () => {
     await user.click(screen.getByRole('button', { name: '+ Playlist' }));
     const menu = (await screen.findByText('No playlists yet.')).closest('.add-to-playlist-menu');
     expect(menu.style.position).toBe('fixed');
+  });
+
+  it('closes on a window resize without throwing', async () => {
+    installFetchMock([listRoute([])]);
+    const errors = [];
+    const onError = (e) => errors.push(e.error ?? e.message);
+    window.addEventListener('error', onError);
+    const user = userEvent.setup();
+    render(<AddToPlaylistButton artist="A" title="T" album={null} />);
+    await user.click(screen.getByRole('button', { name: '+ Playlist' }));
+    await screen.findByText('No playlists yet.');
+
+    act(() => { window.dispatchEvent(new Event('resize')); });
+    window.removeEventListener('error', onError);
+    expect(screen.queryByText('No playlists yet.')).not.toBeInTheDocument();
+    expect(errors).toEqual([]);
+  });
+
+  it('fits the menu in the viewport: the roomier side, capped, scrolling inside', () => {
+    const trigger = (top, bottom) => ({ getBoundingClientRect: () => ({ top, bottom, right: 500 }) });
+    // 400px viewport, trigger at 300-332: 54px below, 286px above, so it opens up.
+    const up = menuPosition(trigger(300, 332), 400);
+    expect(up).toMatchObject({ position: 'fixed', top: 'auto', bottom: 106, maxHeight: 286, overflowY: 'auto' });
+    // Plenty of room below: opens down, capped to what's left.
+    const down = menuPosition(trigger(100, 132), 800);
+    expect(down).toMatchObject({ top: 138, bottom: 'auto', maxHeight: 654 });
   });
 
   it('posts source: manual when adding to an existing playlist', async () => {
