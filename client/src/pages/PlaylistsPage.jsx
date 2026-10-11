@@ -8,10 +8,7 @@ import PlayerBar from '../components/library/PlayerBar.jsx';
 import { listPlaylists, createPlaylist } from '../api/playlists.js';
 import { formatBytes } from '../lib/format.js';
 
-// Which playlist is open lives in the query string, not component state —
-// the same reason LibraryPage keeps its tab/artist/album there: it's what
-// makes the browser Back button step out of a playlist instead of leaving
-// the page entirely.
+// Open playlist lives in the query string so Back steps out of it.
 export default function PlaylistsPage() {
   useTitle('Playlists');
   const [params, setParams] = useSearchParams();
@@ -40,9 +37,7 @@ export default function PlaylistsPage() {
   }, []);
 
   useEffect(() => {
-    // Only the list view needs this data; skip it while a playlist is open so
-    // going back and forth doesn't refetch on every click into the detail
-    // view (PlaylistDetail loads its own copy).
+    // List view only; PlaylistDetail loads its own.
     if (!selectedId) load();
   }, [selectedId, load]);
 

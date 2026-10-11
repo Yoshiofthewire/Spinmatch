@@ -11,40 +11,17 @@ import { withFileLock } from '../lib/fileLock.js';
 import { yieldToEventLoop, describeFailure } from '../lib/writeLoop.js';
 import { BadRequestError } from '../lib/httpErrors.js';
 
-// Repairing a whole album's tags in one pass.
-//
-// Album-scoped rather than track-scoped on purpose. Repairing tracks one at a
-// time through MusicBrainz costs one to three rate-limited calls each, so a few
-// hundred files is a twenty-minute job — and worse, the per-track lookup
-// searches on the tags the file carries, which finds nothing for exactly the
-// files that need repairing. Resolving the album once costs two calls for the
-// entire tracklist, and lets position or filename order carry the match instead.
-//
-// Two sources, one apply path:
-//   'path'        — read the tags implied by where the file sits. No network.
-//   'musicbrainz' — resolve the album once, align local files to its tracklist.
-//
-// Nothing here moves or renames a file, and writeTags is called without either
-// of its widening flags, so it fills empty fields only — the never-overwrite
-// contract holds for every file an album-wide repair touches. The preview exists
-// so a proposal is seen before it lands.
+// Album-scoped tag repair: one MusicBrainz lookup per album, not per track, and per-track
+// lookups search on exactly the tags that are broken. Fills empty fields only; never renames.
 
-// A hard ceiling on one request, alongside the route's other caps. An album is
-// tens of tracks; anything near this is a client bug, not a big record.
 export const MAX_BULK_FIX = 500;
 
-// Track numbers parsed out of filenames are the one field that can be confidently
-// wrong: "99 Problems.mp3" reads as track 99. A real position is bounded by how
-// many tracks the album has, so anything well past that is a title that happens
-// to start with a number. The floor of 30 keeps partial albums working — owning
-// tracks 1, 2 and 12 of a record is normal here, and is not evidence that 12 is
-// a mis-read.
+// Rejects "99 Problems.mp3" as track 99; the floor of 30 keeps partial albums working.
 function plausibleTrackNumber(trackNumber, trackCount) {
   if (trackNumber == null) return null;
   return trackNumber <= Math.max(30, trackCount) ? trackNumber : null;
 }
 
-// What the file's own location says it should be tagged as.
 function proposeFromPath(track, trackCount) {
   const fromPath = tagsFromPath(track.path);
   return {
@@ -57,20 +34,8 @@ function proposeFromPath(track, trackCount) {
   };
 }
 
-// Lines local files up with an upstream tracklist. Track numbers are used when
-// every file has one, because that is a statement about position; otherwise the
-// listing order stands in, but only when the two lists are the same length —
-// aligning a 9-file folder against a 12-track release by index would shift every
-// tag after the first gap onto the wrong file.
-//
-// The alignment must be one-to-one. Matching each local file independently let
-// two files claim the same upstream track, which is not hypothetical: a folder
-// holding a duplicate rip has two files tagged track 3, and the app has a whole
-// Duplicates tab because that is a normal state for a real library. Both files
-// would then be proposed the same title. A collision means the numbers on disk
-// don't describe this release, so the alignment is abandoned wholesale rather
-// than half-applied — the caller reports `unresolved` and the user picks another
-// source.
+// By track number if every file has one, else by index only when lengths match.
+// One-to-one: a collision (e.g. a duplicate rip) returns null and the whole alignment is abandoned.
 function alignToTracklist(localTracks, upstreamTracks) {
   const numbered = localTracks.every((t) => t.trackNumber != null);
   if (numbered) {
@@ -80,9 +45,6 @@ function alignToTracklist(localTracks, upstreamTracks) {
       const match = upstreamTracks.find((u) => u.position === local.trackNumber
         && (u.discNumber ?? 1) === (local.disc ?? 1));
       if (!match) { pairs.push([local.id, null]); continue; }
-      // Two local files pointing at one upstream track: the positions on disk
-      // aren't a description of this release, so no proposal from them is
-      // trustworthy.
       if (claimed.has(match)) return null;
       claimed.add(match);
       pairs.push([local.id, match]);
@@ -96,9 +58,7 @@ function alignToTracklist(localTracks, upstreamTracks) {
 function proposeFromUpstream(upstream, release) {
   if (!upstream) return null;
   return {
-    // The track's own credit, falling back to the release's. Using the release
-    // credit unconditionally tagged every track on a compilation as "Various
-    // Artists" — see the note in musicbrainz.js/getReleaseWithTracks.
+    // Track credit first, or compilations get tagged "Various Artists".
     artist: upstream.artist || release.artist || null,
     album: release.title ?? null,
     title: upstream.title ?? null,
@@ -108,15 +68,10 @@ function proposeFromUpstream(upstream, release) {
   };
 }
 
-// Reads the tags actually on disk, which is not the same as the indexed row: the
-// scanner falls back to the folder name for a missing album tag and the filename
-// for a missing title, so the index shows values the file itself doesn't carry.
-// A preview built from the index would report nothing to fill.
+// Reads tags from disk, not the index: the scanner backfills album/title from folder and filename.
 async function currentTagsOf(track) {
   const real = await assertReadableInsideMusicDir(track.path);
-  // Stamped into the preview so the apply can tell whether it is still applying
-  // to the file it previewed. Best-effort: an unstattable file is already going
-  // to fail its read below.
+  // Lets apply detect a file changed since preview.
   let mtimeMs = null;
   try {
     ({ mtimeMs } = await fs.stat(real));
@@ -124,25 +79,12 @@ async function currentTagsOf(track) {
   try {
     return { real, mtimeMs, current: await readTags(real) };
   } catch {
-    // A file that can't be read is reported rather than skipped silently — it's
-    // the same "this is a file problem, not a tag problem" case the Health tab
-    // makes for a missing duration.
     return { real, mtimeMs, current: null };
   }
 }
 
-// Refuses to write a file that has changed since the preview was taken.
-//
-// The route hands an apply the preview it is applying, cached for ten minutes,
-// on the reasoning that "what gets written is what was on screen and approved".
-// That is only true if the file didn't move underneath it — and in ten minutes
-// the single-track fix, an external tagger, or a re-rip can all have touched it.
-// Nothing validated that, so the honest-looking hand-off could write a proposal
-// derived from tags that no longer existed.
-//
-// A preview with no recorded mtime (an older cached entry) is allowed through
-// rather than failing every apply after a deploy: that is the behaviour this had
-// before the check existed.
+// Previews are cached up to ten minutes; never write a proposal built from tags that changed since.
+// No recorded mtime passes through (legacy cache entries).
 async function assertUnchangedSincePreview(track) {
   if (track.mtimeMs == null) return;
   let stat;
@@ -193,10 +135,7 @@ export async function previewBulkFix({ artist = null, album, source = 'path', db
     const fetched = await getReleaseWithTracks(releaseMbid);
     release = fetched.release;
     aligned = alignToTracklist(localTracks, fetched.tracks);
-    // null means the local track numbers collided against this tracklist, so
-    // nothing derived from them can be trusted. Reported as unresolved, which is
-    // the same state the UI already renders for "MusicBrainz can't place this
-    // album" and offers the path source for.
+    // Track-number collision: nothing derived from it is trustworthy.
     if (aligned === null) {
       return { artist, album, source, unresolved: true, tracks: [] };
     }
@@ -213,14 +152,9 @@ export async function previewBulkFix({ artist = null, album, source = 'path', db
     tracks.push({
       trackId: track.id,
       path: track.path,
-      // What the apply re-checks this preview against. See
-      // assertUnchangedSincePreview.
       mtimeMs,
       current,
       proposed,
-      // The fields this would actually change. A proposal that fills nothing is
-      // still listed, so the preview accounts for every file in the album rather
-      // than quietly dropping the ones already in good shape.
       fills: current && proposed ? plannedFills(current, proposed) : [],
       unreadable: current === null,
     });
@@ -230,23 +164,8 @@ export async function previewBulkFix({ artist = null, album, source = 'path', db
 }
 
 /**
- * Applies a previewed repair to the chosen tracks.
- *
- * The proposal is re-derived here rather than accepted from the request: the
- * client sends which tracks to repair, not what to write. That keeps the tag
- * values the server's own conclusion, and keeps the request small.
- *
- * A caller that already holds a preview passes it in. Recomputing it meant
- * re-reading every file's tags and, for the musicbrainz source, spending two
- * more calls on the 1-req/s upstream queue to re-resolve an album the client had
- * just been shown — doubling the cost of an operation that is already the
- * slowest thing in the app.
- *
- * Failures are isolated per track. A single unwritable file used to throw
- * straight out of the loop, which discarded the record of everything already
- * written and left the user with a 500 and no idea which of their files had been
- * modified. Now every track reports its own outcome and the run continues.
- *
+ * The client picks track ids, never tag values; values come from the server-side preview.
+ * Failures are per track, so one bad file doesn't hide what was already written.
  * @returns {{applied: Array<{trackId, filledFields}>, failed: Array<{trackId, message}>,
  *   skipped: number}}
  */
@@ -262,9 +181,7 @@ export async function applyBulkFix({
 
   const resolved = preview ?? await previewBulkFix({ artist, album, source, db });
   const wanted = new Set(trackIds.map(Number));
-  // Intersecting against the preview is what confines a request to the album it
-  // named: an id the preview didn't produce isn't in this album and is dropped,
-  // so a caller can't repair arbitrary tracks by listing their ids here.
+  // Intersecting with the preview confines the request to the named album.
   const chosen = resolved.tracks.filter((t) => wanted.has(t.trackId) && !t.unreadable && t.proposed);
 
   const applied = [];
@@ -274,13 +191,7 @@ export async function applyBulkFix({
     try {
       const real = await assertReadableInsideMusicDir(track.path);
       const filledFields = await withFileLock(real, async () => {
-        // Re-checked under the lock, not at preview time. The preview this is
-        // applying can be up to ten minutes old (see the cache in the route),
-        // and in that window the file may have been repaired by the single-track
-        // fix, re-tagged externally, or replaced. Writing a proposal derived
-        // from tags that no longer exist is the one way this flow can overwrite
-        // something the user never saw, so a file whose mtime has moved since
-        // the preview is skipped rather than written.
+        // Under the lock, so nothing can change the file between check and write.
         await assertUnchangedSincePreview(track);
         const written = await writeTags(real, track.proposed);
         await reindexFile(real);
@@ -288,15 +199,7 @@ export async function applyBulkFix({
       });
       applied.push({ trackId: track.trackId, filledFields });
     } catch (err) {
-      // A file that vanished, went read-only, or sits on a mount that dropped
-      // out mid-run. Routine on the network storage these libraries live on, and
-      // no reason for the other 200 tracks to go unrepaired.
-      //
-      // The raw message is logged, not returned. `err.message` from a failed fs
-      // call is "EACCES: permission denied, open '/mnt/nas/music/…'" — the
-      // server's absolute directory layout, sent to the browser, which is
-      // precisely what paths.js refuses to do in its own errors. Reported as a
-      // code the UI can phrase instead.
+      // Raw fs messages carry absolute server paths: log them, return only a code.
       console.warn(`libraryBulkFix: track ${track.trackId} failed: ${err.message}`);
       failed.push({ trackId: track.trackId, ...describeFailure(err) });
     }

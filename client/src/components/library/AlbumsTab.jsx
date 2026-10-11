@@ -23,10 +23,8 @@ const SORTS = [
 export default function AlbumsTab({ sort, onSortChange, onSelect, albumHref, incomplete, incompleteKeys }) {
   const [onlyIncomplete, setOnlyIncomplete] = useState(false);
 
-  // The normal view is server-paged. "Incomplete only" is served from the
-  // incomplete report the page already loaded instead: it's an inherently small
-  // list, and filtering a server page by it would only ever filter the 24 albums
-  // that happened to land on the current page.
+  // "Incomplete only" uses the already-loaded report; filtering a server page
+  // would only filter that page.
   const list = useServerList({
     fetcher: ({ q, sort: s, limit, offset }) => getLibraryAlbums({ q, sort: s, limit, offset }),
     sort,

@@ -11,13 +11,9 @@ import { normalizeTitle } from '../lib/normalize.js';
 import { NotFoundError } from '../lib/httpErrors.js';
 import { config } from '../config.js';
 
-// A local artist name has to be turned into a MusicBrainz artist id before its
-// discography can be fetched, and that resolution is a fuzzy search. Anything at
-// or above this score is taken automatically; below it the caller is asked to
-// pick, because guessing wrong produces a wildly wrong "missing albums" list.
+// Fuzzy artist-search score to auto-accept; below it the user picks.
 const AUTO_ACCEPT_SCORE = config.matching.artistAutoAcceptScore;
-// Re-check a remembered "no match" after a week — the artist may since have
-// been added to MusicBrainz, or the local tags may have been fixed.
+// Re-check unconfirmed resolutions weekly: MusicBrainz or local tags may change.
 const NEGATIVE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 export function getArtistLink(db, artist) {
@@ -27,10 +23,7 @@ export function getArtistLink(db, artist) {
   ).get(artist) ?? null;
 }
 
-// Forgets a remembered resolution so it can be looked up again. A wrong
-// auto-accepted guess used to be permanent: positives had no TTL, `confirmed` was
-// written but never read, and there was no way to clear one short of opening the
-// database by hand.
+// Forgets a resolution so a wrong guess can be redone.
 export function deleteArtistLink(db, artist) {
   return db.prepare('DELETE FROM library_artist_links WHERE artist = ? COLLATE NOCASE')
     .run(artist).changes > 0;
@@ -47,32 +40,16 @@ export function saveArtistLink(db, { artist, mbArtistId, confirmed = 0 }) {
   `).run(artist, mbArtistId, confirmed, Date.now());
 }
 
-/**
- * Resolves a local artist name to a MusicBrainz id, caching both hits and misses.
- *
- * Exactly one of two outcomes, discriminated by `mbArtistId`:
- *  - settled:  `{ mbArtistId: string, cached: boolean }`
- *  - unsettled: `{ mbArtistId: null, candidates: Array<{mbid, name, disambiguation, score}>, cached: boolean }`
- *
- * `candidates` is empty when nothing matched at all, and populated when several
- * plausible artists matched and guessing would produce a wrong discography.
- *
- * @param {string} artist
- * @param {{db?: object}} [options]
- * @returns {Promise<{mbArtistId: string|null, candidates?: object[], cached: boolean}>}
- */
+// Returns `{ mbArtistId, cached }`, or `{ mbArtistId: null, candidates, cached }`
+// where empty candidates means no match and several means ambiguous.
 export async function resolveArtist(artist, { db = getDb(), allowCreditFallback = true } = {}) {
   const cached = getArtistLink(db, artist);
-  // A choice the user made explicitly is kept indefinitely. A guess the app made
-  // for itself is re-checked on the same cycle as a remembered miss, because a
-  // wrong guess produces a wildly wrong "missing albums" list and nothing else
-  // would ever revisit it.
+  // User-confirmed links are permanent; app guesses expire like misses.
   if (cached?.mbArtistId
       && (cached.confirmed || Date.now() - cached.checkedAt < NEGATIVE_TTL_MS)) {
     return { mbArtistId: cached.mbArtistId, cached: true };
   }
   if (cached && !cached.mbArtistId && Date.now() - cached.checkedAt < NEGATIVE_TTL_MS) {
-    // Remembered negative: don't re-search on every visit.
     return { mbArtistId: null, candidates: [], cached: true };
   }
 
@@ -85,12 +62,8 @@ export async function resolveArtist(artist, { db = getDb(), allowCreditFallback 
     return { mbArtistId: best.mbid, cached: false };
   }
 
-  // The whole string didn't settle. Before giving up, try its primary artist —
-  // a quarter of a real library is rows like "Justice & Thundercat" or
-  // "Nine Inch Nails / Stephen Morris and Gillian Gilbert", which resolve to
-  // nothing while the artist they lead with is one you own hundreds of tracks
-  // by. Reached only on failure, so a name that resolves whole ("She & Him")
-  // never gets split.
+  // Joined credits ("Justice & Thundercat") fall back to the primary artist;
+  // only on failure, so "She & Him" is never split.
   const viaCredit = allowCreditFallback ? await resolveViaCredit(artist, db) : null;
   if (viaCredit) return viaCredit;
 
@@ -98,23 +71,11 @@ export async function resolveArtist(artist, { db = getDb(), allowCreditFallback 
     saveArtistLink(db, { artist, mbArtistId: null, confirmed: 0 });
     return { mbArtistId: null, candidates: [], cached: false };
   }
-  // Ambiguous: hand the choice back rather than guessing.
   return { mbArtistId: null, candidates: artists.slice(0, 8), cached: false };
 }
 
-// Resolves a joined credit through its primary artist, but only when that artist
-// is separately present in the collection.
-//
-// That ownership check is the entire safety argument, and it is not theoretical:
-// MusicBrainz has exact artists named "Florence", "Earth" and "Wind", so
-// splitting "Florence + The Machine" or "Earth, Wind & Fire" and trusting a name
-// match would link the wrong act with full confidence. Requiring the segment to
-// be something already on disk makes the fallback self-validating — it can only
-// ever recognise an artist the user demonstrably has.
-//
-// Recurses once (allowCreditFallback: false) so the primary's own resolution
-// reuses the normal cache; for an owned artist that is usually already a cache
-// hit and costs no upstream call at all.
+// Only when the primary artist is itself in the library: MusicBrainz has exact
+// artists "Florence" and "Earth", so a bare name match would link the wrong act.
 async function resolveViaCredit(artist, db) {
   const primary = primaryArtist(artist);
   if (!primary || !artistExists(db, primary)) return null;
@@ -122,16 +83,11 @@ async function resolveViaCredit(artist, db) {
   const resolved = await resolveArtist(primary, { db, allowCreditFallback: false });
   if (!resolved.mbArtistId) return null;
 
-  // Remembered against the ORIGINAL string, so the split is paid for once.
   saveArtistLink(db, { artist, mbArtistId: resolved.mbArtistId, confirmed: 0 });
-  // `via` lets the UI say which artist this was matched through rather than
-  // presenting a discography that appears to come from nowhere.
   return { mbArtistId: resolved.mbArtistId, cached: false, via: primary };
 }
 
-// Diffs a MusicBrainz studio-album discography against what's on disk.
-// Ownership is decided with normalizeTitle so "Album (Deluxe Edition)" counts as
-// owning "Album", the same folding gap detection already uses for track titles.
+// normalizeTitle makes "Album (Deluxe Edition)" count as owning "Album".
 export async function getArtistDiscography(artist, { db = getDb() } = {}) {
   const owned = listArtistAlbums(db, artist);
   if (!owned.length) throw new NotFoundError(`No local albums found for artist "${artist}"`);
@@ -165,19 +121,14 @@ export async function getArtistDiscography(artist, { db = getDb() } = {}) {
     else missing.push(entry);
   }
 
-  // Albums on disk that MusicBrainz's studio-album list doesn't mention at all
-  // (live records, bootlegs, mistagged folders). Surfaced rather than hidden so
-  // the numbers add up from the user's point of view.
+  // Local albums MusicBrainz doesn't list (live, bootlegs, mistagged).
   const matchedLocal = new Set(ownedOut.map((o) => o.album));
   const unmatchedLocal = owned.filter((album) => !matchedLocal.has(album));
 
   return {
     artist,
     mbArtistId: resolution.mbArtistId,
-    // Set when the name only resolved through its primary artist, e.g.
-    // "Nine Inch Nails / Stephen Morris..." matched via "Nine Inch Nails". The
-    // UI shows it, because a discography that silently belongs to a different
-    // name than the one you clicked looks like a bug.
+    // The primary artist this resolved through, if any; shown in the UI.
     via: resolution.via ?? null,
     owned: ownedOut,
     missing,
@@ -206,8 +157,7 @@ export function saveAlbumLink(db, { artist, album, releaseGroupMbid, confirmed =
   `).run(artist ?? '', album, releaseGroupMbid, confirmed, Date.now());
 }
 
-// Resolves a local album to a MusicBrainz release group, caching the answer
-// (including a remembered miss) the same way artist resolution does.
+// Caches hits and misses like resolveArtist.
 export async function resolveAlbum(artist, album, { db = getDb() } = {}) {
   const cached = getAlbumLink(db, { artist, album });
   if (cached?.releaseGroupMbid) return { releaseGroupMbid: cached.releaseGroupMbid, cached: true };
@@ -220,9 +170,7 @@ export async function resolveAlbum(artist, album, { db = getDb() } = {}) {
     : `releasegroup:"${luceneQuoted(album)}"`;
   const results = await searchReleaseGroups(query);
 
-  // Require the title to actually match after normalization: MusicBrainz always
-  // returns *something*, and a loose top hit would produce a tracklist from the
-  // wrong album — which would then be reported as missing tracks.
+  // Exact normalized title only: a loose top hit reports the wrong album's tracks as missing.
   const target = normalizeTitle(album);
   const match = results.find((rg) => normalizeTitle(rg.title) === target) ?? null;
 
@@ -230,33 +178,9 @@ export async function resolveAlbum(artist, album, { db = getDb() } = {}) {
   return { releaseGroupMbid: match?.mbid ?? null, cached: false };
 }
 
-/**
- * Names the MusicBrainz track sitting at one (disc, position) of a local album.
- *
- * This is what turns a gap the local numbering shows — "you have 1,2,3,5" — into
- * something actionable: the placeholder row knows only a position, and a position
- * cannot be searched for on YouTube. Once this has named it, the existing verify
- * path takes over unchanged.
- *
- * Lives here rather than in libraryGaps because it needs resolveAlbum, and this
- * module already imports libraryGaps — putting it there would close a cycle.
- *
- * Never throws for "we couldn't place this": an unresolvable album, a release
- * group with no usable release, and a position past the end of the tracklist are
- * all answers the UI has something useful to say about, not errors.
- *
- * @param {string|null} artist
- * @param {string} album
- * @param {object} options
- * @param {number} [options.disc]  1 for a single-disc album, which is how local
- *   rows with a NULL disc are asked about.
- * @param {number} options.position
- * @returns {Promise<object>} `{resolved: false, reason}` or `{resolved: true, …}`
- */
+// Names the track at a local gap's (disc, position) so it can be searched for.
+// Returns `{resolved: false, reason}` rather than throwing. Not in libraryGaps (import cycle).
 export async function resolveMissingTrack(artist, album, { disc = 1, position, db = getDb() } = {}) {
-  // Reuses the library_album_links memo, including its remembered negative — so
-  // clicking this on several gap rows of an album that can't be resolved spends
-  // one upstream search, not one per row.
   const { releaseGroupMbid } = await resolveAlbum(artist, album, { db });
   if (!releaseGroupMbid) return { resolved: false, reason: 'unresolved_album' };
 
@@ -264,14 +188,10 @@ export async function resolveMissingTrack(artist, album, { disc = 1, position, d
   if (!releaseMbid) return { resolved: false, reason: 'no_release', releaseGroupMbid };
 
   const { release, tracks } = await getReleaseWithTracks(releaseMbid);
-  // Same (disc, position) comparison alignToTracklist uses, including the `?? 1`
-  // on both sides: a single-disc release may carry no disc number upstream, and
-  // local single-disc rows carry NULL.
+  // Single-disc releases may have no disc number upstream.
   const match = tracks.find((t) => t.position === position && (t.discNumber ?? 1) === disc);
   if (!match) {
-    // Worth distinguishing, because it usually means the opposite of a missing
-    // file: a position past the end of the official tracklist is more likely a
-    // wrong track number on a file you already have.
+    // Usually a wrong track number on a file you have, not a missing file.
     return {
       resolved: false, reason: 'no_such_position', trackCount: tracks.length, releaseGroupMbid,
     };
@@ -279,8 +199,7 @@ export async function resolveMissingTrack(artist, album, { disc = 1, position, d
 
   return {
     resolved: true,
-    // The track's own credit before the release's, so a compilation names the
-    // artist who actually performed the track rather than "Various Artists".
+    // Track credit first, so compilations don't say "Various Artists".
     artist: match.artist || release.artist || null,
     title: match.title,
     album: release.title,
@@ -292,18 +211,13 @@ export async function resolveMissingTrack(artist, album, { disc = 1, position, d
   };
 }
 
-// Checks one owned album against its MusicBrainz tracklist. This catches what
-// the offline track-number check cannot: an album whose numbering looks
-// complete (1..10) but which actually has 12 tracks upstream.
+// Catches what numbering can't: 1..10 owned, but 12 tracks upstream.
 export async function checkAlbumAgainstMusicBrainz(artist, album, { db = getDb() } = {}) {
   const { releaseGroupMbid } = await resolveAlbum(artist, album, { db });
   if (!releaseGroupMbid) {
     return { artist, album, releaseGroupMbid: null, unresolved: true, owned: [], missing: [] };
   }
-  // verify:false — the YouTube lookup is one rate-limited yt-dlp call per
-  // missing track, far too slow for a panel. The client verifies individually.
-  // The local artist/album are passed through so ownership is judged against the
-  // album actually on disk rather than against MusicBrainz's joined artist credit.
+  // No verify: one rate-limited yt-dlp call per track; the client verifies individually.
   const gaps = await detectAlbumGaps(releaseGroupMbid, {
     verify: false, localArtist: artist, localAlbum: album,
   });

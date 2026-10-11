@@ -16,8 +16,6 @@ import { sseStream } from '../lib/sse.js';
 
 export const playlistsRouter = Router();
 
-// Bounds, in the spirit of the ones the rest of the app already applies. A
-// request is clamped or refused here rather than trusted downstream.
 const MAX_NAME_LENGTH = 200;
 const MAX_ITEMS_PER_REQUEST = 5000;
 const MAX_TARGET = 1000;
@@ -70,8 +68,7 @@ playlistsRouter.post('/', (req, res) => {
   try {
     res.json(createPlaylist(getDb(), { name }));
   } catch (err) {
-    // The UNIQUE index on name_key is what enforces this; catching it here
-    // rather than pre-checking avoids a check-then-act race.
+    // UNIQUE index on name_key enforces this; no check-then-act race.
     if (String(err.message).includes('UNIQUE')) {
       res.status(409).json({ error: { code: 'DUPLICATE_NAME', message: 'A playlist with that name already exists' } });
       return;
@@ -90,9 +87,6 @@ playlistsRouter.patch('/:id', (req, res) => {
   try {
     renamePlaylist(getDb(), playlist.id, name);
   } catch (err) {
-    // Same UNIQUE index, same answer as POST /. Without this the rename form
-    // rendered "Internal server error" — and the log got a stack trace — for
-    // the most ordinary mistake there is.
     if (String(err.message).includes('UNIQUE')) {
       res.status(409).json({ error: { code: 'DUPLICATE_NAME', message: 'A playlist with that name already exists' } });
       return;
@@ -127,18 +121,8 @@ playlistsRouter.patch('/:id/order', (req, res) => {
   res.json({ ok: true });
 });
 
-// Writes nothing. This IS the review step: the client shows what comes back,
-// the user unticks, and what survives goes to POST /items.
-//
-// Wrapped in try/catch, like every other async handler in this app (see
-// library.js): loadPlaylist's NotFoundError, and cleanItems'/cleanName's
-// BadRequestError, throw synchronously, but a synchronous throw inside an
-// async function body doesn't propagate as a synchronous exception — it
-// becomes a rejected Promise. Express 4 does not await a handler's return
-// value, so an uncaught rejection here is never forwarded to the error
-// middleware: the request simply hangs with no response until the client
-// times out, instead of getting the 404/400 it should. Calling next(err)
-// explicitly is what turns that hang into the response it was supposed to be.
+// Writes nothing: the client reviews suggestions, then POSTs survivors to /items.
+// try/next(err): Express 4 doesn't catch async rejections.
 playlistsRouter.post('/:id/suggest', async (req, res, next) => {
   try {
     const playlist = loadPlaylist(req.params.id);
@@ -169,11 +153,7 @@ playlistsRouter.post('/:id/suggest', async (req, res, next) => {
   }
 });
 
-// The same confirmation the drop-off export has, for the same reason: the
-// filename is the playlist name with the unsafe characters removed, so two
-// playlists can produce one file — and MUSIC_DIR/Road Trip.m3u might be
-// somebody's hand-written playlist that Spinmatch never created. Nothing
-// records who wrote it, so the file itself is what gets reported.
+// Confirm before overwriting: sanitized names collide, and the file may be hand-written.
 playlistsRouter.post('/:id/export/m3u', async (req, res, next) => {
   try {
     const playlist = loadPlaylist(req.params.id);
@@ -197,8 +177,7 @@ playlistsRouter.post('/:id/export/m3u', async (req, res, next) => {
   }
 });
 
-// POST: it deletes and rewrites a folder, so it must not be reachable by a
-// navigation. Answers with an SSE stream.
+// POST + same-origin: it deletes and rewrites a folder. Answers with SSE.
 playlistsRouter.post('/:id/export/dropoff', sameOriginOnly, async (req, res, next) => {
   try {
     if (!playlistExportEnabled()) {
@@ -207,11 +186,7 @@ playlistsRouter.post('/:id/export/dropoff', sameOriginOnly, async (req, res, nex
     const playlist = loadPlaylist(req.params.id);
     const existing = await inspectDropoff(playlist.name);
 
-    // Checked on the replace path too, and refused rather than confirmed. The
-    // folder name is the playlist name with / \ : * ? " < > | stripped, so two
-    // playlists can share one — and the only thing the confirmation showed was
-    // a file count, which reads as "yours, from last time" no matter whose it
-    // is. There is no safe way to answer "replace?" here, so it isn't asked.
+    // Refused even with replace: another playlist's sanitized name owns this folder.
     const owner = findPlaylistByExportDir(getDb(), existing.dir, { excludeId: playlist.id });
     if (owner) {
       throw new BadRequestError(
@@ -243,8 +218,7 @@ playlistsRouter.post('/:id/export/dropoff', sameOriginOnly, async (req, res, nex
         onProgress: (p) => send('progress', p),
         signal,
       });
-      // An aborted export leaves a partial folder; don't record it as this
-      // playlist's export.
+      // Don't record an aborted, partial export.
       if (result.copied + result.skipped === playlist.items.length) {
         noteExport(getDb(), playlist.id, result.dir);
       }

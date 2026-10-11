@@ -1,5 +1,4 @@
-// A small animated bar visualizer used anywhere the app is actively listening —
-// searching MusicBrainz or matching a track against YouTube.
+// Loading indicator for MusicBrainz/YouTube lookups.
 export default function EqualizerLoader({ label }) {
   return (
     <span className="loading-row" role="status">

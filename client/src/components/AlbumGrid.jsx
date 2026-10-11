@@ -4,9 +4,7 @@ import Pagination from './Pagination.jsx';
 import OwnedBadge from './OwnedBadge.jsx';
 import { usePagination } from '../lib/usePagination.js';
 
-// ownedMbids: release-group ids already in the local library, badged so an
-// artist's discography shows at a glance what's already on disk. Optional — the
-// grid works unchanged without it.
+// ownedMbids (optional): owned release-group ids to badge.
 export default function AlbumGrid({ albums, ownedMbids }) {
   const { page, setPage, pageCount, pageItems } = usePagination(albums, 20);
 

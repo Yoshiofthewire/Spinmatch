@@ -1,9 +1,6 @@
 import { formatDuration } from '../lib/format.js';
 
-// One MusicBrainz recording offered for a human to pick. Shared by the ingest
-// needs-review picker and the library tag-fix panel: the two apply the choice
-// differently (ingest tags and moves the file, the library only writes tags in
-// place) but they offer the identical choice, so they render it identically.
+// One MusicBrainz recording to pick; shared by ingest review and library tag fix.
 export default function CandidateRow({
   mbid, title, artist, releaseGroupTitle, lengthMs, score, busy, onUse,
 }) {

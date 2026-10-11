@@ -1,26 +1,10 @@
 import { getDb } from '../lib/db.js';
 import { verifyTrack } from './verifyTrack.js';
 
-// Persistent memory of "which YouTube video is this MusicBrainz recording".
-//
-// verifyTrack already caches in memory, but that cache is 2000 entries with a
-// one-hour TTL and dies with the process. Sweeping an artist's missing
-// discography is one rate-limited yt-dlp call per track at roughly 1/sec, so a
-// prolific artist is a run of many minutes — restarting the server halfway
-// through, or coming back the next day, would otherwise redo all of it.
-//
-// Keyed on the recording rather than on an artist/title/album string because
-// that's the identity the gap flow actually has: detectAlbumGaps produces
-// MusicBrainz tracks, and the same recording reached via a different release
-// shouldn't be looked up twice.
-
-// How long a remembered answer stands before it's checked again. Long, because
-// the answer rarely changes and the cost of being wrong is one stale link the
-// user can re-verify; short enough that a video taken down doesn't haunt the
-// collection forever.
+// Persistent recording MBID -> YouTube video map, so slow rate-limited sweeps
+// survive restarts. Keyed on recording so other releases reuse the answer.
 const FOUND_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
-// Negatives expire sooner: "YouTube doesn't have this" is much more likely to
-// stop being true than "this is the video" is.
+// Negatives go stale faster.
 const MISS_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 export function getVerifiedLink(db, recordingMbid) {
@@ -61,8 +45,7 @@ export function saveVerifiedLink(db, { recordingMbid, artist, title, video }) {
   );
 }
 
-// Rebuilds a verifyTrack-shaped result from a remembered row, so a cached answer
-// and a fresh one are indistinguishable to every caller.
+// Same shape as a fresh verifyTrack result.
 export function resultFromLink(row) {
   if (!row.videoId) return { status: 'no_results', video: null, deltaSeconds: null, cached: true };
   return {
@@ -78,7 +61,6 @@ export function resultFromLink(row) {
   };
 }
 
-// Convenience wrappers for callers that don't hold a db handle.
 export function lookup(recordingMbid) {
   return getVerifiedLink(getDb(), recordingMbid);
 }
@@ -87,14 +69,7 @@ export function remember(entry) {
   return saveVerifiedLink(getDb(), entry);
 }
 
-/**
- * verifyTrack, but remembered across restarts when the caller knows which
- * MusicBrainz recording it is asking about.
- *
- * Only settled answers are stored. 'unverified' means a video was found whose
- * duration disagrees with MusicBrainz — a weak guess worth re-making later,
- * not a fact worth keeping for a month.
- */
+// Persisted verifyTrack. 'unverified' (duration mismatch) is a weak guess, not stored.
 export async function verifyRecording({ recordingMbid, artist, title, album, lengthMs }) {
   const remembered = lookup(recordingMbid);
   if (remembered) return { ...resultFromLink(remembered), candidatesConsidered: null };

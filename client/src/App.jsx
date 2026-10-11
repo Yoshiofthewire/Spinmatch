@@ -26,8 +26,7 @@ export default function App() {
   return (
     <div className="app">
       <header className="app-header">
-        {/* A router link, not an <a href>: a full page reload would throw away
-            the history the Back button walks. */}
+        {/* Router link: a full reload would lose Back history. */}
         <Link to="/" className="app-brand">
           <Logo />
           <span className="app-title">Spinmatch</span>

@@ -27,8 +27,7 @@ export default function ArtistPage() {
     return () => { cancelled = true; };
   }, [mbid, attempt]);
 
-  // Turns this page into a coverage view of the artist: which of their albums
-  // you have and which you don't, without a second lookup.
+  // Badges owned albums without a second lookup.
   const { owned, error: ownedError } = useOwned({
     enabled: libraryEnabled,
     albums: (data?.albums ?? []).map((a) => ({

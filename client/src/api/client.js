@@ -1,5 +1,4 @@
-// The only module allowed to make network requests in the client. Always
-// targets same-origin /api/* — MusicBrainz/YouTube are never called directly.
+// The client's only network module: same-origin /api/* only, never upstreams directly.
 async function request(path, options) {
   const response = await fetch(`/api${path}`, options);
   const body = await response.json().catch(() => null);
@@ -7,15 +6,10 @@ async function request(path, options) {
     const error = new Error(body?.error?.message || `Request failed: ${response.status}`);
     error.code = body?.error?.code || 'UNKNOWN';
     error.status = response.status;
-    // Whatever else the error object carries beyond message/code — e.g. the m3u
-    // export's `existing: { path, bytes, writtenAt }` on a 409 — under the same
-    // name lib/eventStream.js puts it, so a caller handling both looks in one
-    // place.
+    // Extra error fields (e.g. a 409's `existing`), named as in lib/eventStream.js.
     const { message: _m, code: _c, ...details } = body?.error ?? {};
     error.details = details;
-    // A 401 means the session lapsed or first-run setup is pending. Broadcast
-    // it so the auth gate can re-render setup/login without every caller
-    // having to handle it. Guard against SSR/non-browser environments.
+    // 401: session lapsed or setup pending. Broadcast so the auth gate re-renders.
     if (response.status === 401 && typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('spinmatch:auth-required', { detail: { code: error.code } }));
     }
@@ -40,8 +34,7 @@ export function post(path, body) {
   });
 }
 
-// For partial updates, where the fields the body omits are the ones the server
-// must leave alone — see editTrackTags in api/library.js.
+// Partial updates: omitted fields are left alone server-side.
 export function patch(path, body) {
   return request(path, {
     method: 'PATCH',

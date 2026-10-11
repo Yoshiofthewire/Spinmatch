@@ -14,9 +14,7 @@ export default function CopyButton({ text, label = 'Copy' }) {
       if (navigator.clipboard?.writeText) {
         await navigator.clipboard.writeText(text);
       } else {
-        // navigator.clipboard is only available in secure contexts (HTTPS or
-        // localhost) — fall back to the legacy execCommand trick so copying
-        // still works when this app is served over plain HTTP (e.g. a LAN IP).
+        // navigator.clipboard needs a secure context; execCommand covers plain-HTTP LAN.
         const textarea = document.createElement('textarea');
         textarea.value = text;
         textarea.style.position = 'fixed';

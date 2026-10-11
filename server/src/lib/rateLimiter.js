@@ -2,8 +2,7 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// Enforces a minimum interval between the start of consecutive `fn` executions,
-// queuing callers in FIFO order. Used to keep MusicBrainz calls at <=1/sec app-wide.
+// Minimum interval between starts of consecutive calls, FIFO.
 export class RateLimiter {
   constructor(minIntervalMs) {
     this.minIntervalMs = minIntervalMs;

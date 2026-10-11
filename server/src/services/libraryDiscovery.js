@@ -7,56 +7,19 @@ import { config } from '../config.js';
 import { normalizeTitle, makeMatchKey, makeTitleKey } from '../lib/normalize.js';
 import { resolveItems } from './playlistRepo.js';
 
-// Discovery: music you don't have, reached from music you do.
-//
-// The inverse of everything else in the library, which is all about finding
-// holes in records you already know about. The spec's original plan derived this
-// from a verified_tracks table that was dropped as unused, so the seed here is
-// the collection itself — the artists you own the most of.
-//
-// Two signals, deliberately kept distinct all the way to the UI because they
-// answer different questions:
-//
-//   similar  - ListenBrainz. Whose listeners overlap with yours. The "sounds
-//              like" signal, derived from real listening sessions.
-//   related  - MusicBrainz. Who played in which band, who collaborated with
-//              whom. Factual, not sonic: it finds side projects and members'
-//              other bands, which listening data ranks poorly or not at all.
-//
-// Blending them into one list would lose that distinction and make a documented
-// band-member link indistinguishable from a statistical one, so an artist found
-// by both is marked 'both' rather than merged into an average.
-//
-// Both are MetaBrainz, both keyed on the same artist MBIDs, neither needs an API
-// key. ListenBrainz lives on an explicitly experimental subdomain, so its
-// absence is a supported state: discovery degrades to the relationship graph
-// alone and says so, rather than breaking.
+// Discovery: artists you don't own, seeded from the ones you own most of.
+// Two signals kept distinct to the UI: 'similar' (ListenBrainz, listener overlap) and
+// 'related' (MusicBrainz, band membership). ListenBrainz is optional; absence degrades, not breaks.
 
-// How many of your artists seed a run. Each unresolved one costs a MusicBrainz
-// search and each resolved one a relations lookup, all through the same 1-req/s
-// queue, so this is the knob that decides whether discovery takes five seconds
-// or a minute. Ten is enough to find overlap between seeds, which is what makes
-// the ranking mean anything.
+// Each seed costs calls on the 1-req/s MusicBrainz queue; this sets run time.
 const SEED_ARTISTS = 10;
-// Cached relations stand for a month: band membership is close to static, and a
-// stale edge costs nothing worse than a suggestion you've already seen.
 const RELATIONS_TTL_MS = 30 * 24 * 60 * 60 * 1000;
-// How many discovered artists get their discography fetched for recommendations.
-// Deliberately small — this is one more rate-limited call each.
 const RECOMMEND_ARTISTS = 5;
-// How far down each seed's ListenBrainz list to look. It returns 100; ten seeds'
-// worth of long tails would bury the artists that several seeds agree on.
+// ListenBrainz returns 100; long tails would bury artists several seeds agree on.
 const SIMILAR_PER_SEED = 25;
 
-// Artist names for the "do I already have them" check.
-//
-// normalizeTitle on its own isn't enough here: it folds case and punctuation but
-// keeps a leading article, so "The Beatles" and "Beatles" read as two different
-// artists. Everywhere else that's harmless, but here it produces the one result
-// this filter exists to prevent — suggesting someone you already own. Kept local
-// rather than pushed into normalizeTitle, which gap detection and the ownership
-// badges also use and where dropping an article would create false matches
-// between genuinely different acts ("The Church" and "Church").
+// Drops a leading article so "The Beatles" counts as owned. Local on purpose: in normalizeTitle
+// it would conflate distinct acts ("The Church" vs "Church").
 function artistKey(name) {
   return normalizeTitle(String(name ?? '').replace(/^\s*(the|a|an)\s+/i, ''));
 }
@@ -70,9 +33,7 @@ function readCache(db, mbArtistId) {
   if (Date.now() - row.checkedAt > RELATIONS_TTL_MS) return null;
   try {
     const parsed = JSON.parse(row.relatedJson);
-    // Rows written before ListenBrainz was added hold a bare array of related
-    // artists. Treated as a miss rather than migrated: this is a cache, and
-    // refetching costs one lookup, where a migration would cost a schema change.
+    // Legacy bare-array rows are treated as a miss.
     if (Array.isArray(parsed)) return null;
     if (!Array.isArray(parsed?.related) || !Array.isArray(parsed?.similar)) return null;
     return parsed;
@@ -91,17 +52,6 @@ function writeCache(db, mbArtistId, related) {
   `).run(mbArtistId, JSON.stringify(related), Date.now());
 }
 
-// Both signals for one seed, cached together.
-//
-// `related` is the MusicBrainz relationship graph: who played in which band, who
-// collaborated with whom. `similar` is ListenBrainz: whose listeners overlap.
-// They answer genuinely different questions — "the same people made this" versus
-// "this sounds like that" — so they're kept apart all the way to the UI rather
-// than blended into one undifferentiated list.
-//
-// A ListenBrainz outage yields null, not []. That distinction is the whole
-// degrade path: null means "don't remember this, ask again", so a blip can't be
-// cached as "this artist has no similar artists" for a month.
 async function signalsFor(db, mbArtistId) {
   const cached = readCache(db, mbArtistId);
   if (cached) return cached;
@@ -112,15 +62,12 @@ async function signalsFor(db, mbArtistId) {
   ]);
 
   const signals = { related, similar: similar ?? [] };
-  // Only cache when ListenBrainz actually answered. Otherwise the MusicBrainz
-  // half would be frozen alongside an empty ListenBrainz half for the full TTL.
+  // null = ListenBrainz outage; don't cache a blip as "no similar artists" for a month.
   if (similar !== null) writeCache(db, mbArtistId, signals);
   return signals;
 }
 
-// The artists a run starts from: whoever you own the most of. Only those already
-// resolvable to a MusicBrainz id are used — resolveArtist caches both hits and
-// misses, so this doesn't re-search an unresolvable name on every visit.
+// resolveArtist caches misses too, so unresolvable names aren't re-searched.
 async function seedArtists(db, limit) {
   const { artists } = listArtists(db, { sort: 'tracks', limit });
   const seeds = [];
@@ -131,16 +78,7 @@ async function seedArtists(db, limit) {
   return seeds;
 }
 
-// One run at a time per distinct request, shared by everyone waiting on it.
-//
-// A discovery run is ten seeds walked through a 1-req/s queue, so it takes tens
-// of seconds and nothing about it is per-user. Without this, an impatient
-// refresh queued a second identical run behind the first, a third behind that,
-// and the request the user was actually waiting on sat at the back — each one
-// still running after its socket was long gone, because none of them are
-// cancellable mid-queue. Sharing the promise makes the extra clicks free, and
-// means the one run that does happen still finishes and populates the DB cache
-// even if every caller has walked away.
+// Runs take tens of seconds and can't be cancelled, so identical concurrent requests share one.
 const inFlight = new Map();
 
 function shared(key, run) {
@@ -151,42 +89,21 @@ function shared(key, run) {
   return promise;
 }
 
-/**
- * Artists connected to the ones you own most of, ranked by how many of them
- * point at the same name.
- *
- * @returns {Promise<{seeds: object[], artists: object[]}>}
- */
+/** @returns {Promise<{seeds: object[], artists: object[]}>} */
 export function getSimilarArtists({ db = getDb(), limit = 30 } = {}) {
   return shared(`similar:${limit}`, () => computeSimilarArtists({ db, limit }));
 }
 
 /**
- * The artists a caller-supplied list of seeds points at, ranked by how many of
- * them agree.
- *
- * `excludeOwned` is the CALLER'S policy, not this function's behaviour, and that
- * is the whole point of the split. The Discover tab wants music you don't have,
- * so it passes true. A playlist wants the opposite — the neighbours you own are
- * exactly the ones it can put on a device — so it passes false. One walk of the
- * signals, one cache, two meanings.
- *
+ * Discover passes excludeOwned=true; playlists pass false since owned neighbours are what they can play.
  * @returns {Promise<{artists: object[], listenBrainz: 'ok'|'unavailable'|'disabled'}>}
  */
 export async function collectNeighbours(db, { seeds, excludeOwned = true, limit = 30 }) {
-  // Everything already on disk, so discovery never suggests what you have.
-  // Compared on artistKey, which also drops a leading article — see the note
-  // there for why that folding is local to discovery. Null when the caller
-  // wants the owned artists kept, so the filter isn't merely bypassed but
-  // never built.
   const owned = excludeOwned ? new Set(listArtistNames(db).map(artistKey)) : null;
 
   const found = new Map();
   let listenBrainzAnswered = false;
 
-  // Records one seed pointing at one candidate. `kind` accumulates: an artist
-  // reached by both signals is a stronger suggestion than one reached by either,
-  // and the UI says which.
   function note(candidate, seed, kind, rank) {
     if (owned && owned.has(artistKey(candidate.name))) return;
     const existing = found.get(candidate.mbid);
@@ -204,12 +121,8 @@ export async function collectNeighbours(db, { seeds, excludeOwned = true, limit 
       relation: kind === 'related' ? candidate.relation : null,
       comment: candidate.comment ?? null,
       kinds: new Set([kind]),
-      // Position in the seed's own list. ListenBrainz scores are raw
-      // co-occurrence counts that scale with how popular the seed is, so they
-      // aren't comparable between seeds — position is.
+      // Rank, not ListenBrainz score: raw scores scale with seed popularity and don't compare.
       bestRank: rank,
-      // Which of your artists led here. This is what makes a suggestion
-      // explicable rather than an oracle's pronouncement.
       via: [seed.artist],
       score: 1,
     });
@@ -220,23 +133,16 @@ export async function collectNeighbours(db, { seeds, excludeOwned = true, limit 
     if (similar.length) listenBrainzAnswered = true;
 
     related.forEach((a, i) => note(a, seed, 'related', i));
-    // Only the top of each similar list. ListenBrainz returns 100 per seed, and
-    // ten seeds' worth of long tails would swamp the ranking with artists that
-    // one seed mentioned once.
     similar.slice(0, SIMILAR_PER_SEED).forEach((a, i) => note(a, seed, 'similar', i));
   }
 
   const artists = [...found.values()]
     .map(({ kinds, ...rest }) => ({
       ...rest,
-      // 'both' is the strongest signal there is here: listeners overlap AND
-      // there's a documented connection.
       kind: kinds.size > 1 ? 'both' : [...kinds][0],
     }))
     .sort((a, b) => (
       b.score - a.score
-      // A tie on seed count breaks toward whichever ranked higher in its own
-      // list, then alphabetically so the order is stable between calls.
       || a.bestRank - b.bestRank
       || a.name.localeCompare(b.name)
     ))
@@ -244,20 +150,12 @@ export async function collectNeighbours(db, { seeds, excludeOwned = true, limit 
 
   return {
     artists,
-    // Lets the UI say discovery is running on half its signal rather than
-    // silently showing thinner results.
     listenBrainz: config.discovery.listenBrainzEnabled
       ? (listenBrainzAnswered ? 'ok' : 'unavailable')
       : 'disabled',
   };
 }
 
-/**
- * Seeds from names the caller supplies rather than from the top of the
- * collection. Exported so a playlist can start from an artist the user picked;
- * seedArtists stays private because only discovery wants "whoever you own most
- * of", and only it needs the trackCount those rows carry.
- */
 export async function resolveSeedArtists(db, names) {
   const seeds = [];
   for (const artist of names) {
@@ -279,18 +177,12 @@ async function computeSimilarArtists({ db, limit }) {
   };
 }
 
-/**
- * Albums to go and listen to: the studio discographies of the top few
- * discovered artists, minus anything already on disk.
- */
 export function getRecommendations({ db = getDb(), limit = 24 } = {}) {
   return shared(`recommendations:${limit}`, () => computeRecommendations({ db, limit }));
 }
 
 async function computeRecommendations({ db, limit }) {
-  // Goes through getSimilarArtists rather than computeSimilarArtists so it
-  // shares a run with a concurrent /similar-artists request for the same limit
-  // instead of starting a second walk of the same seeds.
+  // Via getSimilarArtists so it shares an in-flight run.
   const { seeds, artists } = await getSimilarArtists({ db, limit: RECOMMEND_ARTISTS });
 
   const owned = new Set(listArtistNames(db).map(artistKey));
@@ -320,21 +212,7 @@ async function computeRecommendations({ db, limit }) {
 }
 
 /**
- * Playlist reconstruction: given remembered track names, what you already have
- * and what you'd need to find.
- *
- * Entirely offline, and resolved by playlistRepo.resolveItems — the same two
- * indexed passes a playlist's own rows go through. That is not a tidiness
- * argument. The version this replaces ran one `LIKE` query per line capped at
- * 25 candidates and filtered them in JS, so a title with more than 25 hits in
- * the index was reported "Not in your library" here while resolveItems found a
- * file for it the instant the user clicked Add anyway — two resolvers
- * disagreeing about the same library on the same screen.
- *
- * "Artist - Title" is split when present because that's how anyone pastes a
- * playlist; resolveItems' own title-only fallback is what forgives a remembered
- * artist that doesn't match the file's tag.
- *
+ * Offline. Uses resolveItems so this agrees with what Add would actually resolve to.
  * @param {string[]} lines
  */
 export function reconstructPlaylist(lines, { db = getDb() } = {}) {
@@ -343,7 +221,7 @@ export function reconstructPlaylist(lines, { db = getDb() } = {}) {
     const line = String(raw).trim();
     if (!line) continue;
 
-    // A line without a dash is treated as a title alone rather than guessed at.
+    // "Artist - Title"; no dash means title only.
     const split = line.match(/^(.*?)\s+[-–—]\s+(.*)$/);
     const artist = split ? split[1].trim() : null;
     const title = split ? split[2].trim() : line;
@@ -352,8 +230,6 @@ export function reconstructPlaylist(lines, { db = getDb() } = {}) {
       line,
       artist,
       title,
-      // No album to name from a pasted line, so preferBest falls through to its
-      // size tie-break — the same copy the item would resolve to once added.
       album: null,
       matchKey: makeMatchKey(artist, title),
       titleKey: makeTitleKey(title),

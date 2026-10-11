@@ -6,8 +6,7 @@ import SetupPage from './pages/SetupPage.jsx';
 import LoginPage from './pages/LoginPage.jsx';
 import EqualizerLoader from './components/EqualizerLoader.jsx';
 
-// Decides what the whole app renders based on auth state: a brief loader while
-// status is unknown, first-run setup, login, or the full application.
+// Renders loader, setup, login, or the app by auth state.
 export default function AppGate() {
   const { loading, setupRequired, authenticated } = useAuth();
 

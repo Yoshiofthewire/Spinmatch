@@ -14,8 +14,7 @@ import {
 } from '../lib/tagLimits.js';
 
 const AUDIO_EXTENSIONS = new Set(['.mp3', '.flac', '.m4a', '.aac', '.ogg']);
-// Write in batches so the SQLite write lock is released periodically (letting a
-// concurrent login/auth write through) instead of held for one giant commit.
+// Batch writes so the SQLite write lock is released for concurrent auth writes.
 const WRITE_CHUNK = 5000;
 
 function isAudioFile(name) {
@@ -26,12 +25,7 @@ export function changeKeyFor(stat) {
   return `${stat.size}:${Math.trunc(stat.mtimeMs)}`;
 }
 
-// The ceilings come from lib/tagLimits.js, which explains why this path clamps
-// to them while the manual-edit path rejects against them.
-//
-// Clamped at the point a file becomes a row, so every reader downstream is safe
-// by construction rather than each having to remember. Out-of-range means null
-// ("this file has no usable number"), not a substituted guess.
+// Out-of-range becomes null at index time, so downstream readers are safe (see lib/tagLimits.js).
 function boundedInt(value, min, max) {
   const n = Number(value);
   if (!Number.isFinite(n)) return null;
@@ -39,31 +33,14 @@ function boundedInt(value, min, max) {
   return i >= min && i <= max ? i : null;
 }
 
-// Only entry.name is checked against the dot-skip below, never dir itself —
-// so a caller that hands walk() a dot-prefixed root (.spinmatch-trash, say)
-// gets that root's contents indexed anyway. That's safe today only because
-// every caller's roots come from indexed, live paths: the full scan starts at
-// config.ingest.musicDir, and rescanDirs in routes/library.js derives its dirs
-// from listTrackPaths(… removed = 0), which by construction can never return a
-// path under the trash. duplicateTrash.js's "the trash is invisible to the
-// index" guarantee now depends on that chain rather than incidentally
-// benefiting from it — if a future caller ever passes walk() a directory it
-// picked some other way, this is the check that would need to move.
-//
-// `unreadable` collects the directories that could not be listed. Skipping the
-// subtree is right — there is nothing to report about files we cannot see — but
-// the caller must not then conclude they are gone: a walk that silently returns
-// nothing for a subtree and a walk over an emptied subtree look identical from
-// the outside, and the second one marks every track under it removed. A
-// permissions blip or an NFS hiccup on one album folder was enough to erase that
-// album from the index. Callers pass a Set and exclude what's under it from
-// removal; see the reconciliation in runScanOnce.
+// The dot-skip checks entries, not `dir`: a dot-prefixed root (the trash) would
+// be indexed. Callers must only pass live indexed paths.
+// `unreadable` collects unlistable dirs so callers don't mark their tracks removed.
 async function* walk(dir, unreadable) {
   let entries;
   try {
     entries = await fs.readdir(dir, { withFileTypes: true });
   } catch (err) {
-    // unreadable dir -> skip subtree, and tell the caller we did
     console.warn(`libraryScanner: could not read ${dir}, skipping subtree: ${err.message}`);
     unreadable.add(dir);
     return;
@@ -79,8 +56,6 @@ async function* walk(dir, unreadable) {
   }
 }
 
-// True when `filePath` sits under any of `dirs`. Used to hold back removals for
-// the parts of the tree a scan could not actually look at.
 function isUnderAny(filePath, dirs) {
   for (const dir of dirs) {
     if (filePath.startsWith(dir + path.sep)) return true;
@@ -88,18 +63,10 @@ function isUnderAny(filePath, dirs) {
   return false;
 }
 
-// The single place a file on disk becomes a local_tracks row. Shared by the full
-// scan and the targeted rescan below so the two can never disagree about how a
-// file is indexed.
+// The single place a file becomes a local_tracks row.
 export function rowFor(filePath, stat, meta) {
   const ext = path.extname(filePath);
-  // The folder name and filename stand in for a missing album/title tag so the
-  // browse views have something to group and label by. That fallback is a
-  // display convenience, not a fact about the file, and recording *that it
-  // happened* is what makes the Health tab honest: with the column simply
-  // filled in, `album IS NULL` matched nothing, so "No album tag" and "No title
-  // tag" reported zero on every install no matter how many untagged files it
-  // held. The flags below are what those two counts are now derived from.
+  // Folder/file names stand in for missing album/title; the flags let Health count the gaps.
   const albumSynthesized = meta.album == null;
   const titleSynthesized = meta.title == null;
   return {
@@ -109,15 +76,13 @@ export function rowFor(filePath, stat, meta) {
     title: meta.title ?? path.basename(filePath, ext),
     albumSynthesized: albumSynthesized ? 1 : 0,
     titleSynthesized: titleSynthesized ? 1 : 0,
-    // taglib reports fractional milliseconds for some formats; round so the
-    // INTEGER column and the summed totals stay whole numbers.
+    // taglib can report fractional ms; the column is INTEGER.
     durationMs: meta.durationMs == null ? null : Math.round(meta.durationMs),
     trackNumber: boundedInt(meta.trackNumber, 1, MAX_TRACK_NUMBER),
     disc: boundedInt(meta.disc, 1, MAX_DISC_NUMBER),
     year: boundedInt(meta.year, MIN_YEAR, MAX_YEAR),
     genre: meta.genre ?? null,
     hasCoverArt: meta.hasCoverArt ? 1 : 0,
-    // From the stat the caller already took, so this costs nothing extra.
     ext: ext.replace(/^\./, '').toLowerCase() || null,
     sizeBytes: stat.size,
     mtimeMs: Math.trunc(stat.mtimeMs),
@@ -125,44 +90,28 @@ export function rowFor(filePath, stat, meta) {
   };
 }
 
-// Shared across every caller (the interval timer, the fs-watch debounce, and
-// the manual POST /api/library/scan route) so a scan started from any of them
-// coalesces onto the one in flight instead of racing it. Two concurrent scans
-// build independent `seen` sets, so a file created mid-scan could be wrongly
-// markRemoved()'d by whichever run finishes last — this prevents that.
+// All callers coalesce onto one scan: concurrent scans could wrongly mark files removed.
 let inFlight = null;
 let activeWorker = null;
 
-// Hard ceiling on one scan. Without it a worker wedged on an unresponsive mount
-// never settles its promise, `inFlight` is never cleared, and every subsequent
-// scanLibrary() hands back that same dead promise — the Rescan button spins
-// forever until the container restarts. Generous enough that a real 100k-track
-// first scan over a slow disk finishes well inside it.
+// Stops a worker wedged on a dead mount from pinning `inFlight` forever.
 const SCAN_TIMEOUT_MS = 60 * 60 * 1000;
 
-// Runs the scan in a worker thread so its synchronous, CPU-bound work — a tag
-// read per file (node-taglib-sharp is sync) and the DB writes — never blocks
-// the main event loop. At 100k tracks the main thread stays fully responsive
-// (dashboard reads hit the same WAL DB from a separate connection). The worker
-// opens its own DB connection from the same config.library.dbPath.
+// Worker thread: tag reads (sync taglib) and DB writes would block the event loop.
 export function scanLibrary() {
   if (inFlight) return inFlight;
   inFlight = spawnScanWorker().finally(() => { inFlight = null; activeWorker = null; });
   return inFlight;
 }
 
-// Terminates a scan in progress, so shutdown doesn't wait on a worker that may
-// be blocked in a filesystem call. Chunked commits mean the index is left at a
-// consistent (if incomplete) point; the next scan reconciles the rest.
+// Safe mid-scan: chunked commits leave a consistent index; the next scan reconciles.
 export async function stopScan() {
   if (activeWorker) await activeWorker.terminate();
 }
 
 function spawnScanWorker() {
   return new Promise((resolve, reject) => {
-    // execArgv: [] so the worker doesn't inherit the parent's CLI flags (e.g.
-    // `--test` under the test runner, or `--env-file`); process.env is still
-    // inherited, so config.js resolves MUSIC_DIR/LIBRARY_DB normally.
+    // Don't inherit CLI flags like --test; process.env is still inherited.
     const worker = new Worker(new URL('./libraryScanWorker.js', import.meta.url), { execArgv: [] });
     activeWorker = worker;
     let settled = false;
@@ -189,17 +138,12 @@ function spawnScanWorker() {
   });
 }
 
-// The actual scan. Exported so it runs directly inside the worker thread (and
-// in-process in unit tests, where tags.js is mocked and getDb() is an in-memory
-// DB). Not called on the main thread in production — scanLibrary() spawns it.
+// Runs inside the worker (or in-process in tests); production uses scanLibrary().
 export async function runScanOnce() {
   const root = config.ingest.musicDir;
   const db = getDb();
 
-  // If the music root itself is unreadable (unmounted volume, permissions),
-  // treat it as fatal and bail BEFORE any writes — an empty walk would
-  // otherwise markRemoved() the entire library. Deep unreadable subdirs are
-  // still skipped gracefully by walk().
+  // Unreadable root: bail before writes, or an empty walk removes the whole library.
   try {
     await fs.access(root, fs.constants.R_OK);
   } catch {
@@ -215,8 +159,7 @@ export async function runScanOnce() {
   let added = 0;
   let updated = 0;
 
-  // Phase 1 (async IO): walk, stat, and read tags for changed files only,
-  // collecting the rows to write. No DB mutation happens here.
+  // Phase 1: read tags of changed files; no DB writes.
   for await (const filePath of walk(root, unreadableDirs)) {
     scanned += 1;
     seen.add(filePath);
@@ -234,9 +177,7 @@ export async function runScanOnce() {
       meta = await readTags(filePath);
     } catch (err) {
       console.warn(`libraryScanner: skipping unreadable file ${filePath}: ${err.message}`);
-      // Keep it in `seen` so a transient read failure doesn't mark an
-      // already-indexed track removed; a brand-new unreadable file simply has
-      // no row yet, so this is harmless.
+      // Stays in `seen`: a transient read failure must not mark it removed.
       continue;
     }
 
@@ -244,22 +185,12 @@ export async function runScanOnce() {
     toUpsert.push(rowFor(filePath, stat, meta));
   }
 
-  // A subtree the walk could not list has to be treated as "still there, we just
-  // couldn't look", not as empty. The root gets this protection up front (the
-  // fs.access above); this extends it to every directory below it, which is
-  // where the realistic failures are — one album folder on a network mount, a
-  // permission that flickers during a re-export. Holding these back means a
-  // failed scan under-reports removals, which the next successful scan corrects;
-  // the alternative was deleting an entire artist's index on a transient EACCES
-  // and losing every added_at with it.
+  // Unlistable subtrees count as "still there"; the next good scan corrects removals.
   for (const filePath of known.keys()) {
     if (!seen.has(filePath) && isUnderAny(filePath, unreadableDirs)) seen.add(filePath);
   }
 
-  // Phase 2 (chunked transactions): batch the upserts so each commit is one
-  // fsync for thousands of rows (not one per row), while still releasing the
-  // write lock between chunks so a concurrent auth write isn't starved on a
-  // 100k-track scan. Removal + stats commit last so counts settle atomically.
+  // Phase 2: chunked upserts; removal + stats commit last, atomically.
   for (let i = 0; i < toUpsert.length; i += WRITE_CHUNK) {
     const batch = toUpsert.slice(i, i + WRITE_CHUNK);
     withTransaction(db, () => {
@@ -271,10 +202,7 @@ export async function runScanOnce() {
   const gone = [...known.keys()].filter((p) => !seen.has(p));
   withTransaction(db, () => {
     markRemoved(db, gone);
-    // Tombstones exist so a file on a temporarily-unavailable volume isn't
-    // forgotten and then re-added as brand new (losing its added_at). After a
-    // month it isn't coming back, and keeping the row makes every later scan's
-    // getChangeKeys() and every COUNT pay for it.
+    // Tombstones preserve added_at across a missing volume; purged after a month.
     purgeRemoved(db);
     recomputeStats(db);
   });
@@ -282,10 +210,7 @@ export async function runScanOnce() {
   return { scanned, added, updated, removed: gone.length };
 }
 
-// Re-reads one file's tags and updates its row. Used after the fix flow writes
-// tags, so the index reflects the new values without waiting for a full scan.
-// Runs on the main thread: it's a single tag read, the same cost the ingest
-// flow already pays per file.
+// Re-index one file after a tag write. Main thread: it's a single tag read.
 export async function reindexFile(filePath) {
   assertInsideMusicDir(filePath);
   const db = getDb();
@@ -293,8 +218,6 @@ export async function reindexFile(filePath) {
   try {
     stat = await fs.stat(filePath);
   } catch {
-    // The file went away between the tag write and here. Marking it removed is
-    // the honest outcome; a full scan would reach the same conclusion.
     withTransaction(db, () => {
       markRemovedByPath(db, filePath);
       recomputeStats(db);
@@ -309,10 +232,7 @@ export async function reindexFile(filePath) {
   return { indexed: true };
 }
 
-// Rescans just the given directories instead of all of MUSIC_DIR. Unlike
-// runScanOnce this must NOT call markRemoved(), which reconciles against the
-// whole library and would wipe every track outside these directories — removals
-// are resolved per known path within the subtree instead.
+// Must not call markRemoved(): it would wipe every track outside `dirs`.
 export async function rescanDirs(dirs) {
   const db = getDb();
   const roots = dirs.map((dir) => {
@@ -352,11 +272,7 @@ export async function rescanDirs(dirs) {
     }
   }
 
-  // Same rule as the full scan: a directory that could not be listed says
-  // nothing about the tracks under it. A rescan is narrower, so an unreadable
-  // root here can be the whole of the requested scope — and marking the album
-  // you just repaired as removed because its folder was briefly busy is exactly
-  // the failure this guards.
+  // As in the full scan, unlistable dirs say nothing about their tracks.
   const gone = knownInScope.filter((p) => !seen.has(p) && !isUnderAny(p, unreadableDirs));
   withTransaction(db, () => {
     for (const row of toUpsert) upsertLocalTrack(db, row);

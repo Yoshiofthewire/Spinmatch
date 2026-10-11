@@ -15,9 +15,6 @@ const SORTS = [
   ['duration', 'Playtime'],
 ];
 
-// Filtered and paged on the server, like the tracks tab. Holding the whole list
-// client-side bought instant filtering at demo scale, and cost a response
-// carrying every artist in the collection on every visit to the page.
 export default function ArtistsTab({ sort, onSortChange, artistHref }) {
   const list = useServerList({
     fetcher: ({ q, sort: s, limit, offset }) => getLibraryArtists({ q, sort: s, limit, offset }),

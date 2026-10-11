@@ -10,8 +10,7 @@ const REASONS = [
   ['unnumbered', 'No track numbers', "Nothing to check against — these files aren't numbered."],
 ];
 
-// Entirely offline: computed from track numbers already in the index, so this
-// works with no network and answers instantly even on a large library.
+// Offline: computed from indexed track numbers.
 export default function IncompleteTab({ albums, onSelect, albumHref }) {
   const [reason, setReason] = useState('gaps');
 
@@ -71,11 +70,7 @@ export default function IncompleteTab({ albums, onSelect, albumHref }) {
                   </td>
                   {reason === 'gaps' && (
                     <td className="mono">
-                      {/* Each position opens the album, where the per-gap "Find
-                          this track" button lives. A button per position here
-                          instead would be hundreds of them on a page — and each
-                          one a MusicBrainz call — on the one tab whose whole value
-                          is being entirely offline. */}
+                      {/* Links to the album; per-gap lookups live there to keep this tab offline. */}
                       {a.missingPositions.slice(0, 12).map((position, i) => (
                         <span key={position}>
                           {i > 0 && ', '}

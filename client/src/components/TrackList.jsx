@@ -18,9 +18,7 @@ export default function TrackList({ artist, album, tracks }) {
             <th>Title</th>
             <th>Length</th>
             <th>YouTube</th>
-            {/* Playlists are a library feature — the button needs somewhere
-                to resolve local files against, and the nav item itself is
-                hidden without the library configured. */}
+            {/* Playlists need the library to resolve local files. */}
             {libraryEnabled && <th aria-label="Add to playlist" />}
           </tr>
         </thead>

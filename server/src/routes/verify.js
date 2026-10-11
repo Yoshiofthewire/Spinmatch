@@ -10,15 +10,7 @@ import { MAX_TAG_TEXT } from '../lib/tagLimits.js';
 
 export const verifyRouter = Router();
 
-// Nothing on this route is a tag, but the values are the same kind of thing —
-// an artist and a title someone is asking about — so they get the same ceiling
-// rather than a second number meaning the same thing.
-//
-// A truthiness check was the whole of the validation here, and truthiness says
-// nothing about type or size: an array, an object, or a megabyte of pasted text
-// all passed and went on to become a yt-dlp search argument (a single argv
-// element, never a shell string — see ytdlp.js — so the risk was the size of the
-// argument and the junk in the cache key, not injection).
+// Type- and size-checked: values become a yt-dlp search argv element and a cache key.
 function requireText(value, field) {
   if (typeof value !== 'string') throw new BadRequestError(`${field} must be text`);
   const trimmed = value.trim();
@@ -37,12 +29,7 @@ function optionalText(value, field) {
 // Long enough for a Grateful Dead show, short enough that it is still a track.
 const MAX_LENGTH_MS = 24 * 60 * 60 * 1000;
 
-// lengthMs is arithmetic, not text: durationMatch subtracts it from every
-// candidate's duration to rank them. NaN (from a string, an object, a boolean)
-// makes every comparison false, so the ranking silently returns nothing rather
-// than failing; Infinity and negatives are worse in the same quiet way. Rounded
-// because it also forms part of the result cache key, where 3000 and 3000.4
-// would otherwise be two entries for one track.
+// NaN/Infinity/negatives silently break duration ranking. Rounded: it's part of the cache key.
 function requireLengthMs(value) {
   const n = typeof value === 'number' || typeof value === 'string' ? Number(value) : NaN;
   if (!Number.isFinite(n) || n <= 0 || n > MAX_LENGTH_MS) {
@@ -51,12 +38,7 @@ function requireLengthMs(value) {
   return Math.round(n);
 }
 
-// `recordingMbid` is optional, and what it buys is persistence. Without it the
-// answer is cached in memory for an hour and lost on restart; with it the lookup
-// goes through verifiedLinks, which remembers hits for 30 days and misses for 7 in
-// the database — the same memory the multi-minute artist sweep relies on. Callers
-// that know which MusicBrainz recording they are asking about (the gap rows) pass
-// it; a free-text search result has no recording to key on and doesn't.
+// With recordingMbid the result persists in the DB (verifiedLinks); without, 1h in memory.
 verifyRouter.post('/', async (req, res, next) => {
   try {
     const body = req.body || {};
@@ -81,19 +63,8 @@ verifyRouter.post('/', async (req, res, next) => {
   }
 });
 
-// Album verify, streamed: one `result` event per track as its (rate-limited,
-// ~1/sec) YouTube lookup finishes. GET so the browser's EventSource can consume
-// it, sameOriginOnly because GET requests skip the app-wide CSRF guard and this
-// one spawns a subprocess per track.
-//
-// There used to be a non-streaming POST /album/:mbid beside this doing the same
-// loop in one request. It is gone. The comment on this route already explained
-// why that shape is wrong — a large album holds the request open for minutes and
-// reverse proxies time it out — and keeping the version known to be broken as a
-// "fallback for environments without EventSource" was fiction: EventSource has
-// been in every browser for a decade, and one that lacked it would not run the
-// React client either. What it actually provided was an authenticated way to pin
-// a request open for the length of a box set.
+// Album verify over SSE, one `result` per track. GET for EventSource; sameOriginOnly
+// because GET skips the CSRF guard and this spawns a subprocess per track.
 verifyRouter.get('/album/:mbid/stream', sameOriginOnly, requireMbidParam(), sseStream(
   async ({ req, send, signal }) => {
     const releaseMbid = await resolvePrimaryReleaseForGroup(req.params.mbid);
@@ -110,9 +81,7 @@ verifyRouter.get('/album/:mbid/stream', sameOriginOnly, requireMbidParam(), sseS
         send('result', { position: track.position, title: track.title, status: 'no_results', video: null, deltaSeconds: null });
         continue;
       }
-      // A rate limit ends the run — the next track hits the same wall — but it
-      // is a terminal event of its own, not an error, so the wrapper is told the
-      // stream is finished rather than left to append a `done`.
+      // A rate limit should end the run as its own terminal event, not `done`.
       const verified = await verifyTrack({
         artist: release.artist, title: track.title, album: release.title, lengthMs: track.lengthMs,
       });

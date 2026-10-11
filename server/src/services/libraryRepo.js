@@ -9,12 +9,8 @@ export function upsertLocalTrack(db, {
   albumSynthesized = 0, titleSynthesized = 0,
 }) {
   const now = Date.now();
-  // Computed here rather than by the caller so it can never drift from the
-  // columns it folds, and so every writer (scanner, targeted rescan, tests) gets
-  // it without having to remember.
+  // Derived keys computed here so no writer can let them drift from their columns.
   const dupKey = makeDupKey(artist, album, title);
-  // Computed here for the same reason dupKey is: so every writer gets them and
-  // none can drift from the columns they fold.
   const matchKey = makeMatchKey(artist, title);
   const titleKey = makeTitleKey(title);
   db.prepare(`
@@ -67,16 +63,12 @@ export function markRemoved(db, paths) {
   for (const p of paths) stmt.run(now, p);
 }
 
-// Single-path counterpart to markRemoved, for the targeted rescan: that one
-// reconciles against the entire library, so it can't be used on a subset.
 export function markRemovedByPath(db, filePath) {
   db.prepare('UPDATE local_tracks SET removed = 1, updated_at = ? WHERE path = ?')
     .run(Date.now(), filePath);
 }
 
-// Moves stored paths from one root spelling to another (a symlinked or relative
-// MUSIC_DIR, now resolved), so rows keep their ids and added_at instead of being
-// swept and re-added. OR IGNORE: a row already at the new path wins.
+// Rewrites stored paths to a new root spelling so rows keep ids and added_at. OR IGNORE: existing row wins.
 export function rebaseTrackPaths(db, fromRoot, toRoot) {
   if (!fromRoot || !toRoot || fromRoot === toRoot) return 0;
   const from = fromRoot + path.sep;
@@ -85,10 +77,7 @@ export function rebaseTrackPaths(db, fromRoot, toRoot) {
   ).run(toRoot + path.sep, from.length + 1, from.length, from).changes;
 }
 
-// One aggregate query rather than four separate ones. This runs after every
-// scan, every targeted rescan, and every single-file reindex (i.e. after every
-// tag fix), and node:sqlite is synchronous — so each extra pass over the table is
-// event-loop time the whole process spends blocked.
+// One aggregate pass: runs after every reindex, and node:sqlite blocks the event loop.
 export function recomputeStats(db) {
   const t = db.prepare(`
     SELECT COUNT(*) AS totalTracks,
@@ -120,11 +109,7 @@ export function recomputeStats(db) {
   );
 }
 
-// Permanently deletes rows for files that have been gone since before `olderThan`.
-// `removed = 1` is a tombstone so a temporarily-unavailable file (unmounted
-// volume, a rename in progress) isn't forgotten and re-added as brand new — but
-// nothing ever cleared them, so a library that has seen a lot of churn keeps
-// paying for them in every scan's getChangeKeys() and every COUNT.
+// Tombstones keep a briefly-unavailable file (unmounted volume) from returning as new; purge old ones.
 export function purgeRemoved(db, { olderThanMs = 30 * 24 * 60 * 60 * 1000 } = {}) {
   return db.prepare('DELETE FROM local_tracks WHERE removed = 1 AND updated_at < ?')
     .run(Date.now() - olderThanMs).changes;
@@ -151,18 +136,12 @@ export function getStats(db) {
   };
 }
 
-// Sort keys are resolved through these maps rather than interpolated, so an
-// arbitrary ?sort= value can never reach the SQL. Unknown keys fall back to an
-// explicitly named default instead of throwing — a stale bookmark shouldn't 500.
-// The fallback is named rather than "whichever key was declared first", so
-// reordering a map can't silently change the default sort.
+// Whitelist: ?sort= never reaches SQL; unknown keys fall back rather than 500.
 function orderBy(map, sort, fallbackKey) {
   return map[sort] ?? map[fallbackKey];
 }
 
-// ASCII 31 (unit separator), constructed rather than written as a literal so no
-// invisible control character ends up in the source — the same separator, for the
-// same reason, as client/src/lib/albumKey.js and recomputeStats' char(31).
+// ASCII 31, built at runtime to keep invisible control chars out of the source.
 const UNIT_SEPARATOR = String.fromCharCode(31);
 
 
@@ -173,10 +152,6 @@ const ARTIST_SORTS = {
   duration: 'totalDurationMs DESC, artist COLLATE NOCASE, artist',
 };
 
-// Paged, for the reason listTracks is paged: a serious collection has thousands
-// of artists, and sending all of them so the browser can filter is a multi-
-// megabyte response on every page load. `q` filters server-side so that search
-// doesn't need the whole list either.
 export function listArtists(db, { sort = 'name', q, limit = 500, offset = 0 } = {}) {
   const clauses = ['removed = 0', 'artist IS NOT NULL'];
   const params = [];
@@ -198,12 +173,6 @@ export function listArtists(db, { sort = 'name', q, limit = 500, offset = 0 } = 
   return { artists, total };
 }
 
-// Just the distinct artist names, for the "do I already own them" checks.
-//
-// Discovery was calling listArtists({ limit: 100000 }) for this — three times
-// per /recommendations request, each one a grouped aggregate computing track
-// counts, album counts and summed durations that were thrown away a line later
-// in favour of the name column. This is the query that was actually wanted.
 export function listArtistNames(db) {
   return db.prepare(
     'SELECT DISTINCT artist FROM local_tracks WHERE removed = 0 AND artist IS NOT NULL'
@@ -251,7 +220,7 @@ export function listAlbums(db, { artist, sort = 'artist', q, limit = 500, offset
   return { albums, total };
 }
 
-// Escapes the LIKE wildcards, so searching for "50%" isn't a match-everything.
+// Escapes LIKE wildcards so "50%" isn't match-everything.
 function likeFor(q) {
   return `%${String(q).replace(/[%_\\]/g, '\\$&')}%`;
 }
@@ -265,14 +234,7 @@ const TRACK_SORTS = {
   added: 'added_at DESC, id',
 };
 
-// The absolute path is deliberately not in here.
-//
-// paths.js refuses to put the server's directory layout in an error message on
-// the grounds that it "isn't the client's business", and then every track in
-// every browse listing carried it anyway — so the rule was being enforced on the
-// one response nobody reads and ignored on the tens of thousands of rows that go
-// out on every page load. Browsing doesn't need it: the player streams by id,
-// the cover loads by id, and nothing in the tracks or album views renders it.
+// No path: the server's directory layout stays off browse responses.
 const TRACK_COLUMNS = `
   id, artist, album, title, duration_ms AS durationMs, track_number AS trackNumber,
   disc, year, genre, has_cover_art AS hasCoverArt, ext, size_bytes AS sizeBytes,
@@ -280,17 +242,9 @@ const TRACK_COLUMNS = `
   album_synthesized AS albumSynthesized, title_synthesized AS titleSynthesized
 `;
 
-// For the flows whose entire job is identifying a file on disk — the repair
-// paths, the Health report (which shows the path precisely because the tags that
-// would otherwise name the file are missing), and the duplicates view (where
-// choosing which copy to keep is the whole task) — plus the server-internal
-// lookups that need a path to open. Opt-in, so adding a new listing endpoint
-// doesn't leak paths by default.
+// Opt-in, for flows that must identify a file on disk (repair, Health, duplicates).
 const TRACK_COLUMNS_WITH_PATH = `${TRACK_COLUMNS}, path`;
 
-// Paged because the tracks view runs over the whole library (tens of thousands
-// of rows) — the artist and album views aggregate down to a size worth sending
-// whole, but this one does not. Returns the total so the client can page.
 export function listTracks(db, {
   artist, album, q, sort = 'artist', limit = 100, offset = 0,
 } = {}) {
@@ -299,8 +253,6 @@ export function listTracks(db, {
   if (artist) { clauses.push('artist = ? COLLATE NOCASE'); params.push(artist); }
   if (album) { clauses.push('album = ? COLLATE NOCASE'); params.push(album); }
   if (q) {
-    // ESCAPE binds to each LIKE individually, and % / _ in the user's query are
-    // escaped so a search for "50%" isn't a wildcard.
     clauses.push(
       "(title LIKE ? ESCAPE '\\' OR artist LIKE ? ESCAPE '\\' OR album LIKE ? ESCAPE '\\')"
     );
@@ -320,13 +272,7 @@ export function listTracks(db, {
   return { tracks, total };
 }
 
-// Full tracklist of one album in playing order. Not paged: an album is small,
-// and the album view needs every position to spot the gaps.
-//
-// The artist clause matches getAlbumTracksForRepair's, and for the same reason:
-// SQL never matches NULL by equality, so `artist = ?` returned nothing at all for
-// an album whose files carry no artist tag — which listAlbums does group as its
-// own album, so the grid offered a row that opened onto an empty tracklist.
+// IS NULL branch: listAlbums groups untagged-artist albums, and `= ?` never matches NULL.
 export function getAlbumTracks(db, { artist, album }) {
   const artistClause = artist == null ? 'artist IS NULL' : 'artist = ? COLLATE NOCASE';
   const params = artist == null ? [album] : [artist, album];
@@ -338,12 +284,7 @@ export function getAlbumTracks(db, { artist, album }) {
   `).all(...params);
 }
 
-// Whether this exact artist is in the collection under its own name. Used by
-// credit-string resolution as its safety check: a joined credit is only ever
-// collapsed onto a primary artist you demonstrably already have, which is what
-// stops "Florence + The Machine" being linked to an unrelated artist named
-// "Florence". Deliberately an exact (case-folded) match, not a LIKE — a fuzzy
-// test here would reintroduce the guessing this is meant to prevent.
+// Exact case-folded match, never LIKE: guards credit splitting ("Florence + The Machine").
 export function artistExists(db, artist) {
   if (!artist) return false;
   return db.prepare(
@@ -351,11 +292,7 @@ export function artistExists(db, artist) {
   ).get(artist) !== undefined;
 }
 
-// The same album, but selected the way bulk repair needs it. getAlbumTracks
-// can't be reused: it matches `artist = ?`, and SQL never matches NULL by
-// equality, so an album whose files carry no artist tag comes back empty — and
-// those are exactly the files bulk repair exists for. listAlbums groups a
-// missing artist as its own album, so this mirrors that grouping.
+// getAlbumTracks with paths.
 export function getAlbumTracksForRepair(db, { artist, album }) {
   const artistClause = artist == null ? 'artist IS NULL' : 'artist = ? COLLATE NOCASE';
   const params = artist == null ? [album] : [artist, album];
@@ -373,21 +310,14 @@ export function getTrackById(db, id) {
   ).get(id) ?? null;
 }
 
-// The removed = 1 sibling of getTrackById. Undoing a move-aside has to find a
-// row that every other reader in the app is right to hide, so this is a separate
-// function rather than a flag on that one — no caller should be able to get a
-// removed track back by accident.
+// Separate function, not a flag, so no caller gets a removed row by accident.
 export function getRemovedTrackById(db, id) {
   return db.prepare(
     `SELECT ${TRACK_COLUMNS_WITH_PATH} FROM local_tracks WHERE id = ? AND removed = 1`
   ).get(id) ?? null;
 }
 
-// Paths of the other live copies sharing this track's dup_key.
-//
-// Same dup_key findDuplicateGroups groups by, so the last-copy guard and the
-// list the user is looking at can never disagree about what a group contains.
-// A row with no dup_key is in no group and gets [], which the guard refuses.
+// Same dup_key as findDuplicateGroups, so the last-copy guard and the UI agree. No dup_key → [].
 export function otherLiveCopyPaths(db, id) {
   return db.prepare(`
     SELECT path FROM local_tracks
@@ -396,29 +326,15 @@ export function otherLiveCopyPaths(db, id) {
   `).all(id, id).map((r) => r.path);
 }
 
-// The group a live track's last-copy guard has to serialize on. A dedicated
-// lookup rather than adding dup_key to TRACK_COLUMNS, which would put it on
-// every track payload the app sends out for the sake of the one caller (the
-// duplicate-trash flow) that needs it to lock a group of copies against a
-// concurrent move-aside of a sibling. Null for an unknown id and for a row
-// with no dup_key, same as otherLiveCopyPaths.
+// Lock key for duplicateTrash; kept out of TRACK_COLUMNS to stay off every payload.
 export function getDupKeyForTrack(db, id) {
   return db.prepare(
     'SELECT dup_key FROM local_tracks WHERE id = ? AND removed = 0'
   ).get(id)?.dup_key ?? null;
 }
 
-// Albums that look incomplete judged purely on what's on disk — no upstream
-// call, so this stays available when MusicBrainz doesn't. Three separate
-// signals, ranked by how confident we can be:
-//   gaps       - numbered holes in 1..max, e.g. {1,2,3,5,6} is missing 4
-//   single     - a lone track filed as an album (usually a stray download)
-//   unnumbered - no track numbers at all, so completeness is unknowable
-//
-// Two queries in total, not one per album: this runs on every visit to the
-// Library page, node:sqlite is synchronous, and a query per album meant a
-// thousand-album collection blocked the event loop a thousand times to open a
-// tab. The track numbers come back in one pass and are grouped here.
+// Offline incompleteness: gaps (holes in 1..max), single (lone track), unnumbered (unknowable).
+// Two queries total, not one per album: node:sqlite is synchronous.
 export function findIncompleteAlbums(db) {
   const albums = db.prepare(`
     SELECT artist, album,
@@ -431,8 +347,6 @@ export function findIncompleteAlbums(db) {
     GROUP BY artist, album
   `).all();
 
-  // Grouped on the same (artist, album) values the query above grouped on, so
-  // the two agree by construction.
   const numbersByAlbum = new Map();
   for (const row of db.prepare(`
     SELECT DISTINCT artist, album, track_number AS n FROM local_tracks
@@ -451,12 +365,7 @@ export function findIncompleteAlbums(db) {
     }
     const owned = numbersByAlbum.get(`${a.artist ?? ''}${UNIT_SEPARATOR}${a.album}`) ?? new Set();
     const missingPositions = [];
-    // Bounded independently of what the tags claim. rowFor already clamps track
-    // numbers on the way in, but this loop allocates one array element per
-    // position and runs on the synchronous main thread, so it does not get to
-    // depend on an upstream guarantee: a row written before that clamp existed,
-    // or by any future path that bypasses rowFor, would otherwise turn one bad
-    // ID3 frame into a RangeError on the endpoint the Library page opens with.
+    // Clamped here too: one bad tag must not allocate a huge array on the main thread.
     const highest = Math.min(a.maxTrackNumber ?? 0, MAX_TRACK_NUMBER);
     for (let n = 1; n <= highest; n += 1) {
       if (!owned.has(n)) missingPositions.push(n);
@@ -475,17 +384,8 @@ export function findIncompleteAlbums(db) {
     || String(x.artist).localeCompare(String(y.artist)));
 }
 
-// The predicate behind each Health count, and the one used to list the tracks
-// behind it. Declared once: the counts and the drill-down have to agree, and when
-// these were written out twice a change to one silently disagreed with the other
-// (badge says 12, list shows 8). Whitelisted the same way as the sort maps — the
-// client sends a key, never SQL.
-// The album/title predicates test the synthesized flags, not NULL. The scanner
-// fills both columns unconditionally — falling back to the folder name and the
-// filename — so `album IS NULL` matched no row the scanner had ever written, and
-// these two counts read zero on every install regardless of how many untagged
-// files it held. The NULL half of each is kept for rows written by anything that
-// doesn't go through rowFor (tests, future importers).
+// Shared by counts and drill-down so they agree; client sends a key, never SQL.
+// album/title test the synthesized flags because the scanner always fills those columns.
 const HEALTH_ISSUES = {
   missingArtist: 'artist IS NULL',
   missingAlbum: '(album IS NULL OR album_synthesized = 1)',
@@ -495,17 +395,12 @@ const HEALTH_ISSUES = {
   noCoverArt: 'has_cover_art = 0',
 };
 
-// Tagging problems that make the rest of the library (and gap detection in
-// particular) misbehave. All pure SQL, all served by the partial indexes in db.js.
+// Served by the partial indexes in db.js.
 export function findHealthIssues(db) {
   const count = (sql) => db.prepare(`SELECT COUNT(*) c FROM local_tracks WHERE removed = 0 AND ${sql}`).get().c;
   const counts = Object.fromEntries(
     Object.entries(HEALTH_ISSUES).map(([key, sql]) => [key, count(sql)]),
   );
-  // Just the number here — this endpoint loads with the page, and the copies
-  // themselves are only needed by the duplicates view, which fetches them itself.
-  // Counted over the same dup_key findDuplicateGroups groups by, so the count on
-  // the Health tab always matches the view it links to.
   return { ...counts, duplicateCount: duplicateGroupCount(db) };
 }
 
@@ -513,8 +408,6 @@ export function isHealthIssue(issue) {
   return Object.hasOwn(HEALTH_ISSUES, issue);
 }
 
-// The tracks behind one Health count. Paged, because "no embedded cover art" can
-// legitimately match most of a library.
 export function listHealthTracks(db, { issue, limit = 50, offset = 0 }) {
   const predicate = HEALTH_ISSUES[issue];
   if (!predicate) return { tracks: [], total: 0 };
@@ -528,42 +421,18 @@ export function listHealthTracks(db, { issue, limit = 50, offset = 0 }) {
   return { tracks, total };
 }
 
-// Groups every live track by folded (artist, album, title) and keeps the groups
-// with more than one member. Album is in the key because a song on two different
-// releases is not a duplicate — an album track that also lands on a greatest-hits
-// set is two records sharing a recording, and both are worth keeping. What's left
-// is the case worth acting on: the same track from the same release at more than
-// one path.
-//
-// One query, one folding function, one place — rather than grouping in SQL with
-// LOWER() and then re-querying each group with JavaScript's toLowerCase(), which
-// disagreed for any non-ASCII name and returned groups with no copies in them at
-// all.
-// The GROUP BY behind both the count and the listing. dup_key is the folded
-// "artist␟album␟title", computed in JS on write (see upsertLocalTrack) precisely
-// so this can be a SQL grouping — SQLite's LOWER() and JavaScript's
-// toLowerCase() disagree on anything non-ASCII, so folding has to happen once,
-// in one language, and be stored.
+// Album is in the key: the same song on an album and a compilation isn't a duplicate.
+// dup_key is folded in JS on write because SQLite LOWER() disagrees with JS on non-ASCII.
 const DUPLICATE_KEYS_SQL = `
   SELECT dup_key FROM local_tracks
   WHERE removed = 0 AND dup_key IS NOT NULL
   GROUP BY dup_key HAVING COUNT(*) > 1
 `;
 
-// Just how many duplicate groups there are.
-//
-// findHealthIssues needs this number and nothing else, and it used to get it by
-// materializing every live track in the library — every column, paths included —
-// into JS, building a Map of folded keys, and reading .length off the result.
-// That ran synchronously on every Library page load. This is the query that was
-// actually wanted.
 function duplicateGroupCount(db) {
   return db.prepare(`SELECT COUNT(*) c FROM (${DUPLICATE_KEYS_SQL})`).get().c;
 }
 
-// Every copy of each duplicated key. Only the rows that are actually part of a
-// duplicate group are fetched — the previous version loaded the whole table and
-// then discarded the ~99% of it that had no duplicate.
 function duplicateGroups(db, { limit = 200 } = {}) {
   const keys = db.prepare(`${DUPLICATE_KEYS_SQL} LIMIT ?`).all(limit).map((r) => r.dup_key);
   if (keys.length === 0) return [];
@@ -580,9 +449,6 @@ function duplicateGroups(db, { limit = 200 } = {}) {
   return [...byKey.values()].filter((copies) => copies.length > 1);
 }
 
-// Every copy of each duplicated artist/album/title, so they can be compared
-// field by field. findHealthIssues only counts them; deciding which copy to keep
-// needs the paths, formats, sizes and durations side by side.
 export function findDuplicateGroups(db, { limit = 200 } = {}) {
   return duplicateGroups(db, { limit })
     .sort((a, b) => b.length - a.length
@@ -597,9 +463,6 @@ export function findDuplicateGroups(db, { limit = 200 } = {}) {
     }));
 }
 
-// Indexed file paths for one artist or album. The targeted rescan turns these
-// into directories to walk (path handling stays out of this module, which is
-// deliberately SQL-only) so a file added since the last scan is picked up too.
 export function listTrackPaths(db, { artist, album }) {
   const clauses = ['removed = 0'];
   const params = [];
@@ -610,8 +473,6 @@ export function listTrackPaths(db, { artist, album }) {
   ).all(...params).map((r) => r.path);
 }
 
-// Distinct album titles owned by an artist. The discography diff needs these to
-// compare against a MusicBrainz release-group list.
 export function listArtistAlbums(db, artist) {
   return db.prepare(`
     SELECT DISTINCT album FROM local_tracks
@@ -619,13 +480,7 @@ export function listArtistAlbums(db, artist) {
   `).all(artist).map((r) => r.album);
 }
 
-// Every (artist, album) and (artist, title) pair in the library, normalized for
-// comparison against MusicBrainz names. Returned as Sets of "artist|name" keys.
-//
-// The whole library in one pass rather than a query per item: a search result
-// page asks about a few dozen names at once, and normalizeTitle folding has to
-// happen in JS anyway, so per-item SQL would be dozens of queries that still
-// couldn't match "Kid A (Deluxe Edition)" to "Kid A".
+// Whole library in one pass: normalizeTitle folding happens in JS, so per-item SQL can't match.
 export function collectionKeys(db) {
   const albums = db.prepare(`
     SELECT DISTINCT artist, album AS name FROM local_tracks
@@ -647,9 +502,6 @@ export function hasRecording(db, { artist, title }) {
   return Boolean(row);
 }
 
-// All live track titles for an artist (case-insensitive). Used by gap detection
-// to match owned tracks against a MusicBrainz tracklist with title
-// normalization, which exact-equality hasRecording() can't do.
 export function listArtistTitles(db, artist) {
   return db.prepare(`
     SELECT title FROM local_tracks

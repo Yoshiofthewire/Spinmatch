@@ -1,18 +1,12 @@
 import { useEffect, useState } from 'react';
 import { checkOwned } from '../api/library.js';
 
-// Which of the MusicBrainz results on screen are already in the local library,
-// as a Set of ids to badge.
-//
-// A nicety on top of search: a failure badges nothing and returns `error` for
-// the caller to mention, rather than blocking the results. Callers pass
-// enabled=false when MUSIC_DIR isn't set, which skips the request entirely.
+// Set of on-screen MusicBrainz ids already owned. Failure badges nothing, never blocks.
 export function useOwned({ albums = [], recordings = [], enabled = true }) {
   const [owned, setOwned] = useState(() => new Set());
   const [error, setError] = useState(null);
 
-  // Serialized ids rather than the arrays themselves: the caller rebuilds those
-  // on every render, which would re-fire this effect forever.
+  // Serialized: callers rebuild the arrays every render.
   const albumIds = albums.map((a) => a.id).join(',');
   const recordingIds = recordings.map((r) => r.id).join(',');
 

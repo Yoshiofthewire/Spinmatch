@@ -2,10 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { streamUrl } from '../../api/library.js';
 import { formatDuration } from '../../lib/format.js';
 
-// A preview player, deliberately not a music player: it exists so you can
-// confirm a file is what its tags claim before acting on it. No persistent
-// queue, no transcoding, no cross-page playback — the queue is just whatever
-// list was on screen when you pressed play.
+// Preview player for checking a file matches its tags; the queue is the list on screen.
 export default function PlayerBar({ track, queue, onChange, onClose }) {
   const audioRef = useRef(null);
   const [playing, setPlaying] = useState(false);
@@ -24,8 +21,7 @@ export default function PlayerBar({ track, queue, onChange, onClose }) {
     });
   }
 
-  // A new track means a new source: reset the transport and autoplay, since
-  // reaching here is always the result of an explicit click.
+  // New track: reset and autoplay (always follows an explicit click).
   useEffect(() => {
     setError(null);
     setPosition(0);
@@ -48,8 +44,7 @@ export default function PlayerBar({ track, queue, onChange, onClose }) {
     setPosition(Number(event.target.value));
   }
 
-  // Prefer the browser's decoded duration; fall back to the indexed tag value
-  // while metadata is still loading.
+  // Decoded duration, else the indexed value while metadata loads.
   const duration = audioRef.current?.duration;
   const totalSeconds = Number.isFinite(duration) && duration > 0
     ? duration

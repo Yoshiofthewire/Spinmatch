@@ -10,11 +10,7 @@ function StatusBadge({ status }) {
   return <span className="badge badge-none">No results</span>;
 }
 
-// `recordingMbid` is optional and only affects how long the answer is remembered:
-// with it the server persists the result in verified_links (30 days for a hit, 7
-// for a miss) instead of caching it in memory for an hour. Callers that know which
-// MusicBrainz recording they are asking about pass it; a free-text search result
-// has none to pass.
+// Optional `recordingMbid` persists the result (30 days hit, 7 miss) instead of 1h in memory.
 export default function VerifyButton({ artist, title, album, lengthMs, recordingMbid }) {
   const [state, setState] = useState('idle'); // idle | loading | done | error
   const [result, setResult] = useState(null);

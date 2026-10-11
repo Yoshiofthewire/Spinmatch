@@ -55,20 +55,10 @@ ingestRouter.post('/file/resolve', async (req, res, next) => {
   }
 });
 
-// Streaming variant: emits one `item` event per file as it finishes, then a
-// terminal `done` (or `error`). GET so the browser's EventSource can consume it;
-// dryRun is a query flag (?dryRun=1) since EventSource can't send a body.
-//
-// Uses the shared SSE lifecycle rather than its own copy of it. The hand-rolled
-// version here wrote events without checking whether the socket was still open,
-// and had no heartbeat at all — on a run this comment itself describes as
-// "potentially minutes-long", which is exactly the case a proxy's idle timeout
-// kills.
+// Streaming variant: one `item` event per file. GET for EventSource, so dryRun is a query flag.
 ingestRouter.get('/process-stream', sameOriginOnly, sseStream(async ({ req, send, signal }) => {
   const dryRun = req.query.dryRun === '1' || req.query.dryRun === 'true';
-  // `signal` aborts the (potentially minutes-long) ingest as soon as the client
-  // goes away, so we stop fingerprinting and moving files into a dead
-  // connection.
+  // Stop ingesting once the client disconnects.
   const result = await processIngest({ dryRun, onItem: (item) => send('item', item), signal });
   if (result.aborted) return STREAM_HANDLED;
   return {

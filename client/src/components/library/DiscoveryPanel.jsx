@@ -4,22 +4,9 @@ import EqualizerLoader from '../EqualizerLoader.jsx';
 import CoverArt from '../CoverArt.jsx';
 import { getSimilarArtists, getRecommendations } from '../../api/library.js';
 
-// Music you don't have, reached from music you do — the inverse of every other
-// library view, which is all about finding holes in records you already know
-// about.
-//
-// Opt-in on a button, like every other MusicBrainz-backed panel: a run resolves
-// and walks up to ten of your artists through the 1-req/s queue, so it takes
-// seconds to a minute and must never start on mount.
-//
-// The copy is deliberate about what this is. MusicBrainz has no "sounds like"
-// relation, so these are artists *connected* to yours — shared members, side
-// projects, collaborations — not an algorithm's guess at your taste. Saying so
-// is what makes a thin result read as an honest answer rather than a broken one.
-// Which signal produced a suggestion. Shown rather than flattened because the
-// two make different claims: "sounds like" is a statistical statement about
-// listeners, "connected to" is a documented fact about people. An artist found
-// by both is the strongest lead there is here, and says so.
+// Music you don't have, from music you do. Opt-in: walks up to ten artists
+// through the 1-req/s MusicBrainz queue, so never on mount.
+// Signal is shown per suggestion: "sounds like" (listeners) vs "connected to" (people).
 function SignalBadge({ artist }) {
   if (artist.kind === 'both') {
     return (
@@ -87,8 +74,7 @@ export default function DiscoveryPanel() {
 
       {state === 'ready' && data && (
         <>
-          {/* Half the signal missing produces thinner results that would
-              otherwise look like your collection simply has no neighbours. */}
+          {/* Explain thin results when half the signal is missing. */}
           {data.listenBrainz === 'unavailable' && (
             <p className="banner banner-rate-limited">
               ListenBrainz couldn&apos;t be reached, so these are from MusicBrainz&apos;s
@@ -127,8 +113,7 @@ export default function DiscoveryPanel() {
                       <td>
                         <SignalBadge artist={artist} />
                       </td>
-                      {/* Which of your artists led here — what makes a
-                          suggestion explicable rather than an oracle's word. */}
+                      {/* Which of your artists led here. */}
                       <td className="muted">{artist.via.join(', ')}</td>
                     </tr>
                   ))}

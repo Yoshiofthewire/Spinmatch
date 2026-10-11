@@ -17,14 +17,11 @@ export default function SearchPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const { libraryEnabled } = useConfig();
-  // The query lives in the URL so Back/Forward restore a search, and links
-  // elsewhere (a playlist gap's "Find this track") can land here with one.
+  // Query in the URL so Back/Forward and deep links work.
   const [searchParams, setSearchParams] = useSearchParams();
   const query = searchParams.get('q') ?? '';
   const [attempt, setAttempt] = useState(0);
 
-  // The library knows instantly whether a result is already on disk, so say so
-  // rather than making the user go and check.
   const { owned, error: ownedError } = useOwned({
     enabled: libraryEnabled,
     albums: (results?.releaseGroups ?? []).map((rg) => ({
@@ -35,16 +32,14 @@ export default function SearchPage() {
     })),
   });
 
-  // Submitting only writes the URL; the effect below does the fetch. Re-submitting
-  // the same query doesn't change the URL, so it bumps `attempt` instead.
+  // Submit writes the URL; the effect fetches. Same query bumps `attempt` instead.
   function handleSearch(next) {
     if (next === query) setAttempt((n) => n + 1);
     else setSearchParams({ q: next });
   }
 
-  // Keyed on the param's string value, not `searchParams` (a new object every
-  // render), so it fetches once per distinct query. `cancelled` drops a slow
-  // response that lands after a newer search.
+  // Keyed on the string, not `searchParams` (new object every render).
+  // `cancelled` drops stale responses.
   useEffect(() => {
     if (!query) {
       setResults(null);

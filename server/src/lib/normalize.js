@@ -1,8 +1,4 @@
-// Fold away the differences that make two spellings of the same track look
-// different: case, parenthetical/bracketed suffixes like "(Remastered 2011)" or
-// "[Live]", featured-artist tails, and punctuation. Used both by gap detection
-// (owned track vs MusicBrainz tracklist) and by the tag-based ingest matcher
-// (file's title tag vs a MusicBrainz search hit).
+// Folds case, "(Remastered)"/"[Live]" suffixes, feat. tails, and punctuation.
 export function normalizeTitle(title) {
   return String(title || '')
     .normalize('NFC') // a decomposed accent's combining mark isn't \p{L}
@@ -15,27 +11,16 @@ export function normalizeTitle(title) {
     .trim();
 }
 
-// Unit separator, matching the one libraryRepo's dup_key uses. A control
-// character can't occur in a folded key, whose alphabet normalizeTitle has
-// already reduced to letters, digits and single spaces.
+// Unit separator: can't occur in a folded key.
 export const KEY_SEPARATOR = '\u001f';
 
-// The identity a playlist item is stored under, and the one local_tracks is
-// indexed on. Folded in JS, once, for the reason libraryRepo.js documents at
-// foldKey: SQLite's LOWER() is ASCII-only and JavaScript's toLowerCase() is not,
-// so a key built one way and queried the other disagrees the moment an artist is
-// called "Ärzte".
-//
-// Distinct from dup_key, which is a plain lowercase join and therefore will not
-// match "Kid A (Remastered)" to "Kid A". Playlist resolution has to, so it folds
-// through normalizeTitle instead.
+// Playlist/local_tracks identity. Folded in JS (SQLite LOWER() is ASCII-only), and
+// through normalizeTitle so "Kid A (Remastered)" matches "Kid A", unlike dup_key.
 export function makeMatchKey(artist, title) {
   return `${normalizeTitle(artist)}${KEY_SEPARATOR}${normalizeTitle(title)}`;
 }
 
-// The duplicate-grouping key: a plain fold, no normalizeTitle stripping.
-// SQLite's LOWER() folds ASCII only, so this is folded in JS, once; NFC first so
-// composed and decomposed accents fold alike. Null when artist or title is.
+// Duplicate-grouping key: plain NFC + lowercase fold, no normalizeTitle stripping.
 export function makeDupKey(artist, album, title) {
   if (artist == null || title == null) return null;
   return [artist, album, title]

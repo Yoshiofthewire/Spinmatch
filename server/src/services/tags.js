@@ -36,9 +36,7 @@ function writeField(tag, field, value) {
   }
 }
 
-// Pure preview of what writeTags would fill: the fields desired provides
-// (non-null) that are currently empty. Used by the dry-run path so a preview can
-// report planned fills without touching the file.
+// Dry-run preview of what a fill-only writeTags would write.
 export function plannedFills(current, desired) {
   return Object.keys(desired).filter((key) => desired[key] != null && current[key] == null);
 }
@@ -48,8 +46,7 @@ export async function readTags(filePath) {
   try {
     const { tag, properties } = file;
     return {
-      // Decoded from the audio stream itself, so the tag-based matcher can
-      // duration-confirm a candidate without Chromaprint/fpcalc installed.
+      // From the audio stream; lets the tag matcher confirm duration without fpcalc.
       durationMs: properties?.durationMilliseconds || null,
       artist: readField(tag, 'artist'),
       title: readField(tag, 'title'),
@@ -65,19 +62,14 @@ export async function readTags(filePath) {
   }
 }
 
-// Reads the embedded front cover out of a file so the library can show album
-// art without keeping a second copy on disk. Returns {bytes, mimeType} or null.
-// Prefers an explicit FrontCover picture, falling back to the first one.
+// Embedded cover as {bytes, mimeType} or null; prefers FrontCover.
 export async function readCoverArt(filePath) {
   const file = File.createFromPath(filePath);
   try {
     const pictures = file.tag.pictures || [];
     if (!pictures.length) return null;
     const picture = pictures.find((p) => p.type === PictureType.FrontCover) || pictures[0];
-    // The length is checked before toByteArray(), which is what actually
-    // materializes the copy. A tag can embed a picture of any size the container
-    // allows, and this is served over HTTP — an unbounded copy per request on a
-    // route the album grid calls in parallel.
+    // Size-check before toByteArray() copies it; embedded art is unbounded and served over HTTP.
     const length = picture.data?.length ?? 0;
     if (length > MAX_IMAGE_BYTES) {
       console.warn(`tags: embedded cover in ${filePath} is ${length} bytes, over the ${MAX_IMAGE_BYTES} limit — skipping`);
@@ -92,30 +84,9 @@ export async function readCoverArt(filePath) {
   }
 }
 
-// Writes `desired` into the file's tags. Fills only empty fields by default —
-// the contract every caller but one relies on — and the two flags below each
-// widen that, separately.
-//
-// `overwrite` widens the contract from "fill the blanks" to "correct the file":
-// a field is written when it differs from what's desired, not only when it's
-// empty. A field that already agrees is left alone and stays out of
-// filledFields, so applying a match the file already matches honestly reports
-// that nothing changed.
-//
-// Two callers earn it, for different reasons. The fingerprint path, where the
-// audio itself says the existing tags name the wrong recording; and the manual
-// edit path (services/tagEdit.js), where a person typed the value. That second
-// caller passes a PARTIAL `desired` — only the fields it means to change — which
-// combined with the `desiredValue == null` skip below gives it exactly "write
-// these, leave everything else alone". That is why manual editing needs no
-// function of its own here, and also why it cannot remove a tag: a null means
-// "no opinion" throughout this module, and nothing gives it a second meaning.
-//
-// `replaceCoverArt` is the same widening for the embedded picture, and is
-// deliberately a separate flag rather than something `overwrite` implies:
-// correcting a file's text tags and swapping its artwork are different
-// decisions, and either is worth making without the other. Without it, art is
-// only ever written to a file that has none.
+// Fills only empty fields by default. `overwrite` writes any field that differs;
+// `replaceCoverArt` is the separate equivalent for art. A null in `desired` means
+// "no opinion", so a partial `desired` touches only its fields and can't remove a tag.
 export async function writeTags(
   filePath,
   desired,
@@ -124,9 +95,7 @@ export async function writeTags(
   const opts = { coverImage, overwrite, replaceCoverArt };
   // Dry run on the original first: nothing to change means no copy, no save.
   const filledFields = withFile(filePath, (file) => applyTags(file.tag, desired, opts));
-  // Recorded so the MUSIC_DIR watcher doesn't treat our own write as an
-  // external change (lib/recentWrites.js). Noted even for a no-op: a spurious
-  // note costs nothing, a missing one costs a full rescan.
+  // Tell the watcher this is our write; noted even for a no-op (a miss costs a rescan).
   noteWrite(filePath);
   if (filledFields.length) {
     await saveViaTemp(filePath, (file) => {
@@ -146,10 +115,8 @@ function withFile(filePath, fn) {
   }
 }
 
-// save() rewrites the file in place, so a crash mid-save would truncate the
-// user's music. Tag a same-directory copy instead and rename it over the
-// original. The temp is a dot-file (the scanner skips those) and keeps the real
-// extension last so taglib still detects the format.
+// save() rewrites in place, so a crash could truncate the file: tag a copy and rename.
+// Dot-file so the scanner skips it; real extension last so taglib detects the format.
 async function saveViaTemp(filePath, edit) {
   const dir = path.dirname(filePath);
   const ext = path.extname(filePath);
@@ -161,8 +128,7 @@ async function saveViaTemp(filePath, edit) {
     withFile(tmp, edit);
     await fsyncPath(tmp);
     await fs.chmod(tmp, mode);
-    // Keep the owner where we're allowed to (root, or the same group); a
-    // shared library shouldn't change hands because a tag was edited.
+    // Preserve ownership where permitted.
     await fs.chown(tmp, uid, gid).catch((err) => { if (err.code !== 'EPERM') throw err; });
     await fs.rename(tmp, filePath);
   } catch (err) {
@@ -185,8 +151,7 @@ function applyTags(tag, desired, { coverImage, overwrite, replaceCoverArt }) {
     }
   }
 
-  // No coverImage means there's nothing to put there — asking to replace art
-  // must never end up removing the art the file already has.
+  // Replacing without a coverImage must never remove existing art.
   const hasCoverArt = Boolean(tag.pictures && tag.pictures.length > 0);
   if (coverImage && (replaceCoverArt || !hasCoverArt)) {
     const picture = Picture.fromFullData(

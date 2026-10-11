@@ -3,19 +3,8 @@ import EqualizerLoader from '../EqualizerLoader.jsx';
 import WriteResultBanner from './WriteResultBanner.jsx';
 import { previewBulkFix, applyBulkFix } from '../../api/library.js';
 
-// Repairs a whole album's tags in one pass.
-//
-// Preview first, always. The single-track picker shows you one MusicBrainz
-// candidate at a time and you decide; at album scale that decision has to be
-// made once over a table, so the proposal is rendered in full — with every
-// proposed value visible next to the file it would be written to — and nothing
-// is sent until rows are ticked and Apply is pressed.
-//
-// Two sources, because they fail in opposite directions. Reading the file's path
-// costs nothing and works on files with no tags at all, which is exactly the
-// Health tab's population, but it only knows what the folders say. MusicBrainz
-// knows the real tracklist but has to resolve the album first, which needs the
-// album tag to already be roughly right.
+// Album-wide tag repair: full preview, nothing sent until rows are ticked and applied.
+// Sources: path (free, works untagged) or MusicBrainz (needs a roughly right album tag).
 const SOURCES = [
   ['path', 'From file paths', 'Reads artist, album, track number and title from where each file sits. No network.'],
   ['musicbrainz', 'From MusicBrainz', 'Resolves the album once and aligns your files to its official tracklist.'],
@@ -28,8 +17,7 @@ function Cell({ track, field }) {
   const proposed = track.proposed?.[field] ?? null;
   const willFill = track.fills.includes(field);
   if (willFill) return <td className="bulk-fix-fill">{proposed}</td>;
-  // A value the file already has is shown greyed rather than hidden, so the
-  // table reads as the whole album rather than only its holes.
+  // Existing values shown greyed, not hidden.
   const current = track.current?.[field] ?? null;
   return <td className="muted">{current ?? '—'}</td>;
 }
@@ -50,9 +38,7 @@ export default function BulkFixPanel({ artist, album, onApplied }) {
     try {
       const data = await previewBulkFix({ artist, album, source: nextSource });
       setPreview(data);
-      // Everything that would actually change starts ticked — the common case is
-      // "yes, all of that" and unticking the exceptions is less work than
-      // ticking twenty rows.
+      // Rows that would change start ticked.
       setSelected(new Set(data.tracks.filter((t) => t.fills.length > 0).map((t) => t.trackId)));
       setState('ready');
     } catch (err) {

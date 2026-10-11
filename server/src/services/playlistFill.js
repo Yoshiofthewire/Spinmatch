@@ -1,35 +1,13 @@
-// The samplers, as pure functions.
-//
-// No database, no network, no clock, and randomness only through an injected
-// rng. That is deliberate: the cap arithmetic, the round-robin spread, the
-// greedy byte fill and the four stop conditions are where the subtle bugs in
-// this feature live, and this shape lets every one of them be tested against a
-// literal array with no mocking at all.
+// The samplers, as pure functions: no DB, network or clock; randomness only via injected rng.
 
-// Auto-fill only. A track added by hand is the user's call, not the sampler's.
-//
-// 60s rather than 90s: plenty of punk and hardcore is legitimately 45-90
-// seconds, and silently eating a genre is worse than admitting the occasional
-// interlude. 12 minutes keeps most prog and post-rock while dropping DJ mixes
-// and hidden-track outros — it does exclude "Echoes", which is the honest cost
-// of a single number.
+// Auto-fill only. 60s keeps short punk/hardcore; 12min drops DJ mixes and hidden-track outros.
 export const MIN_DURATION_MS = 60_000;
 export const MAX_DURATION_MS = 720_000;
 
-// A day. Like MAX_TARGET and MAX_BYTE_BUDGET in routes/playlists.js this is a
-// sanity ceiling rather than a real limit — it exists so a request can't hand
-// the filter an absurd number, not because anything near it is meaningful.
+// A day: sanity ceiling on request input, not a meaningful limit.
 export const MAX_DURATION_BOUND = 24 * 60 * 60 * 1000;
 
-/**
- * A duration bound as it arrives from a request: clamped, not trusted.
- *
- * `Number(x) || fallback` treats a legitimate 0 as absent, and 0 is exactly
- * what the client sends for an emptied "Shortest (seconds)" field — so asking
- * for no lower bound silently got the 60s default back. Number.isFinite is what
- * tells "not a number" apart from "zero"; an absent value is still the caller's
- * default, since omitting minMs is not the same request as asking for 0.
- */
+// Request input, clamped. A literal 0 means "no bound" (emptied field); absent means default.
 export function clampDuration(raw, fallback) {
   if (raw === null || raw === undefined || raw === '') return fallback;
   const n = Number(raw);
@@ -37,23 +15,12 @@ export function clampDuration(raw, fallback) {
   return Math.min(MAX_DURATION_BOUND, Math.max(0, n));
 }
 
-/**
- * A null duration is excluded, not kept. The Health tab already establishes what
- * it means: the scanner could not decode the audio stream, so the file is
- * damaged — it would not play on the target device either.
- */
+// Null duration means the scanner couldn't decode the stream: damaged, so excluded.
 export function filterByDuration(tracks, { minMs = MIN_DURATION_MS, maxMs = MAX_DURATION_MS } = {}) {
   return tracks.filter((t) => t.durationMs != null && t.durationMs >= minMs && t.durationMs <= maxMs);
 }
 
-/**
- * How many tracks one artist may contribute.
- *
- * Slack below ~50 tracks, where the +5 dominates the average — on a 20-track
- * playlist one artist can still take a third. Left as-is rather than corrected
- * with a second rule, and surfaced in the UI so the number is visible when it
- * behaves oddly.
- */
+// Loose below ~50 tracks (the +5 dominates); shown in the UI rather than patched with a second rule.
 export function perArtistCap(target, artistCount) {
   return Math.ceil(target / Math.max(1, artistCount)) + 5;
 }
@@ -67,14 +34,8 @@ function shuffle(items, rng) {
   return out;
 }
 
-// Ranked first, in rank order; then everything else chronologically.
-//
-// That second half is doing real work right now. The ListenBrainz popularity
-// API is disabled upstream, so popularityRank is null for every track until it
-// returns — and without a fallback ordering "Popular" would just be Chance under
-// another name. Album year then track number is a chronological walk of what you
-// own by an artist: deterministic, useful, and not pretending to be a popularity
-// claim.
+// Ranked first, then chronological. The fallback matters: ListenBrainz popularity is
+// disabled upstream, so popularityRank is currently always null.
 function byPopularity(tracks) {
   const ranked = tracks.filter((t) => t.popularityRank != null)
     .sort((a, b) => a.popularityRank - b.popularityRank);
@@ -87,11 +48,7 @@ function byPopularity(tracks) {
 function orderFor(tracks, { method, preferPopular, rng, cap }) {
   if (method === 'popular') return byPopularity(tracks);
 
-  // Chance. prefer-popular narrows the draw to the artist's top 2*cap by
-  // popularity before shuffling — enough headroom that a reshuffle still varies,
-  // while staying out of the deep cuts. An artist with no popularity data has
-  // nothing to narrow to, so the toggle is a no-op there rather than an empty
-  // list.
+  // Chance. prefer-popular shuffles only the top 2*cap; no-op for unranked artists.
   const ranked = tracks.filter((t) => t.popularityRank != null);
   const slice = preferPopular && ranked.length
     ? byPopularity(ranked).slice(0, 2 * cap)
@@ -121,8 +78,7 @@ export function fillPlaylist({
 
   const cap = perArtistCap(target, byArtist.size);
 
-  // Artists in descending signal strength, so when the target is small the
-  // strongest neighbours are the ones represented.
+  // Strongest neighbours first, so a small target represents them.
   const queues = [...byArtist.entries()]
     .sort((a, b) => (b[1][0].signalScore ?? 0) - (a[1][0].signalScore ?? 0))
     .map(([artist, tracks]) => ({
@@ -136,9 +92,7 @@ export function fillPlaylist({
   let cappedOut = false;
   let budgetBlocked = false;
 
-  // Round-robin rather than one artist at a time, so the cap is rarely what
-  // stops the fill and the result is spread rather than proportional to how much
-  // of each artist you happen to own.
+  // Round-robin so the result is spread, not proportional to how much of each artist you own.
   let progressed = true;
   while (picked.length < target && progressed) {
     progressed = false;
@@ -148,8 +102,7 @@ export function fillPlaylist({
 
       while (queue.remaining.length) {
         const candidate = queue.remaining.shift();
-        // An oversized track is skipped, not fatal: one 180MB lossless file must
-        // not end a fill with 400MB still free.
+        // Skip an oversized track rather than ending the fill.
         if (byteBudget != null && bytes + (candidate.sizeBytes ?? 0) > byteBudget) {
           budgetBlocked = true;
           continue;
@@ -163,12 +116,8 @@ export function fillPlaylist({
     }
   }
 
-  // Cap before budget: cappedOut is only ever set by a real, unblocked pick
-  // reaching the cap, so when it is true the cap genuinely bound the fill — a
-  // budget block can delay or prevent that, but never trigger it early. Without
-  // this order, an oversized track skipped on the way to a cap that was going
-  // to bind anyway gets reported as 'budget', which tells the user to raise a
-  // number that would not change the result.
+  // Cap before budget: when cappedOut is set the cap truly bound, and 'budget' would
+  // tell the user to raise a number that wouldn't change the result.
   let stopped = 'exhausted';
   if (picked.length >= target) stopped = 'target';
   else if (cappedOut) stopped = 'cap';

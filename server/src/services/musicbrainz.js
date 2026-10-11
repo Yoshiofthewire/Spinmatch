@@ -6,17 +6,11 @@ import { UpstreamUnavailableError } from '../lib/httpErrors.js';
 const BASE_URL = 'https://musicbrainz.org/ws/2';
 const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 
-// Node's fetch has no default timeout, and this is the worst place in the app to
-// go without one: the rate limiter below is a single process-wide queue, so one
-// request stalled on a half-open socket stalls *every* MusicBrainz lookup behind
-// it — the artist sweep, the album check, the bulk repair — for as long as the
-// OS keeps the socket alive. The signal covers reading the body too, not just
-// the handshake.
+// The rate limiter is one process-wide queue, so a stalled socket would stall every
+// lookup. Covers reading the body too.
 const REQUEST_TIMEOUT_MS = 15_000;
 
-// MusicBrainz allows at most 1 request/sec per source IP; this queue is shared
-// across every call this process makes, regardless of which route triggered it.
-// 1100ms leaves margin for clock and network jitter.
+// MusicBrainz allows 1 req/s per IP; shared process-wide, 100ms margin for jitter.
 const rateLimiter = new RateLimiter(1100);
 
 const RETRY_AFTER_DEFAULT_S = 2;
@@ -28,8 +22,7 @@ export function retryAfterMs(header) {
 }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-// Bounded: the key is the full request URL, so an unbounded map grows with every
-// distinct search anyone runs, and each entry holds a whole JSON response.
+// Bounded: keyed by full URL, so every distinct search adds a whole JSON response.
 const cache = new TTLCache({ maxEntries: 2000 });
 
 async function mbFetch(path, params = {}) {
@@ -56,8 +49,7 @@ async function mbFetch(path, params = {}) {
 
   const json = await rateLimiter.schedule(async () => {
     let response = await request();
-    // 503 is MusicBrainz's rate-limit answer. Wait as told, inside the queue so
-    // nothing else goes out meanwhile, and retry once.
+    // 503 is MusicBrainz's rate limit. Wait inside the queue so nothing else goes out; retry once.
     if (response.status === 503) {
       await response.body?.cancel();
       await sleep(retryAfterMs(response.headers.get('retry-after')));
@@ -67,10 +59,7 @@ async function mbFetch(path, params = {}) {
       throw new UpstreamUnavailableError(`MusicBrainz returned ${response.status} for ${path}`);
     }
     try {
-      // Inside the try as well: the deadline covers the body, so a response that
-      // sends headers and then trickles aborts here rather than in the fetch
-      // above — and a raw AbortError escaping would be a 500 instead of the
-      // "upstream is unavailable" the rest of this module promises.
+      // The timeout can abort mid-body; map it to upstream-unavailable, not a 500.
       return await response.json();
     } catch (err) {
       throw new UpstreamUnavailableError(`Could not read the MusicBrainz response for ${path}: ${err.message}`);
@@ -85,21 +74,13 @@ function coverArtUrlForReleaseGroup(mbid) {
   return `/api/cover/release-group/${mbid}`;
 }
 
-// Flattens a MusicBrainz artist-credit array to the string a tag should carry.
-//
-// `joinphrase` is the part that was being dropped. MusicBrainz models a credit
-// as segments each carrying the text that follows it, so Simon & Garfunkel
-// arrives as [{name: 'Simon', joinphrase: ' & '}, {name: 'Garfunkel'}] — and
-// joining on '' rendered that as "SimonGarfunkel". Every collaboration, every
-// "feat.", every "vs" in the library was mangled the same way.
+// Artist-credit array to tag string. Each segment carries its trailing joinphrase (' & ', ' feat. ').
 export function creditString(credit) {
   if (!Array.isArray(credit)) return '';
   return credit.map((c) => `${c?.name ?? ''}${c?.joinphrase ?? ''}`).join('').trim();
 }
 
-// The two search indexes below are also queried on their own (with a fielded
-// Lucene query) by the tag-based matcher, so they're exported individually as
-// well as through searchAll.
+// Also used directly by the tag matcher with fielded Lucene queries.
 export async function searchReleaseGroups(query) {
   const res = await mbFetch('/release-group', { query });
   return (res['release-groups'] || []).map((rg) => ({
@@ -124,10 +105,7 @@ export async function searchRecordings(query) {
   }));
 }
 
-// The artist index on its own. Callers that only need to resolve a name to an
-// artist id use this rather than searchAll: it's one upstream request instead of
-// three (which matters against a 1 req/s limit), and a failure in the unrelated
-// release-group or recording index can't take the resolution down with it.
+// For name-to-id resolution: one request instead of searchAll's three, at 1 req/s.
 export async function searchArtists(query) {
   const res = await mbFetch('/artist', { query });
   return (res.artists || []).map((a) => ({
@@ -153,19 +131,8 @@ export async function getArtist(artistMbid) {
   return { mbid: res.id, name: res.name };
 }
 
-// Artists MusicBrainz records a relationship to. MusicBrainz has no "sounds
-// like" edge — that's a listening-data judgement it doesn't make — so what comes
-// back is the factual graph: band members and their other bands, side projects,
-// collaborations, supporting musicians. That is a narrower claim than
-// "recommended for you", and the UI says so rather than dressing it up.
-//
-// The relation types kept are the ones that imply a listener connection —
-// checked against what MusicBrainz actually returns, not guessed at.
-//
-// Excluded on purpose: 'tribute' (a covers band is not a lead) and
-// 'artist rename' (the same act under another name, so following it suggests
-// someone you already own). 'subgroup' is kept precisely because a side project
-// is one of the better leads this graph offers.
+// Factual relationships (members, side projects, collaborators), not "sounds like".
+// Excluded: 'tribute' (covers band) and 'artist rename' (same act you already own).
 const USEFUL_ARTIST_RELATIONS = new Set([
   'member of band', 'collaboration', 'supporting musician', 'subgroup',
   'founder', 'conductor position', 'artistic director',
@@ -177,8 +144,7 @@ export async function getRelatedArtists(artistMbid) {
   for (const rel of res.relations || []) {
     if (!USEFUL_ARTIST_RELATIONS.has(rel.type)) continue;
     const other = rel.artist;
-    // A relation to the artist we asked about is the edge pointing back at
-    // itself; skip it rather than reporting everyone as related to themselves.
+    // Skip edges pointing back at the queried artist.
     if (!other?.id || other.id === artistMbid) continue;
     if (!seen.has(other.id)) {
       seen.set(other.id, { mbid: other.id, name: other.name, relation: rel.type });
@@ -193,8 +159,7 @@ export async function browseReleaseGroupsByArtist(artistMbid) {
     mbFetch('/release-group', { artist: artistMbid, limit: 100 }),
   ]);
 
-  // Only studio albums: primary type Album with no secondary type (excludes
-  // live recordings, compilations, remixes, etc. that share the Album primary type).
+  // Studio albums only: secondary types mark live, compilation, remix, etc.
   const albums = (res['release-groups'] || [])
     .filter((rg) => rg['primary-type'] === 'Album' && (rg['secondary-types'] || []).length === 0)
     .map((rg) => ({
@@ -232,14 +197,8 @@ export async function getReleaseWithTracks(releaseMbid) {
         discNumber,
         recordingMbid: track.recording?.id || null,
         title: track.title,
-        // The per-track credit, which `inc=artist-credits` has been fetching all
-        // along and this mapping used to discard — leaving the bulk repair to
-        // fall back on the release's own credit for every track. On a
-        // compilation that meant writing "Various Artists" into the artist tag of
-        // every file on the record, and since the repair only fills fields that
-        // are empty, the files it hit were exactly the untagged ones the feature
-        // exists to fix. The track-level credit is the authoritative one; the
-        // recording's is the fallback for releases that only carry it there.
+        // Track credit is authoritative (the release credit is "Various Artists" on
+        // compilations); the recording's is the fallback.
         artist: creditString(track['artist-credit'])
           || creditString(track.recording?.['artist-credit'])
           || null,
@@ -253,8 +212,7 @@ export async function getReleaseWithTracks(releaseMbid) {
       mbid: res.id,
       title: res.title,
       artist: creditString(res['artist-credit']),
-      // Carried so a bulk repair can fill a year tag from the same fetch that
-      // produced the tracklist, rather than a second lookup per album.
+      // Lets bulk repair fill year without a second lookup.
       date: res.date ?? null,
       discCount: media.length,
     },

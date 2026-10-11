@@ -1,9 +1,5 @@
-// The seven writable tag fields, shared by the two edit panels so their forms,
-// their labels and their "what will this do" logic can't drift apart.
-//
-// The bounds mirror server/src/lib/tagLimits.js. They are here so the browser
-// catches a typo in the input itself; the server re-checks and stays
-// authoritative, because a number input is trivially bypassed.
+// Writable tag fields shared by both edit panels. Bounds mirror
+// server/src/lib/tagLimits.js for early feedback; the server stays authoritative.
 export const TAG_FIELDS = [
   { key: 'artist', label: 'Artist', type: 'text' },
   { key: 'title', label: 'Title', type: 'text' },
@@ -14,27 +10,17 @@ export const TAG_FIELDS = [
   { key: 'genre', label: 'Genre', type: 'text' },
 ];
 
-// Set once across a whole album. Mirrors ALBUM_WIDE_FIELDS on the server, which
-// rejects title and trackNumber outright — one title across a record is never
-// what anyone means.
+// Mirrors server ALBUM_WIDE_FIELDS (title and trackNumber are rejected there).
 export const ALBUM_WIDE_KEYS = ['artist', 'album', 'year', 'genre', 'disc'];
 export const PER_TRACK_KEYS = ['title', 'trackNumber'];
 
-// Form state is strings throughout, including for the numeric fields: an <input>
-// gives back a string, and keeping one representation avoids a value that is
-// sometimes 3 and sometimes '3' deciding whether a row looks dirty.
+// Form state is always strings, numeric fields too, so 3 vs '3' can't fake dirtiness.
 export function toFormValue(value) {
   return value == null ? '' : String(value);
 }
 
 /**
- * What a form row currently means, relative to the value the file holds.
- *
- * Three outcomes, and the third is the one worth naming: a field that had a value
- * and has been blanked is NOT a change, because editing cannot remove a tag. It
- * has to be reported rather than silently ignored, or blanking a field looks like
- * it worked until the row reappears unchanged.
- *
+ * 'kept': a blanked field is not a change, since editing cannot remove a tag.
  * @returns {'unchanged'|'set'|'kept'}
  */
 export function rowState(current, typed) {
@@ -43,14 +29,7 @@ export function rowState(current, typed) {
   return typed.trim() === original.trim() ? 'unchanged' : 'set';
 }
 
-/**
- * The `fields` body for an edit request: every row the user actually changed.
- *
- * Blanked rows are left out here as well as being dropped server-side. Sending
- * them and relying on the server to ignore them would work, but it would also
- * mean the request said something ("clear the artist") that the app has decided
- * is not a thing it does.
- */
+// Changed rows only; blanked rows are omitted, never sent as "clear".
 export function patchFrom(values, current, keys) {
   const patch = {};
   for (const key of keys) {

@@ -18,9 +18,6 @@ const SORTS = [
   ['added', 'Recently added'],
 ];
 
-// Unlike the artist and album tabs, this one queries the server per page: the
-// whole-library track list is tens of thousands of rows, too many to ship and
-// filter in the browser.
 export default function TracksTab({ onPlay }) {
   const [query, setQuery] = useState('');
   const [debounced, setDebounced] = useState('');
@@ -30,8 +27,7 @@ export default function TracksTab({ onPlay }) {
   const [state, setState] = useState('loading'); // loading | ready | error
   const [error, setError] = useState(null);
   const [editing, setEditing] = useState(null); // track id whose panel is open
-  // Bumped after an edit: the row's own values are what changed, so the page has
-  // to be refetched or it keeps showing what was there before.
+  // Bumped after an edit to refetch the page.
   const [reloadToken, setReloadToken] = useState(0);
 
   // Debounced so typing doesn't fire a request per keystroke.

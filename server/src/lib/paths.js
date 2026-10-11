@@ -3,35 +3,25 @@ import fs from 'node:fs/promises';
 import { config } from '../config.js';
 import { BadRequestError } from './httpErrors.js';
 
-// Throws unless destPath resolves to somewhere inside MUSIC_DIR. Used on the
-// write side (organize.js, guarding a MusicBrainz-sourced filename) and on the
-// read side (the cover and stream routes, guarding a path read back out of the
-// index). Purely lexical — see assertReadableInsideMusicDir for the symlink-safe
-// variant used when the path is about to be opened.
+// Lexical containment in MUSIC_DIR. Use assertReadableInsideMusicDir before opening a file.
 export function assertInsideMusicDir(destPath) {
   const resolvedDest = path.resolve(destPath);
   const resolvedRoot = path.resolve(config.ingest.musicDir);
   if (!resolvedDest.startsWith(resolvedRoot + path.sep)) {
-    // The path is logged, not returned: error messages reach the browser, and
-    // the server's directory layout isn't the client's business.
+    // Logged, not returned: error messages reach the browser.
     console.warn(`paths: refusing to write outside MUSIC_DIR: ${destPath}`);
     throw new BadRequestError('Refusing to write outside the music folder');
   }
   return resolvedDest;
 }
 
-// Symlink-safe containment check for a file we are about to read and serve.
-// A lexical check alone isn't enough here: a symlink inside MUSIC_DIR pointing
-// at /etc/shadow resolves lexically to an in-root path, so the real path has to
-// be the thing that gets tested. Returns the resolved path to open.
+// Symlink-safe (realpath) containment check; returns the real path to open.
 export async function assertReadableInsideMusicDir(filePath) {
   let root;
   try {
     root = await fs.realpath(path.resolve(config.ingest.musicDir));
   } catch {
-    // An unmounted volume makes the root itself unresolvable. Without this the
-    // raw ENOENT escapes as a 500 on every route that reads a file — the same
-    // failure the scanner already guards against before it wipes the index.
+    // Unmounted volume: a clear 400 rather than a raw ENOENT 500.
     console.warn('paths: MUSIC_DIR is not readable');
     throw new BadRequestError('The music folder is not readable');
   }
@@ -47,12 +37,8 @@ export async function assertReadableInsideMusicDir(filePath) {
   return real;
 }
 
-// The write-side containment check for the drop-off folder, and the guard on the
-// one path in this app that deletes files it did not create. Stricter than the
-// MUSIC_DIR equivalent because of that: the root is resolved through realpath so
-// a symlinked DROPOFF_DIR can't point the delete at the music library, and a
-// root that resolves to MUSIC_DIR, to a parent of it, or to the filesystem root
-// is refused outright.
+// Guards the only recursive delete of files we didn't create. Realpaths the root and
+// refuses / and any overlap with MUSIC_DIR.
 export async function assertInsideDropoffDir(destPath) {
   const configured = config.playlist.dropoffDir;
   if (!configured) throw new BadRequestError('No drop-off folder is configured');
@@ -64,13 +50,7 @@ export async function assertInsideDropoffDir(destPath) {
     throw new BadRequestError('The drop-off folder is not readable');
   }
 
-  // Realpath'd like root, so a MUSIC_DIR that is itself a symlink (e.g. onto a
-  // NAS mount) is compared by where it actually points rather than by the
-  // symlink's own lexical path — otherwise DROPOFF_DIR pointed straight at
-  // that same target would not match the string comparison below and the
-  // wipe would land inside the live music library. An unreadable MUSIC_DIR
-  // falls back to a lexical resolve rather than throwing: this function has
-  // to keep working when only DROPOFF_DIR is configured/relevant.
+  // Realpath so a symlinked MUSIC_DIR compares by target; lexical fallback if unreadable.
   let musicRoot = path.resolve(config.ingest.musicDir ?? '');
   if (config.ingest.musicDir) {
     try {
@@ -82,14 +62,7 @@ export async function assertInsideDropoffDir(destPath) {
   if (root === path.parse(root).root) {
     throw new BadRequestError('Refusing to use the filesystem root as a drop-off folder');
   }
-  // Three shapes, not two. Equal and "drop-off is a parent of the music folder"
-  // are the ones that put fs.rm on top of the library; the inverse — a drop-off
-  // folder *inside* MUSIC_DIR — is the one .env.example and the README tell
-  // people not to configure, and it was documented rather than refused. Its
-  // consequences are just as real: the delete lands inside the music root, the
-  // MUSIC_DIR watcher debounces into a full scanLibrary() on every export, and
-  // the copies get indexed as duplicates of the very files they were copied
-  // from.
+  // Equal, parent, or child: all put the delete or the copies inside the library.
   if (musicRoot && (
     root === musicRoot
     || musicRoot.startsWith(root + path.sep)
@@ -98,13 +71,7 @@ export async function assertInsideDropoffDir(destPath) {
     throw new BadRequestError('The drop-off folder must be outside the music folder');
   }
 
-  // No `resolved === root` exemption: the bare root must never pass. A name
-  // that sanitizes to '.' (e.g. ' . ') makes path.join(root, '.') collapse
-  // back to root itself, and letting that through here means
-  // exportToDropoff's fs.rm(dir, { recursive: true, force: true }) deletes
-  // everything in DROPOFF_DIR, not just the one playlist folder. No caller
-  // needs the bare root to pass: dropoffDirFor always appends a segment, and
-  // the per-file check always has a filename.
+  // The bare root must never pass: a name sanitizing to '.' would rm all of DROPOFF_DIR.
   const resolved = path.resolve(destPath);
   if (!resolved.startsWith(root + path.sep)) {
     console.warn(`paths: refusing to write outside DROPOFF_DIR: ${destPath}`);
