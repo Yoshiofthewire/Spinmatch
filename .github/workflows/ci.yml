@@ -44,7 +44,7 @@ jobs:
 
       # No network: upstreams are MockAgent, yt-dlp is mocked at execFile.
       - name: Run server tests
-        run: npm test
+        run: npm run test -w server
 
       - name: Run client tests
         run: npm run test:run -w client
