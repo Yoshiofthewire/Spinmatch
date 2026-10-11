@@ -187,68 +187,72 @@ export default function IngestPanel() {
           {result.matched.length === 0 ? (
             <p className="muted">Nothing was confidently matched this run.</p>
           ) : (
-            <table>
-              <thead>
-                <tr>
-                  <th>File</th><th>Title</th><th>Artist</th>
-                  <th>{isPreview ? 'Would fill' : 'Fields filled'}</th>
-                  <th>{isPreview ? 'Would move to' : 'Moved to'}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {result.matched.map((m) => (
-                  <tr key={m.path}>
-                    <td>{m.name}</td>
-                    <td>{m.title}</td>
-                    <td>{m.artist}</td>
-                    <td>{m.filledFields.join(', ') || 'none (already complete)'}</td>
-                    <td className="muted">{m.movedTo || '—'}</td>
+            <div className="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>File</th><th>Title</th><th>Artist</th>
+                    <th>{isPreview ? 'Would fill' : 'Fields filled'}</th>
+                    <th>{isPreview ? 'Would move to' : 'Moved to'}</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {result.matched.map((m) => (
+                    <tr key={m.path}>
+                      <td>{m.name}</td>
+                      <td>{m.title}</td>
+                      <td>{m.artist}</td>
+                      <td>{m.filledFields.join(', ') || 'none (already complete)'}</td>
+                      <td className="muted">{m.movedTo || '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
 
           <h2>Needs review ({result.needsReview.length})</h2>
           {result.needsReview.length === 0 ? (
             <p className="muted">Nothing needs review this run.</p>
           ) : (
-            <table>
-              <thead>
-                <tr><th>File</th><th>Reason</th><th>Action</th></tr>
-              </thead>
-              <tbody>
-                {result.needsReview.map((r) => (
-                  <Fragment key={r.path}>
-                    <tr>
-                      <td>{r.name}</td>
-                      <td className="muted">{r.reason}</td>
-                      <td>
-                        {r.code === 'no_match' && !isPreview && (
-                          <button
-                            type="button"
-                            onClick={() => setExpandedPath(expandedPath === r.path ? null : r.path)}
-                          >
-                            {expandedPath === r.path ? 'Cancel' : 'Find a match'}
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                    {expandedPath === r.path && !isPreview && (
+            <div className="table-scroll">
+              <table>
+                <thead>
+                  <tr><th>File</th><th>Reason</th><th>Action</th></tr>
+                </thead>
+                <tbody>
+                  {result.needsReview.map((r) => (
+                    <Fragment key={r.path}>
                       <tr>
-                        <td colSpan={3}>
-                          <IngestMatchPicker
-                            item={r}
-                            onResolved={(resolution) => handleResolved(r, resolution)}
-                            onCancel={() => setExpandedPath(null)}
-                          />
+                        <td>{r.name}</td>
+                        <td className="muted">{r.reason}</td>
+                        <td>
+                          {r.code === 'no_match' && !isPreview && (
+                            <button
+                              type="button"
+                              onClick={() => setExpandedPath(expandedPath === r.path ? null : r.path)}
+                            >
+                              {expandedPath === r.path ? 'Cancel' : 'Find a match'}
+                            </button>
+                          )}
                         </td>
                       </tr>
-                    )}
-                  </Fragment>
-                ))}
-              </tbody>
-            </table>
+                      {expandedPath === r.path && !isPreview && (
+                        <tr>
+                          <td colSpan={3}>
+                            <IngestMatchPicker
+                              item={r}
+                              onResolved={(resolution) => handleResolved(r, resolution)}
+                              onCancel={() => setExpandedPath(null)}
+                            />
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </>
       )}

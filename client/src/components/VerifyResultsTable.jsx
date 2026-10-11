@@ -18,43 +18,45 @@ export default function VerifyResultsTable({ results, artist, album }) {
 
   return (
     <>
-      <table className="verify-results-table">
-        <thead>
-          <tr>
-            <th>Track</th>
-            <th>MB Duration</th>
-            <th>YouTube Link</th>
-            <th>YouTube Duration</th>
-            <th>Δ</th>
-            <th>Status</th>
-            <th>Download with MeTube</th>
-          </tr>
-        </thead>
-        <tbody>
-          {pageItems.map((r) => (
-            <tr key={r.position} className={`status-${r.status}`}>
-              <td>{r.title}</td>
-              <td>{formatDuration(r.lengthMs)}</td>
-              <td>
-                {r.video ? (
-                  <span className="verify-result">
-                    <a href={r.video.url} target="_blank" rel="noreferrer">
-                      {r.video.title}
-                    </a>
-                    <CopyButton text={r.video.url} />
-                  </span>
-                ) : (
-                  '—'
-                )}
-              </td>
-              <td>{r.video ? formatDuration(r.video.durationMs) : '—'}</td>
-              <td>{r.deltaSeconds != null ? `${r.deltaSeconds}s` : '—'}</td>
-              <td>{statusLabel(r.status)}</td>
-              <td>{r.video ? <SendToMeTubeButton url={r.video.url} artist={artist} title={r.title} album={album} /> : '—'}</td>
+      <div className="table-scroll">
+        <table className="verify-results-table">
+          <thead>
+            <tr>
+              <th>Track</th>
+              <th>MB Duration</th>
+              <th>YouTube Link</th>
+              <th>YouTube Duration</th>
+              <th>Δ</th>
+              <th>Status</th>
+              <th>Download with MeTube</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {pageItems.map((r) => (
+              <tr key={r.position} className={`status-${r.status}`}>
+                <td>{r.title}</td>
+                <td>{formatDuration(r.lengthMs)}</td>
+                <td>
+                  {r.video ? (
+                    <span className="verify-result">
+                      <a href={r.video.url} target="_blank" rel="noreferrer">
+                        {r.video.title}
+                      </a>
+                      <CopyButton text={r.video.url} />
+                    </span>
+                  ) : (
+                    '—'
+                  )}
+                </td>
+                <td>{r.video ? formatDuration(r.video.durationMs) : '—'}</td>
+                <td>{r.deltaSeconds != null ? `${r.deltaSeconds}s` : '—'}</td>
+                <td>{statusLabel(r.status)}</td>
+                <td>{r.video ? <SendToMeTubeButton url={r.video.url} artist={artist} title={r.title} album={album} /> : '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
       <Pagination page={page} pageCount={pageCount} onChange={setPage} />
     </>
   );
