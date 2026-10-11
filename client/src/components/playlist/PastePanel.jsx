@@ -115,6 +115,7 @@ export default function PastePanel({ playlistId, onAdded }) {
           value={text}
           onChange={(e) => setText(e.target.value)}
           placeholder={'Radiohead - Idioteque\nPortishead - Roads\nMassive Attack - Teardrop'}
+          aria-label="Tracks to match, one per line"
         />
         <div className="bulk-verify-actions">
           <button type="submit" disabled={lines.length === 0 || state === 'loading'}>

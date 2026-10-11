@@ -1,5 +1,6 @@
+import { useTitle } from '../lib/useTitle.js';
 import { useEffect, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { get } from '../api/client.js';
 import SearchBox from '../components/SearchBox.jsx';
 import ResultsGroup from '../components/ResultsGroup.jsx';
@@ -11,19 +12,20 @@ import { useConfig } from '../ConfigContext.jsx';
 import { useOwned } from '../lib/useOwned.js';
 
 export default function SearchPage() {
+  useTitle('Search');
   const [results, setResults] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const navigate = useNavigate();
   const { libraryEnabled } = useConfig();
-  // A link elsewhere in the app (a playlist gap row's "Find this track") can
-  // land here with the search already decided.
-  const [searchParams] = useSearchParams();
-  const initialQuery = searchParams.get('q') ?? '';
+  // The query lives in the URL so Back/Forward restore a search, and links
+  // elsewhere (a playlist gap's "Find this track") can land here with one.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const query = searchParams.get('q') ?? '';
+  const [attempt, setAttempt] = useState(0);
 
   // The library knows instantly whether a result is already on disk, so say so
   // rather than making the user go and check.
-  const owned = useOwned({
+  const { owned, error: ownedError } = useOwned({
     enabled: libraryEnabled,
     albums: (results?.releaseGroups ?? []).map((rg) => ({
       id: rg.mbid, artist: rg.artist, title: rg.title,
@@ -33,36 +35,43 @@ export default function SearchPage() {
     })),
   });
 
-  async function handleSearch(query) {
-    setLoading(true);
-    setError(null);
-    try {
-      const data = await get(`/search?q=${encodeURIComponent(query)}`);
-      setResults(data);
-    } catch (err) {
-      setError(err);
-      setResults(null);
-    } finally {
-      setLoading(false);
-    }
+  // Submitting only writes the URL; the effect below does the fetch. Re-submitting
+  // the same query doesn't change the URL, so it bumps `attempt` instead.
+  function handleSearch(next) {
+    if (next === query) setAttempt((n) => n + 1);
+    else setSearchParams({ q: next });
   }
 
-  // Runs the search once for a query arriving in the URL. Keyed on the param's
-  // *value*, not on `searchParams` itself (a new object every render) or on
-  // `handleSearch` (a new function every render) — either of those would fire
-  // this on every render and hammer /search in a loop. Keying on the string
-  // means it runs once on mount when `?q=` is present, and again only if the
-  // value in the URL genuinely changes, never on an unrelated re-render.
+  // Keyed on the param's string value, not `searchParams` (a new object every
+  // render), so it fetches once per distinct query. `cancelled` drops a slow
+  // response that lands after a newer search.
   useEffect(() => {
-    if (initialQuery) handleSearch(initialQuery);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- deliberately keyed on the value, not on handleSearch's identity
-  }, [initialQuery]);
+    if (!query) {
+      setResults(null);
+      setError(null);
+      setLoading(false);
+      return undefined;
+    }
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    get(`/search?q=${encodeURIComponent(query)}`)
+      .then((data) => { if (!cancelled) setResults(data); })
+      .catch((err) => {
+        if (cancelled) return;
+        setError(err);
+        setResults(null);
+      })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [query, attempt]);
 
   return (
     <div className="search-page">
-      <SearchBox onSearch={handleSearch} loading={loading} initialValue={initialQuery} />
+      <SearchBox onSearch={handleSearch} loading={loading} initialValue={query} />
 
       {error && <p className="banner banner-error">{error.message}</p>}
+      {ownedError && <p className="muted">Couldn&apos;t check which results you own: {ownedError}</p>}
 
       {results && (
         <>
@@ -71,10 +80,10 @@ export default function SearchPage() {
             items={results.artists}
             emptyText="No matching artists."
             renderItem={(a) => (
-              <button className="result-row" onClick={() => navigate(`/artist/${a.mbid}`)}>
+              <Link className="result-row" to={`/artist/${a.mbid}`}>
                 <span>{a.name}</span>
                 {a.disambiguation && <span className="muted"> — {a.disambiguation}</span>}
-              </button>
+              </Link>
             )}
           />
           <ResultsGroup
@@ -82,13 +91,13 @@ export default function SearchPage() {
             items={results.releaseGroups}
             emptyText="No matching albums."
             renderItem={(rg) => (
-              <button className="result-row" onClick={() => navigate(`/release-group/${rg.mbid}`)}>
+              <Link className="result-row" to={`/release-group/${rg.mbid}`}>
                 <CoverArt src={rg.coverArtUrl} alt={rg.title} />
                 <span>
                   {rg.title} <span className="muted">by {rg.artist}</span>
                 </span>
                 <OwnedBadge owned={owned.has(rg.mbid)} />
-              </button>
+              </Link>
             )}
           />
           <ResultsGroup

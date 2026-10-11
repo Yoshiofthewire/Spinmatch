@@ -1,3 +1,4 @@
+import { useTitle } from '../lib/useTitle.js';
 import { useState } from 'react';
 import { changePassword } from '../api/auth.js';
 import { useAuth } from '../AuthContext.jsx';
@@ -6,6 +7,7 @@ import { useAuth } from '../AuthContext.jsx';
 // way to change the credential was to stop the app and edit the database, and
 // that route left every already-issued cookie working for its full 30 days.
 export default function AccountPage() {
+  useTitle('Account');
   const { username } = useAuth();
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');

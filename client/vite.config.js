@@ -20,5 +20,8 @@ export default defineConfig({
     // explicitly, the same way the rest of this codebase avoids ambient
     // globals (see the server suite's plain node:test imports).
     globals: false,
+    // Node 25+ ships its own localStorage, unusable without --localstorage-file,
+    // and it hides jsdom's. Turn it off so tests get the browser one.
+    execArgv: ['--no-experimental-webstorage'],
   },
 });

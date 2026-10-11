@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import EqualizerLoader from '../EqualizerLoader.jsx';
+import ErrorBanner from '../ErrorBanner.jsx';
 import AddTracksPanel from './AddTracksPanel.jsx';
 import { useConfig } from '../../ConfigContext.jsx';
 import { formatBytes, formatDuration } from '../../lib/format.js';
@@ -93,7 +94,10 @@ export default function PlaylistDetail({ id, onPlay, onDeleted }) {
   }
 
   // ---- Item removal ----
+  const [removeConfirmId, setRemoveConfirmId] = useState(null);
+
   async function removeItem(itemId) {
+    setRemoveConfirmId(null);
     setActionError(null);
     try {
       await removePlaylistItem(id, itemId);
@@ -208,7 +212,7 @@ export default function PlaylistDetail({ id, onPlay, onDeleted }) {
   }
 
   if (state === 'loading') return <EqualizerLoader label="Loading playlist…" />;
-  if (state === 'error') return <p className="banner banner-error">{error}</p>;
+  if (state === 'error') return <ErrorBanner message={error} onRetry={load} />;
   if (!playlist) return null;
 
   const gapCount = playlist.items.filter((i) => !i.track).length;
@@ -345,7 +349,14 @@ export default function PlaylistDetail({ id, onPlay, onDeleted }) {
           <div className="bulk-verify-progress">
             <EqualizerLoader />
             <div style={{ flex: 1 }}>
-              <div className="progress-bar">
+              <div
+                className="progress-bar"
+                role="progressbar"
+                aria-label="Files copied"
+                aria-valuemin={0}
+                aria-valuemax={dropoffProgress?.total || undefined}
+                aria-valuenow={dropoffProgress?.total ? dropoffProgress.index : undefined}
+              >
                 <div
                   className="progress-bar-fill"
                   style={{
@@ -388,7 +399,7 @@ export default function PlaylistDetail({ id, onPlay, onDeleted }) {
       {playlist.items.length === 0 ? (
         <p className="muted">This playlist is empty.</p>
       ) : (
-        <table className="library-table playlist-table">
+        <div className="table-scroll"><table className="library-table playlist-table">
           <thead>
             <tr>
               <th aria-label="Reorder" />
@@ -466,14 +477,25 @@ export default function PlaylistDetail({ id, onPlay, onDeleted }) {
                       Find this track
                     </Link>
                   )}
-                  <button type="button" className="link-button" onClick={() => removeItem(item.id)}>
-                    Remove
-                  </button>
+                  {removeConfirmId !== item.id ? (
+                    <button type="button" className="link-button" onClick={() => setRemoveConfirmId(item.id)}>
+                      Remove
+                    </button>
+                  ) : (
+                    <span className="playlist-delete-confirm">
+                      <button type="button" className="chip-button" onClick={() => removeItem(item.id)}>
+                        Confirm remove
+                      </button>
+                      <button type="button" className="link-button" onClick={() => setRemoveConfirmId(null)}>
+                        Cancel
+                      </button>
+                    </span>
+                  )}
                 </td>
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       )}
     </div>
   );

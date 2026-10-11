@@ -381,6 +381,16 @@ button:disabled {
   box-shadow: 0 8px 24px -8px rgba(255, 90, 70, 0.35);
 }
 
+/* Rows and cards that navigate are links (so they open in a new tab) but keep
+   the card look rather than the global link colour and underline. */
+a.result-row,
+a.album-card,
+a.result-row:hover,
+a.album-card:hover {
+  color: var(--text);
+  text-decoration: none;
+}
+
 .album-title {
   font-family: var(--font-display);
   font-weight: 600;
@@ -403,6 +413,11 @@ table {
   width: 100%;
   border-collapse: collapse;
   margin-bottom: 2rem;
+}
+
+/* Wide tables scroll sideways on narrow screens instead of pushing the page wide. */
+.table-scroll {
+  overflow-x: auto;
 }
 
 th, td {
@@ -1090,7 +1105,8 @@ a:hover {
 }
 
 .playlist-input:focus {
-  outline: none;
+  outline: 2px solid var(--lock);
+  outline-offset: 2px;
   border-color: var(--lock);
 }
 
@@ -1156,9 +1172,11 @@ a:hover {
   margin-top: 0.75rem;
 }
 
-.playlist-delete-confirm {
+.playlist-delete-confirm,
+.inline-confirm {
   display: inline-flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 0.5rem;
 }
 
@@ -1550,6 +1568,28 @@ a:hover {
   .player-time { display: none; }
   .album-detail-header { flex-direction: column; }
   .album-detail-header .cover-art { width: 140px; height: 140px; }
+
+  .app { padding: 0 1rem 4rem; }
+  .app-header { padding: 1.75rem 0 1.25rem; }
+  .app-nav { flex-wrap: wrap; gap: 0.5rem 1rem; }
+
+  /* Header and form rows wrap rather than overflow. */
+  .bulk-verify-actions,
+  .search-box,
+  .playlist-create-form,
+  .playlist-rename-form,
+  .ingest-candidate-search,
+  .library-scan,
+  .library-back {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+  .search-box input,
+  .playlist-create-form input,
+  .playlist-rename-form input,
+  .ingest-candidate-search input {
+    min-width: 0;
+  }
 }
 
 /* ---------- Library: health drill-down, duplicates, rescan ---------- */

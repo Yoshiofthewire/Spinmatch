@@ -8,7 +8,10 @@ import AccountPage from './pages/AccountPage.jsx';
 import IngestPage from './pages/IngestPage.jsx';
 import LibraryPage from './pages/LibraryPage.jsx';
 import PlaylistsPage from './pages/PlaylistsPage.jsx';
+import NotFoundPage from './pages/NotFoundPage.jsx';
 import Logo from './components/Logo.jsx';
+import EqualizerLoader from './components/EqualizerLoader.jsx';
+import ErrorBanner from './components/ErrorBanner.jsx';
 import { useConfig } from './ConfigContext.jsx';
 import { useAuth } from './AuthContext.jsx';
 
@@ -17,7 +20,7 @@ function navLinkClass({ isActive }) {
 }
 
 export default function App() {
-  const { ingestEnabled, libraryEnabled } = useConfig();
+  const { ingestEnabled, libraryEnabled, loading, error, retry } = useConfig();
   const { username, logout } = useAuth();
 
   return (
@@ -46,17 +49,25 @@ export default function App() {
         </nav>
       </header>
       <main className="app-main">
-        <Routes>
-          <Route path="/" element={<SearchPage />} />
-          <Route path="/artist/:mbid" element={<ArtistPage />} />
-          <Route path="/release-group/:mbid" element={<AlbumPage />} />
-          {ingestEnabled && <Route path="/ingest" element={<IngestPage />} />}
-          {libraryEnabled && <Route path="/library" element={<LibraryPage />} />}
-          {libraryEnabled && <Route path="/playlists" element={<PlaylistsPage />} />}
-          <Route path="/history" element={<HistoryPage />} />
-          <Route path="/about" element={<AboutPage />} />
-          <Route path="/account" element={<AccountPage />} />
-        </Routes>
+        {/* Routes depend on config, so none render until it has loaded. */}
+        {loading ? (
+          <EqualizerLoader label="Loading…" />
+        ) : error ? (
+          <ErrorBanner message={`Couldn't load settings: ${error.message}`} onRetry={retry} />
+        ) : (
+          <Routes>
+            <Route path="/" element={<SearchPage />} />
+            <Route path="/artist/:mbid" element={<ArtistPage />} />
+            <Route path="/release-group/:mbid" element={<AlbumPage />} />
+            {ingestEnabled && <Route path="/ingest" element={<IngestPage />} />}
+            {libraryEnabled && <Route path="/library" element={<LibraryPage />} />}
+            {libraryEnabled && <Route path="/playlists" element={<PlaylistsPage />} />}
+            <Route path="/history" element={<HistoryPage />} />
+            <Route path="/about" element={<AboutPage />} />
+            <Route path="/account" element={<AccountPage />} />
+            <Route path="*" element={<NotFoundPage />} />
+          </Routes>
+        )}
       </main>
     </div>
   );

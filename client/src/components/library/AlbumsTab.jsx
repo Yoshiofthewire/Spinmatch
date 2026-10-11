@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import Pagination from '../Pagination.jsx';
 import SortSelect from './SortSelect.jsx';
 import LocalCover from './LocalCover.jsx';
@@ -19,7 +20,7 @@ const SORTS = [
   ['added', 'Recently added'],
 ];
 
-export default function AlbumsTab({ sort, onSortChange, onSelect, incomplete, incompleteKeys }) {
+export default function AlbumsTab({ sort, onSortChange, onSelect, albumHref, incomplete, incompleteKeys }) {
   const [onlyIncomplete, setOnlyIncomplete] = useState(false);
 
   // The normal view is server-paged. "Incomplete only" is served from the
@@ -84,9 +85,10 @@ export default function AlbumsTab({ sort, onSortChange, onSelect, incomplete, in
             {albums.map((a) => {
               const isIncomplete = incompleteKeys.has(albumKey(a.artist, a.album));
               return (
-                <button
+                <Link
                   key={albumKey(a.artist, a.album)}
                   className="album-card"
+                  to={albumHref(a)}
                   onClick={() => onSelect(a)}
                 >
                   <LocalCover trackId={a.coverTrackId} alt={a.album} />
@@ -97,7 +99,7 @@ export default function AlbumsTab({ sort, onSortChange, onSelect, incomplete, in
                     {a.totalDurationMs ? ` · ${formatLongDuration(a.totalDurationMs)}` : ''}
                   </span>
                   {isIncomplete && <span className="badge-incomplete">incomplete</span>}
-                </button>
+                </Link>
               );
             })}
           </div>

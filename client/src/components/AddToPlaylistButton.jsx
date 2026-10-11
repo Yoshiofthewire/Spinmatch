@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { listPlaylists, createPlaylist, addPlaylistItems } from '../api/playlists.js';
+import ErrorBanner from './ErrorBanner.jsx';
 
 // A button any track row can drop in to send that one track to a playlist.
 // Deliberately takes bare `artist`/`title`/`album` rather than a whole track
@@ -20,31 +21,42 @@ export default function AddToPlaylistButton({ artist, title, album }) {
   const [addedId, setAddedId] = useState(null);
   const [newName, setNewName] = useState('');
   const [creating, setCreating] = useState(false);
+  const [listError, setListError] = useState(null);
   const boxRef = useRef(null);
+  const triggerRef = useRef(null);
 
-  // Closes on an outside click, like any menu — there is no other way to
-  // dismiss it short of adding to a playlist.
+  // Closes like any menu: an outside click, or Escape (which hands focus back
+  // to the trigger so keyboard users aren't dropped at the top of the page).
   useEffect(() => {
     if (!open) return undefined;
     function onOutside(e) {
       if (boxRef.current && !boxRef.current.contains(e.target)) setOpen(false);
     }
+    function onKey(e) {
+      if (e.key !== 'Escape') return;
+      setOpen(false);
+      triggerRef.current?.focus();
+    }
     document.addEventListener('mousedown', onOutside);
-    return () => document.removeEventListener('mousedown', onOutside);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onOutside);
+      document.removeEventListener('keydown', onKey);
+    };
   }, [open]);
+
+  function loadPlaylists() {
+    setListError(null);
+    listPlaylists()
+      .then((r) => setPlaylists(r.playlists))
+      .catch((err) => setListError(err.message));
+  }
 
   function toggle() {
     setError(null);
     setAddedId(null);
-    setOpen((was) => {
-      const next = !was;
-      if (next && playlists === null) {
-        listPlaylists()
-          .then((r) => setPlaylists(r.playlists))
-          .catch((err) => setError(err.message));
-      }
-      return next;
-    });
+    if (!open && playlists === null) loadPlaylists();
+    setOpen(!open);
   }
 
   async function addTo(playlistId) {
@@ -82,14 +94,16 @@ export default function AddToPlaylistButton({ artist, title, album }) {
 
   return (
     <span className="add-to-playlist" ref={boxRef}>
-      <button type="button" className="chip-button" onClick={toggle} aria-expanded={open}>
+      <button type="button" className="chip-button" onClick={toggle} aria-expanded={open} ref={triggerRef}>
         + Playlist
       </button>
       {open && (
         <div className="add-to-playlist-menu">
-          {error && <p className="banner banner-error">{error}</p>}
+          {error && <p className="banner banner-error" role="alert">{error}</p>}
           {playlists === null ? (
-            <p className="muted">Loading…</p>
+            listError
+              ? <ErrorBanner message={listError} onRetry={loadPlaylists} />
+              : <p className="muted">Loading…</p>
           ) : playlists.length === 0 ? (
             <p className="muted">No playlists yet.</p>
           ) : (

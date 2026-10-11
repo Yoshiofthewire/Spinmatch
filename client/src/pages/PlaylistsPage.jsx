@@ -1,6 +1,8 @@
+import { useTitle } from '../lib/useTitle.js';
 import { useCallback, useEffect, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import EqualizerLoader from '../components/EqualizerLoader.jsx';
+import ErrorBanner from '../components/ErrorBanner.jsx';
 import PlaylistDetail from '../components/playlist/PlaylistDetail.jsx';
 import PlayerBar from '../components/library/PlayerBar.jsx';
 import { listPlaylists, createPlaylist } from '../api/playlists.js';
@@ -11,6 +13,7 @@ import { formatBytes } from '../lib/format.js';
 // makes the browser Back button step out of a playlist instead of leaving
 // the page entirely.
 export default function PlaylistsPage() {
+  useTitle('Playlists');
   const [params, setParams] = useSearchParams();
   const selectedId = params.get('id');
 
@@ -102,7 +105,7 @@ export default function PlaylistsPage() {
           </form>
           {createError && <p className="banner banner-error">{createError}</p>}
 
-          {error && <p className="banner banner-error">{error}</p>}
+          {error && <ErrorBanner message={error} onRetry={load} />}
           {state === 'loading' && <EqualizerLoader label="Loading playlists…" />}
 
           {state === 'ready' && (playlists.length === 0 ? (
@@ -122,9 +125,9 @@ export default function PlaylistsPage() {
                 {playlists.map((p) => (
                   <tr key={p.id}>
                     <td>
-                      <button type="button" className="link-button" onClick={() => openPlaylist(p.id)}>
+                      <Link className="link-button" to={`?id=${p.id}`}>
                         {p.name}
-                      </button>
+                      </Link>
                     </td>
                     <td className="mono">{p.itemCount}</td>
                     <td className="mono">{p.gapCount > 0 ? p.gapCount : <span className="muted">0</span>}</td>

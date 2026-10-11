@@ -1,6 +1,9 @@
+import { useTitle } from '../lib/useTitle.js';
+
 const REPO_URL = 'https://github.com/Yoshiofthewire/Spinmatch';
 
 export default function AboutPage() {
+  useTitle('About');
   return (
     <div className="about-page">
       <h1>About Spinmatch</h1>

@@ -40,6 +40,7 @@ function SeedPicker({ seeds, onAdd, onRemove }) {
   const [debounced, setDebounced] = useState('');
   const [matches, setMatches] = useState([]);
   const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState(null);
 
   useEffect(() => {
     const timer = setTimeout(() => setDebounced(query.trim()), 250);
@@ -47,6 +48,7 @@ function SeedPicker({ seeds, onAdd, onRemove }) {
   }, [query]);
 
   useEffect(() => {
+    setSearchError(null);
     if (!debounced) {
       setMatches([]);
       return undefined;
@@ -58,7 +60,11 @@ function SeedPicker({ seeds, onAdd, onRemove }) {
         if (cancelled) return;
         setMatches(r.artists.filter((a) => !seeds.includes(a.artist)));
       })
-      .catch(() => { if (!cancelled) setMatches([]); })
+      .catch((err) => {
+        if (cancelled) return;
+        setMatches([]);
+        setSearchError(err.message);
+      })
       .finally(() => { if (!cancelled) setSearching(false); });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `seeds` only filters the already-fetched list; refetching on every pick would be wasted round trips
@@ -77,6 +83,7 @@ function SeedPicker({ seeds, onAdd, onRemove }) {
         />
       </label>
       {searching && <span className="muted">Searching…</span>}
+      {searchError && <p className="banner banner-error" role="alert">{searchError}</p>}
       {matches.length > 0 && (
         <ul className="suggest-seed-matches">
           {matches.map((a) => (
