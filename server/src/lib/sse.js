@@ -1,26 +1,7 @@
-// The one server-sent-events lifecycle, shared by every stream this app serves.
-//
-// There were three hand-rolled copies of this — in routes/library.js,
-// routes/verify.js and routes/ingest.js. One of them got fixed and the other two
-// kept every bug the fix was written for:
-//
-//   - `send` wrote to the response without checking whether it was still there.
-//     The client hangs up, `req.on('close')` aborts, and if the in-flight work
-//     then surfaces a non-abort error (a yt-dlp rate limit landing a second
-//     later) the handler wrote an event to a destroyed socket.
-//   - `return res.end()` inside the try, with a `finally` that also calls
-//     `res.end()`, ended the response twice on every early return. Harmless on
-//     today's Node, which no-ops a second end() with no callback, but it is
-//     load-bearing on a detail of a stdlib internal.
-//   - no heartbeat. Every one of these streams is paced by a global 1-req/s
-//     queue, so the gap between events routinely exceeds a reverse proxy's idle
-//     timeout — and the README tells people to run this behind a proxy. The
-//     album verify stream would simply die mid-run.
-//
-// The handler now just does work and emits events; closing is not its problem.
+// Shared SSE lifecycle: the handler only emits events; this owns headers, heartbeat,
+// abort-on-close, the terminal event, and ending the response exactly once.
 
-// Returned by a handler that has already emitted its own terminal event (a
-// validation error) and wants the wrapper to stop without adding `done` on top.
+// Return this when the handler already sent its own terminal event.
 export const STREAM_HANDLED = Symbol('stream-handled');
 
 const HEARTBEAT_MS = 15_000;
@@ -40,16 +21,14 @@ export function sseStream(handler) {
       res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
     };
     const ac = new AbortController();
-    // A comment line keeps the connection warm between real events.
+    // Events are paced at ~1/s; heartbeat beats reverse-proxy idle timeouts.
     const heartbeat = setInterval(() => { if (alive()) res.write(': keep-alive\n\n'); }, HEARTBEAT_MS);
     heartbeat.unref?.();
     // res, not req: a POST's req has already closed once its body was read.
     res.on('close', () => ac.abort());
 
     try {
-      // The handler's return value is the `done` payload: undefined for the
-      // streams that just say "finished", a summary object for the ones that
-      // have totals to report.
+      // The handler's return value is the `done` payload.
       const summary = await handler({ req, send, signal: ac.signal });
       if (!ac.signal.aborted && summary !== STREAM_HANDLED) send('done', summary ?? {});
     } catch (err) {

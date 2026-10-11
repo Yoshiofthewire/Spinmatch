@@ -2,17 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { listPlaylists, createPlaylist, addPlaylistItems } from '../api/playlists.js';
 import ErrorBanner from './ErrorBanner.jsx';
 
-// A button any track row can drop in to send that one track to a playlist.
-// Deliberately takes bare `artist`/`title`/`album` rather than a whole track
-// object: the callers span owned rows (TracksTab), release tracklists that
-// may not be owned yet (TrackList on the album page) and search results
-// (SearchPage) — the one thing all of them can always supply.
-//
-// A track that doesn't resolve to a local file still gets added; it just
-// lands in the playlist as a gap, the same as an unmatched paste line or an
-// exhausted suggestion — PlaylistDetail already renders that case with a
-// working Find-on-YouTube link, so there is nothing extra for this button to
-// handle.
+// Takes bare artist/title/album so owned, unowned and search rows can all use it.
+// An unresolved track is added as a gap.
 export default function AddToPlaylistButton({ artist, title, album }) {
   const [open, setOpen] = useState(false);
   const [playlists, setPlaylists] = useState(null); // null until first fetched
@@ -26,8 +17,7 @@ export default function AddToPlaylistButton({ artist, title, album }) {
   const boxRef = useRef(null);
   const triggerRef = useRef(null);
 
-  // Closes like any menu: an outside click, or Escape (which hands focus back
-  // to the trigger so keyboard users aren't dropped at the top of the page).
+  // Outside click or Escape closes; Escape returns focus to the trigger.
   useEffect(() => {
     if (!open) return undefined;
     function onOutside(e) {
@@ -94,8 +84,7 @@ export default function AddToPlaylistButton({ artist, title, album }) {
       setNewName('');
       await addTo(created.id);
     } catch (err) {
-      // Most likely a 409 on a duplicate name — the server owns that rule,
-      // same as PlaylistsPage's own create form.
+      // Likely a 409 duplicate name; the server owns that rule.
       setError(err.message);
     } finally {
       setCreating(false);

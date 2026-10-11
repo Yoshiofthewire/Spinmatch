@@ -4,8 +4,7 @@ import path from 'node:path';
 import { config } from '../config.js';
 import { makeDupKey, makeMatchKey, makeTitleKey } from './normalize.js';
 
-// Bumped when local_tracks gains columns that existing rows need backfilled or
-// re-read from disk. migrate() below is what actually reacts to the change.
+// Bump with a matching step in migrate().
 const SCHEMA_VERSION = 8;
 
 const SCHEMA = `
@@ -168,16 +167,8 @@ CREATE TABLE IF NOT EXISTS playlist_items (
 );
 `;
 
-// Applied after migrate(), never as part of SCHEMA: on an upgraded install the
-// columns these index don't exist until the migration has added them, and
-// CREATE INDEX would fail with "no such column" before it ever ran.
-//
-// Every read starts `WHERE removed = 0`, so these are partial indexes on that
-// predicate: a plain index on (artist) can't serve a query filtered on `removed`
-// as well, which left the browse and health queries doing full table scans. The
-// health predicates get their own, because those columns being NULL is exactly
-// what the Health tab counts and a full scan per counter is what made opening
-// the Library page block the event loop.
+// After migrate(): upgraded installs lack these columns until it runs.
+// Partial on `removed = 0` because every read filters on it.
 const INDEXES = `
 CREATE INDEX IF NOT EXISTS idx_lt_live_artist ON local_tracks(artist) WHERE removed = 0;
 CREATE INDEX IF NOT EXISTS idx_lt_live_album  ON local_tracks(album)  WHERE removed = 0;
@@ -217,9 +208,7 @@ DROP INDEX IF EXISTS idx_lt_live_no_album;
 DROP INDEX IF EXISTS idx_lt_live_no_title;
 `;
 
-// Columns added to local_tracks after v1 shipped. CREATE TABLE IF NOT EXISTS
-// won't touch a table that already exists, so an upgraded install needs these
-// applied by hand. Kept in sync with the SCHEMA definition above.
+// Post-v1 columns for upgraded installs; keep in sync with SCHEMA.
 const V2_TRACK_COLUMNS = [
   ['track_number', 'INTEGER'],
   ['disc', 'INTEGER'],
@@ -237,15 +226,12 @@ const V2_STATS_COLUMNS = [
   ['total_bytes', 'INTEGER'],
 ];
 
-// v6: records whether album/title were read from the file or derived from its
-// path. See the note on the columns in SCHEMA.
 const V6_TRACK_COLUMNS = [
   ['album_synthesized', 'INTEGER NOT NULL DEFAULT 0'],
   ['title_synthesized', 'INTEGER NOT NULL DEFAULT 0'],
   ['dup_key', 'TEXT'],
 ];
 
-// v7: the keys playlist items resolve through. See the note on them in SCHEMA.
 const V7_TRACK_COLUMNS = [
   ['match_key', 'TEXT'],
   ['title_key', 'TEXT'],
@@ -267,55 +253,30 @@ export function migrate(db) {
     addMissingColumns(db, 'local_tracks', V2_TRACK_COLUMNS);
     addMissingColumns(db, 'collection_stats', V2_STATS_COLUMNS);
 
-    // Order matters. added_at has to be seeded from the existing updated_at
-    // BEFORE the re-tag below rewrites updated_at, or every track's "added"
-    // date collapses to the upgrade timestamp with no way to recover it.
+    // Seed added_at before the rescan below rewrites updated_at.
     db.exec('UPDATE local_tracks SET added_at = updated_at WHERE added_at IS NULL');
 
-    // The new columns are empty for every existing row, and the scanner skips
-    // files whose change_key still matches (libraryScanner.js), so without this
-    // they would stay empty forever. Clearing the key forces exactly one
-    // full re-read of tags on the next scan; the file contents are untouched.
+    // Clearing change_key forces one tag re-read to fill the new columns.
     db.exec("UPDATE local_tracks SET change_key = '' WHERE removed = 0");
   }
 
   if (current < 3) {
-    // verified_tracks was created by the original MVP schema and never read or
-    // written. Its shape (one row per *owned* file, requiring both a MusicBrainz
-    // recording id and a YouTube URL) doesn't match any flow the app has:
-    // verification runs against tracks you don't own. Dropping it rather than
-    // leaving a dead table for a future reader to puzzle over.
+    // Unused table.
     db.exec('DROP TABLE IF EXISTS verified_tracks');
   }
 
   if (current < 4) {
     addMissingColumns(db, 'app_auth', [['token_epoch', 'INTEGER NOT NULL DEFAULT 0']]);
-    // Tokens issued before this column existed carry no epoch, and must not
-    // validate against the default of 0 — otherwise the column revokes nothing
-    // on the very upgrade that introduces it. Starting an existing install at 1
-    // invalidates every token the old code handed out, exactly once.
+    // Start existing installs at 1 so pre-epoch tokens (read as 0) are revoked.
     if (current > 0) db.exec('UPDATE app_auth SET token_epoch = 1 WHERE token_epoch = 0');
   }
 
-  // v5 adds verified_links and library_similar_cache. Both are created by
-  // SCHEMA, which openDb runs before migrate(), so an upgraded install already
-  // has them by the time this is reached — and both are caches, so there is
-  // nothing to backfill. The bump exists to record that this install is on 5.
+  // v5: new tables only, created by SCHEMA; nothing to backfill.
 
   if (current < 6) {
     addMissingColumns(db, 'local_tracks', V6_TRACK_COLUMNS);
-    // Whether an existing row's album/title came from a tag or from its path is
-    // not recoverable from the row — the scanner wrote the fallback into the
-    // same column and kept no record. The only source of truth is the file, so
-    // clearing change_key forces exactly one re-read of tags on the next scan,
-    // the same one-time cost (and the same mechanism) as the v2 backfill. Until
-    // that scan lands the two new counts read zero, which is what they read
-    // before this migration anyway.
-    //
-    // Track numbers are clamped on that same re-read. An existing row can hold
-    // the out-of-range value that crashed findIncompleteAlbums, so the ones
-    // already stored are cleared here rather than left to the rescan — the
-    // Library page has to survive being opened before the scan finishes.
+    // Synthesized flags need a tag re-read (change_key cleared below). Out-of-range
+    // numbers are nulled now so the Library page is safe before that rescan.
     db.exec(`UPDATE local_tracks SET track_number = NULL
              WHERE track_number IS NOT NULL AND (track_number < 1 OR track_number > 999)`);
     db.exec(`UPDATE local_tracks SET disc = NULL
@@ -327,10 +288,7 @@ export function migrate(db) {
 
   if (current < 7) {
     addMissingColumns(db, 'local_tracks', V7_TRACK_COLUMNS);
-    // Unlike the v2 and v6 backfills, this one reads no files: both keys are a
-    // pure function of artist and title, which are already in the table. So
-    // change_key is deliberately NOT cleared — forcing a full rescan of a large
-    // library to compute something already derivable would be pure waste.
+    // Derived from stored columns, so no rescan.
     const rows = db.prepare('SELECT id, artist, title FROM local_tracks').all();
     const update = db.prepare('UPDATE local_tracks SET match_key = ?, title_key = ? WHERE id = ?');
     for (const row of rows) {
@@ -368,32 +326,20 @@ export function openDb(dbPath) {
     fs.mkdirSync(path.dirname(dbPath), { recursive: true });
   }
   const db = new DatabaseSync(dbPath);
-  // First, before anything that touches the file. The scan runs in a worker
-  // thread holding its own connection, and that connection takes a brief
-  // exclusive lock when it checkpoints the WAL on close — so opening a
-  // connection can collide with a scan finishing. Set last, the collision landed
-  // on `PRAGMA journal_mode` (the first statement here that reads the file) with
-  // no timeout yet in force, and a plain read failed outright with SQLITE_BUSY
-  // instead of waiting the 5s this line exists to allow.
+  // First: the scan worker's WAL checkpoint on close can lock the file.
   db.exec('PRAGMA busy_timeout = 5000;');
   db.exec('PRAGMA foreign_keys = ON;');
-  // WAL lets dashboard reads run without blocking behind a long library scan
-  // (and vice-versa); NORMAL sync is the standard, safe WAL pairing. Harmless
-  // no-op for the in-memory DB used by tests.
+  // WAL: reads don't block behind a scan.
   db.exec('PRAGMA journal_mode = WAL;');
   db.exec('PRAGMA synchronous = NORMAL;');
   db.exec(SCHEMA);
-  // A fresh DB gets every column from SCHEMA, so migrate() finds nothing to
-  // alter and just stamps the version. Only an upgraded install does real work.
-  // IMMEDIATE takes the write lock before reading schema_version, so a second
-  // connection waits (busy_timeout) and then sees the finished migration.
+  // IMMEDIATE: a second connection waits, then sees the finished migration.
   withTransaction(db, () => migrate(db), 'IMMEDIATE');
   db.exec(INDEXES);
   return db;
 }
 
-// Runs fn inside a single transaction, rolling back on error. node:sqlite has
-// no db.transaction() helper, so this is the manual BEGIN/COMMIT/ROLLBACK.
+// node:sqlite has no db.transaction() helper.
 export function withTransaction(db, fn, mode = 'DEFERRED') {
   db.exec(`BEGIN ${mode}`);
   try {

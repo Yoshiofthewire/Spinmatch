@@ -7,9 +7,7 @@ import {
   getArtistDiscography, linkArtist, unlinkArtist, artistMissingStreamUrl,
 } from '../../api/library.js';
 
-// The MusicBrainz-backed half of missing detection. Deliberately opt-in: it runs
-// on a button press, not on mount, so a slow or unreachable upstream never
-// blocks the artist view from rendering what's on disk.
+// Opt-in MusicBrainz discography check, so a slow upstream never blocks the view.
 export default function DiscographyPanel({ artist }) {
   const [state, setState] = useState('idle'); // idle | loading | ready | error
   const [data, setData] = useState(null);
@@ -32,9 +30,7 @@ export default function DiscographyPanel({ artist }) {
     await load();
   }
 
-  // The match is remembered, including one the app picked automatically. If it
-  // picked wrong, the discography below is wrong and nothing else would ever
-  // revisit it — so offer a way to forget it and look again.
+  // Matches are remembered, even automatic ones; offer a way to forget a wrong one.
   async function forgetMatch() {
     await unlinkArtist(artist);
     await load();
@@ -94,10 +90,7 @@ export default function DiscographyPanel({ artist }) {
 
       {state === 'ready' && !data.unresolved && (
         <>
-          {/* A joined credit like "Nine Inch Nails / Stephen Morris" only
-              resolves through its lead artist. Saying so matters: without it the
-              panel shows a discography that plainly belongs to a different name
-              than the one you clicked, which reads as a bug rather than a match. */}
+          {/* Joined credits resolve through their lead artist; say so. */}
           {data.via && (
             <p className="muted">
               Matched through <strong>{data.via}</strong> — “{artist}” is a joined
@@ -132,12 +125,7 @@ export default function DiscographyPanel({ artist }) {
             </div>
           )}
 
-          {/* One action for the whole discography gap, the same panel the album
-              view uses for one record. Opt-in on a press: this is a rate-limited
-              lookup per track across every missing album, so it is minutes of
-              work and must never start on its own. The track total isn't known
-              up front — see the sweep's 'album' events — so the panel reports
-              which record it's on instead. */}
+          {/* Opt-in: a rate-limited lookup per missing track, minutes of work. */}
           {data.missing.length > 0 && (
             <BulkVerifyPanel
               artist={artist}

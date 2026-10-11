@@ -31,21 +31,15 @@ const TABS = [
 
 export default function LibraryPage() {
   useTitle('Library');
-  // Which tab is open and how far the user has drilled into it lives in the
-  // query string, not in component state: that is what makes the browser Back
-  // button step back through the library instead of leaving the app entirely.
-  // Query params rather than path params because artist and album names
-  // routinely contain slashes, which path params handle badly.
+  // Tab and drill-down live in the query string so Back works; query, not path,
+  // params because names contain slashes.
   const [params, setParams] = useSearchParams();
   const tab = params.get('tab') ?? 'overview';
   const selectedArtist = params.get('artist');
   const albumTitle = params.get('album');
   const albumArtist = params.get('albumArtist');
 
-  // The grids hand over a whole album row (cover, year); the URL can only carry
-  // its identity. Remember the last one clicked so a normal click keeps the
-  // extras, and fall back to the bare identity on a reload or a Back into the
-  // page — AlbumDetail only needs artist and album to fetch the rest.
+  // Last-clicked album row's extras; the URL carries only artist+album.
   const [albumMeta, setAlbumMeta] = useState(null);
   const selectedAlbum = useMemo(() => {
     if (!albumTitle) return null;
@@ -68,17 +62,12 @@ export default function LibraryPage() {
 
   const [playing, setPlaying] = useState(null); // {track, queue}
 
-  // showLoading=false is for refreshes triggered by an action inside a tab (a tag
-  // fix, a targeted rescan). Flipping to the global loading state would unmount
-  // the tab and throw away where the user was — the open drill-down, the album
-  // they were looking at — which is jarring for what is just a counter update.
+  // showLoading=false for in-tab refreshes: the loading state would unmount the tab.
   async function load({ showLoading = true } = {}) {
     if (showLoading) setState('loading');
     setError(null);
     try {
-      // Only what the page frame itself needs. Every tab that shows a list —
-      // artists, albums, tracks — fetches its own page from the server, so
-      // opening the Library no longer pulls the whole collection down first.
+      // Frame data only; each tab fetches its own pages.
       const [s, inc, h] = await Promise.all([
         getLibraryStats(),
         getIncompleteAlbums(),
@@ -117,12 +106,7 @@ export default function LibraryPage() {
     [incomplete],
   );
 
-  // Every move within the page is a push onto the history stack, so Back undoes
-  // exactly one step of it: album → artist → tab.
-  //
-  // `replace` is for the one move that isn't navigation: renaming the album you
-  // are looking at. Pushing there would leave a history entry pointing at a name
-  // that no longer resolves, so Back would land on an empty tracklist.
+  // Each move pushes history. `replace` is for renames, whose old URL no longer resolves.
   function paramsFor({ tab: nextTab = tab, artist = null, album = null }) {
     const next = { tab: nextTab };
     if (artist) next.artist = artist;
@@ -137,8 +121,7 @@ export default function LibraryPage() {
     setParams(paramsFor(where), { replace });
   }
 
-  // Drill-downs render as links to these, so they can open in a new tab. The
-  // link's onClick only remembers the album row (setAlbumMeta); the link navigates.
+  // Drill-downs are links to these; onClick only remembers the album row.
   const artistHref = (artist) => `?${new URLSearchParams(paramsFor({ artist }))}`;
   const albumHref = (album) => `?${new URLSearchParams(paramsFor({ artist: selectedArtist, album }))}`;
 
@@ -151,18 +134,12 @@ export default function LibraryPage() {
     go({ artist: selectedArtist, album });
   }
 
-  // An album's identity in this app is its (artist, album) string pair — there is
-  // no album table and no album id. So renaming either one doesn't edit the album
-  // being viewed, it makes the album being viewed cease to exist: ?album= still
-  // names the old title, getAlbumTracks matches nothing, and the page reads as
-  // "the album vanished". Following the rename is what keeps that from happening.
+  // An album's identity is its (artist, album) pair, so a rename must update the URL.
   function albumRenamed(next) {
     const moved = { ...selectedAlbum, ...next };
     setAlbumMeta(moved);
     go({
-      // The artist crumb has to move too when the drill-down came from the very
-      // artist that was just renamed, or Back goes to an artist page with nothing
-      // on it.
+      // Move the artist crumb too if that artist was renamed.
       artist: selectedArtist && selectedArtist === selectedAlbum.artist ? next.artist : selectedArtist,
       album: moved,
       replace: true,
@@ -292,11 +269,7 @@ export default function LibraryPage() {
               {tab === 'duplicates' && (
                 <DuplicatesTab onPlay={(track, queue) => setPlaying({ track, queue })} />
               )}
-              {/* The one tab that looks outward — opt-in, since it walks the
-                  rate-limited MusicBrainz queue. Playlist reconstruction used
-                  to live here too (PastePanel, now under the Playlists page):
-                  two places that built a playlist and only one that could
-                  save it would be worse than moving it. */}
+              {/* Opt-in: walks the rate-limited MusicBrainz queue. */}
               {tab === 'discover' && <DiscoveryPanel />}
             </>
           )}

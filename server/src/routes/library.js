@@ -44,23 +44,13 @@ libraryRouter.get('/stats', (req, res) => {
 });
 
 const MAX_PAGE_SIZE = 200;
-// A pasted playlist is matched entirely offline, but it still allocates a query
-// per line, so it gets a ceiling like every other list this API accepts.
 const MAX_PLAYLIST_LINES = 500;
 
 function str(value) {
   return value ? String(value) : undefined;
 }
 
-// Paging helpers shared by every list endpoint, so "limit" means the same thing
-// and is capped the same way everywhere.
-//
-// The floor matters as much as the ceiling. `Math.min(Number(limit) || default,
-// MAX)` looks like a cap and isn't one: -1 is truthy, so it survived `||`, and
-// Math.min then happily chose it — and SQLite reads a negative LIMIT as "no
-// upper bound". `?limit=-1` returned every row in the table from every list
-// endpoint, which is the exact thing MAX_PAGE_SIZE exists to prevent. Anything
-// that isn't a positive finite number now falls back to the default.
+// The floor matters: SQLite reads a negative LIMIT as unbounded.
 function positiveInt(value, fallback, max) {
   const n = Number(value);
   if (!Number.isFinite(n) || n <= 0) return fallback;
@@ -115,22 +105,9 @@ libraryRouter.get('/album-tracks', (req, res, next) => {
   }
 });
 
-// The only Content-Types the cover endpoint will emit. Anything else a file
-// claims is served as an opaque download.
 const IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/bmp']);
 
-// Extracted art, keyed on the file identity the ETag is already built from.
-//
-// The ETag alone only helps a client that has seen the image before. A first
-// paint of a 24-card album grid is 24 cold requests, and each one ran a
-// synchronous taglib parse of a whole audio file on the main thread — they do
-// not overlap, they queue, so the grid's covers arrive serialized behind each
-// other while every other request waits its turn too.
-//
-// Bounded by bytes rather than entries, for the same reason the cover-art
-// download cache is: these values are Buffers of wildly different sizes. A null
-// is cached too — "this track has no art" costs a tag parse *and* a directory
-// scan to rediscover, which is the most wasteful miss of the three.
+// Cold taglib parses are synchronous and serialize a grid's covers. Byte-bounded; null (no art) is cached too.
 const coverCache = new TTLCache({
   maxEntries: 512,
   maxBytes: 64 * 1024 * 1024,
@@ -138,26 +115,12 @@ const coverCache = new TTLCache({
 });
 const COVER_TTL_MS = 60 * 60 * 1000;
 
-// Album art, read on demand rather than extracted to disk during the scan. Only
-// the covers actually on screen are ever read, so a 2,000-album grid costs one
-// tag read per visible card. Cached hard: the art can only change if the file
-// does, and a changed file gets a new id-independent mtime anyway.
 libraryRouter.get('/cover/:trackId', async (req, res, next) => {
   try {
     const track = getTrackById(getDb(), Number(req.params.trackId));
     if (!track) throw new NotFoundError('Track not found');
 
-    // The validator is set — and answered — before anything touches the disk.
-    // Art can only change if the file does, and a changed file has a new mtime,
-    // so the indexed row alone is enough to answer a conditional request. Doing
-    // this up front is what makes the ETag worth having: it skips both the tag
-    // parse and the sidecar directory scan below, rather than skipping neither.
-    //
-    // It used to be set on the way out, and on the no-art path that was purely
-    // decorative: the comment promised a 304 on re-visit, but res.end() does no
-    // freshness checking (only res.send() does), so every repeat request
-    // re-parsed the file and re-scanned its folder to rediscover that there is
-    // still no cover.
+    // Answered before touching disk: art only changes with mtime/size. res.end() won't 304 by itself.
     const identity = `${track.mtimeMs ?? 0}-${track.sizeBytes ?? 0}`;
     res.set('ETag', `"${identity}"`);
     res.set('Cache-Control', 'private, max-age=86400');
@@ -166,38 +129,21 @@ libraryRouter.get('/cover/:trackId', async (req, res, next) => {
       return;
     }
 
-    // Keyed on the same identity as the ETag: art can only change if the file
-    // does, and a changed file has a new mtime, so a hit here is never stale.
     const cacheKey = `${track.id}:${identity}`;
     let cover = coverCache.get(cacheKey);
     if (cover === undefined) {
       const real = await assertReadableInsideMusicDir(track.path);
-      // Embedded art first, then a cover/folder/front image beside the audio —
-      // plenty of libraries store art that way and would otherwise show nothing.
-      // A file taglib can't parse (truncated, corrupt, or mislabelled) throws
-      // rather than returning null. That must not fail the request: art is
-      // best-effort, and a broken file is exactly the case where the cover image
-      // beside it is the only art available. The Health tab is where unreadable
-      // files get reported.
+      // An unparseable file falls through to sidecar art rather than failing.
       const embedded = await readCoverArt(real).catch(() => null);
       cover = embedded ?? (await readSidecarCover(dirname(real)));
       coverCache.set(cacheKey, cover, COVER_TTL_MS);
     }
     if (!cover) {
-      // 204 rather than 404: "this album has no art" is a normal answer, not an
-      // error. The client's <img> falls back to the placeholder either way, but
-      // a 204 is cacheable and doesn't log a console error for every artless
-      // album in the grid — and sidecar art can't be ruled out without looking,
-      // so an artless album is always one wasted request.
+      // 204: no art is a normal answer, and doesn't log a console error per card.
       res.status(204).end();
       return;
     }
-    // The mime type of embedded art comes out of the file's own tag, i.e. from a
-    // file the user downloaded from who-knows-where, and it is an arbitrary
-    // string. Serving it verbatim let any track in the library decide the
-    // Content-Type of a response on this origin — `text/html` or
-    // `image/svg+xml` being the interesting choices. Whitelist it the same way
-    // the sidecar reader already does.
+    // Embedded mime type is file-controlled (text/html, image/svg+xml): whitelist it.
     res.set('Content-Type', IMAGE_TYPES.has(cover.mimeType) ? cover.mimeType : 'application/octet-stream');
     res.send(cover.bytes);
   } catch (err) {
@@ -213,18 +159,8 @@ const CONTENT_TYPES = {
   ogg: 'audio/ogg',
 };
 
-// Streams a local file for the preview player. The path is read back out of the
-// index by id and never accepted from the client, then re-validated through
-// realpath so a symlink planted inside MUSIC_DIR can't be used to read
-// arbitrary files.
-//
-// res.sendFile, not createReadStream().pipe(res): pipe() does not forward the
-// source's errors, and an unhandled 'error' on a ReadStream is an uncaught
-// exception that takes the whole process down. A file that vanishes between the
-// containment check and the open — or a read error part-way through, which is
-// routine on the network mounts music libraries live on — must be a failed
-// request, not an outage. sendFile also brings Range (206/416), ETag and
-// Last-Modified, which the hand-rolled version had to reimplement.
+// Path comes from the index by id, re-validated via realpath against planted symlinks.
+// sendFile, not pipe(): an unhandled ReadStream error under pipe() crashes the process.
 libraryRouter.get('/stream/:trackId', async (req, res, next) => {
   try {
     const track = getTrackById(getDb(), Number(req.params.trackId));
@@ -239,8 +175,7 @@ libraryRouter.get('/stream/:trackId', async (req, res, next) => {
       },
     }, (err) => {
       if (!err) return;
-      // The client hung up (seeked, skipped, closed the tab) — normal, and the
-      // response is already gone, so there is nothing to report.
+      // Client hung up; nothing to report.
       if (err.code === 'ECONNABORTED' || res.headersSent) return;
       next(err);
     });
@@ -268,12 +203,7 @@ libraryRouter.get('/missing', sameOriginOnly, async (req, res, next) => {
   }
 });
 
-// Streaming counterpart to /missing?verify=1: emits one `result` per missing
-// track as its ~1/sec YouTube lookup lands. Same shape as
-// /api/verify/album/:mbid/stream so the client reuses one panel, but scoped to
-// the tracks you don't already own instead of the whole tracklist. GET for
-// EventSource; no `album` event because the caller already knows the count from
-// the unverified pass it just rendered.
+// Streaming /missing?verify=1; same events as /api/verify/album/:mbid/stream, minus `album`.
 libraryRouter.get('/missing/stream', sameOriginOnly, sseStream(async ({ req, send, signal }) => {
   const releaseGroup = str(req.query.releaseGroup);
   if (!isMbid(releaseGroup)) {
@@ -288,27 +218,21 @@ libraryRouter.get('/missing/stream', sameOriginOnly, sseStream(async ({ req, sen
   return undefined;
 }));
 
-// Every track of every album this artist has that you don't, looked up on
-// YouTube in one run. The album-scoped stream above does one record; this walks
-// the whole discography gap, which is minutes of 1-req/s lookups — hence the
-// same streaming shape, and hence verified_links, so a restart doesn't discard
-// the run so far.
+// Whole-discography sweep: minutes of 1-req/s lookups, persisted in verified_links across restarts.
 libraryRouter.get('/artist-missing/stream', sameOriginOnly, sseStream(async ({ req, send, signal }) => {
   const artist = str(req.query.artist);
   if (!artist) {
     send('error', { code: 'BAD_REQUEST', message: 'an artist is required' });
     return STREAM_HANDLED;
   }
-  // The summary becomes the `done` payload — this stream has totals to report,
-  // where the album-scoped one above just signals completion.
+  // The summary becomes the `done` payload.
   return sweepArtistMissing(artist, {
     signal,
     onEvent: (event, data) => send(event, data),
   });
 }));
 
-// Offline reports. No upstream calls, so these keep working when MusicBrainz
-// doesn't — which is the whole point of splitting them out.
+// Offline: no upstream calls, so these survive a MusicBrainz outage.
 libraryRouter.get('/incomplete', (req, res) => {
   res.json({ albums: findIncompleteAlbums(getDb()) });
 });
@@ -317,8 +241,6 @@ libraryRouter.get('/health', (req, res) => {
   res.json(findHealthIssues(getDb()));
 });
 
-// The tracks behind one Health count, so the report can be acted on rather than
-// just read. Paged: "no embedded cover art" can match most of a library.
 libraryRouter.get('/health-tracks', (req, res, next) => {
   try {
     const issue = str(req.query.issue);
@@ -334,9 +256,6 @@ libraryRouter.get('/duplicates', (req, res) => {
   res.json({ groups: findDuplicateGroups(getDb()) });
 });
 
-// Which of the given albums/recordings are already in the library. POST because
-// a page asks about a few dozen names at once, which is a body, not a query
-// string. Offline, so search results stay badgeable when MusicBrainz is down.
 const MAX_OWNED_ITEMS = 500;
 
 libraryRouter.post('/owned', (req, res, next) => {
@@ -352,8 +271,7 @@ libraryRouter.post('/owned', (req, res, next) => {
   }
 });
 
-// MusicBrainz-backed. Opt-in per artist (the client only calls this on a button
-// press) so a slow or failing upstream never blocks a page render.
+// MusicBrainz-backed: button-triggered only, never on page render.
 libraryRouter.get('/discography', async (req, res, next) => {
   try {
     const artist = str(req.query.artist);
@@ -364,9 +282,7 @@ libraryRouter.get('/discography', async (req, res, next) => {
   }
 });
 
-// Checks one owned album against its MusicBrainz tracklist. Catches missing
-// tracks the offline track-number check can't see, e.g. owning 1..10 of a
-// 12-track album. Opt-in per album, same reasoning as /discography.
+// Catches what the offline check can't, e.g. owning 1..10 of a 12-track album.
 libraryRouter.get('/album-gaps', async (req, res, next) => {
   try {
     const artist = str(req.query.artist);
@@ -378,15 +294,7 @@ libraryRouter.get('/album-gaps', async (req, res, next) => {
   }
 });
 
-// Names the track at one (disc, position) of an album, so a gap row in the local
-// tracklist can be looked up. Resolve only — the YouTube half is POST /api/verify,
-// which the client already drives from VerifyButton.
-//
-// Two endpoints rather than one on purpose: the two halves sit behind separate
-// 1-req/s limiters, so combining them would make one request wait on both and
-// fail for two unrelated reasons. Cheap to call per row because mbFetch caches on
-// the request URL for an hour — the second and third gap row of the same album
-// cost no upstream call at all.
+// Resolve only; the YouTube half is POST /api/verify, behind its own rate limiter.
 libraryRouter.get('/missing-track', async (req, res, next) => {
   try {
     const album = str(req.query.album);
@@ -402,8 +310,6 @@ libraryRouter.get('/missing-track', async (req, res, next) => {
   }
 });
 
-// Tag repair for a file already in the library. MusicBrainz-backed, so opt-in
-// per track like the panels above.
 libraryRouter.get('/fix-candidates/:trackId', async (req, res, next) => {
   try {
     res.json(await getFixCandidates(Number(req.params.trackId)));
@@ -412,10 +318,7 @@ libraryRouter.get('/fix-candidates/:trackId', async (req, res, next) => {
   }
 });
 
-// The same repair, identified by the file's audio instead of its metadata.
-// Separate from the route above rather than a flag on it, because this one
-// spawns fpcalc and spends an AcoustID call — the client asks for it by button,
-// not on every panel it opens.
+// Separate route: spawns fpcalc and spends an AcoustID call.
 libraryRouter.get('/fingerprint-candidates/:trackId', async (req, res, next) => {
   try {
     res.json(await getFingerprintCandidates(Number(req.params.trackId)));
@@ -424,11 +327,7 @@ libraryRouter.get('/fingerprint-candidates/:trackId', async (req, res, next) => 
   }
 });
 
-// Writes tags to a file in place. Never moves or renames it, and by default only
-// fills fields that are currently empty. `overwrite` opts into replacing tags
-// that disagree with the chosen recording, and `replaceCoverArt` does the same
-// for the embedded picture — separately, since they're separate decisions.
-// See libraryFix.js.
+// Fills empty fields only unless `overwrite` / `replaceCoverArt` opt in. Never renames.
 libraryRouter.post('/fix', async (req, res, next) => {
   try {
     const trackId = Number(req.body?.trackId);
@@ -445,14 +344,8 @@ libraryRouter.post('/fix', async (req, res, next) => {
   }
 });
 
-// Tag values a person typed, which makes these the two endpoints where the
-// browser does dictate what gets written — the deliberate exception to the rule
-// stated above /bulk-fix/apply below. services/tagEdit.validateTagEdit is the
-// whole of the control, and it lives inside the service rather than here so a
-// future caller can't arrive and skip it.
-//
-// PATCH because this is a partial update: a field absent from `fields` is left
-// alone. A blank field is also left alone — editing cannot remove a tag.
+// Client-supplied tag values; validateTagEdit (inside the service, so no caller skips it) is the control.
+// Absent or blank fields are left alone: editing cannot remove a tag.
 libraryRouter.patch('/track/:id/tags', async (req, res, next) => {
   try {
     const trackId = Number(req.params.id);
@@ -463,9 +356,6 @@ libraryRouter.patch('/track/:id/tags', async (req, res, next) => {
   }
 });
 
-// The same, applied across one album: `fields` on every chosen track, `perTrack`
-// for the fields that are per-row. Capped here as well as in the service, so the
-// ceiling is visible alongside the other request caps in this file.
 libraryRouter.post('/album/tags', async (req, res, next) => {
   try {
     const album = str(req.body?.album);
@@ -487,9 +377,7 @@ libraryRouter.post('/album/tags', async (req, res, next) => {
   }
 });
 
-// Moving a duplicate aside, and taking that back. Deliberately not DELETE:
-// nothing is deleted, and naming the method after the thing this app refuses to
-// do would be the wrong word in the wrong place.
+// Not DELETE: nothing is deleted.
 libraryRouter.post('/track/:id/trash', async (req, res, next) => {
   try {
     const trackId = Number(req.params.id);
@@ -510,17 +398,7 @@ libraryRouter.post('/track/:id/restore', async (req, res, next) => {
   }
 });
 
-// The preview an apply will reuse.
-//
-// Apply used to recompute the preview from scratch: every file's tags read a
-// second time, and for the musicbrainz source two more trips through the
-// 1-req/s upstream queue to re-resolve an album the user was looking at a moment
-// ago. Handing the apply the preview it is applying is both cheaper and more
-// honest — what gets written is what was on screen and approved, rather than a
-// fresh derivation that upstream may have changed under.
-//
-// Short TTL and a small ceiling: this is a hand-off between two clicks, not a
-// cache. A miss just means the old behaviour of recomputing.
+// Hand-off so apply writes exactly what was previewed; a miss recomputes.
 const previewCache = new TTLCache({ maxEntries: 32 });
 const PREVIEW_TTL_MS = 10 * 60 * 1000;
 
@@ -528,9 +406,6 @@ function previewKey({ artist, album, source }) {
   return JSON.stringify([artist, album, source]);
 }
 
-// What repairing a whole album's tags would write. Read-only: the 'path' source
-// makes no upstream call at all, and 'musicbrainz' makes two for the album
-// rather than three per track.
 libraryRouter.post('/bulk-fix/preview', async (req, res, next) => {
   try {
     const album = str(req.body?.album);
@@ -548,14 +423,7 @@ libraryRouter.post('/bulk-fix/preview', async (req, res, next) => {
   }
 });
 
-// Applies a previewed repair to the chosen tracks. The tag values are not taken
-// from THIS request — only which tracks to repair — so the server re-derives what
-// to write and a caller can't use this endpoint to set arbitrary tags.
-//
-// That is a property of the repair endpoints, not of the API as a whole: the two
-// manual-edit endpoints above do take their values from the request, because
-// typing a value is the entire point of them. Their control is
-// services/tagEdit.validateTagEdit rather than server-side derivation.
+// Takes track ids only, never tag values, so it can't set arbitrary tags.
 libraryRouter.post('/bulk-fix/apply', async (req, res, next) => {
   try {
     const album = str(req.body?.album);
@@ -572,11 +440,7 @@ libraryRouter.post('/bulk-fix/apply', async (req, res, next) => {
       album,
       source: str(req.body?.source) ?? 'path',
     };
-    // Rejected, not filtered. `.filter(Number.isInteger)` dropped anything that
-    // wasn't a number and then repaired whatever was left, so a request naming
-    // ten tracks where one id was malformed came back 200 with a summary of nine
-    // — and nothing in that response said which one never happened. A caller
-    // asking to repair a set is asking about the set.
+    // Reject, don't filter: a silently dropped id would go unreported.
     const ids = trackIds.map((id) => (typeof id === 'number' || typeof id === 'string' ? Number(id) : NaN));
     if (!ids.every((id) => Number.isInteger(id) && id > 0)) {
       throw new BadRequestError('trackIds must all be positive whole numbers');
@@ -592,8 +456,6 @@ libraryRouter.post('/bulk-fix/apply', async (req, res, next) => {
   }
 });
 
-// Rescans one artist's or album's folders instead of all of MUSIC_DIR, so a
-// just-fixed album refreshes without waiting on a full pass.
 libraryRouter.post('/rescan', async (req, res, next) => {
   try {
     const artist = str(req.body?.artist);
@@ -608,11 +470,7 @@ libraryRouter.post('/rescan', async (req, res, next) => {
   }
 });
 
-// --- Discovery ---------------------------------------------------------------
-//
-// The inverse of the gap flows above: music you don't have, reached from music
-// you do. All three are opt-in from a button — the first two walk the 1-req/s
-// MusicBrainz queue and must never run on page load.
+// --- Discovery: button-triggered only; these walk the 1-req/s MusicBrainz queue.
 
 libraryRouter.get('/similar-artists', async (req, res, next) => {
   try {
@@ -630,8 +488,6 @@ libraryRouter.get('/recommendations', async (req, res, next) => {
   }
 });
 
-// POST rather than GET because a pasted playlist is a body, not a query string —
-// it can be hundreds of lines and contains anything.
 libraryRouter.post('/reconstruct-playlist', (req, res, next) => {
   try {
     const lines = req.body?.lines;
@@ -647,8 +503,6 @@ libraryRouter.post('/reconstruct-playlist', (req, res, next) => {
   }
 });
 
-// Records the user's choice when artist resolution was ambiguous, so the
-// discography diff can proceed and the answer is remembered.
 libraryRouter.post('/artist-link', (req, res, next) => {
   try {
     const artist = str(req.body?.artist);
@@ -661,8 +515,6 @@ libraryRouter.post('/artist-link', (req, res, next) => {
   }
 });
 
-// Forgets a remembered artist resolution, so a wrong match can be corrected from
-// the UI instead of by editing the database.
 libraryRouter.delete('/artist-link', (req, res, next) => {
   try {
     const artist = str(req.body?.artist) ?? str(req.query.artist);

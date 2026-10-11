@@ -12,10 +12,7 @@ const TABS = [
   ['search', 'Library search'],
 ];
 
-// The third tab: search what you already own and add a track directly, no
-// review step needed because there is nothing to propose — you named it
-// yourself. Small enough (25 results, no pagination) that it doesn't warrant
-// its own file the way TracksTab does for the full library.
+// Search owned tracks and add directly; no review step since you chose it.
 function LibrarySearchTab({ playlistId, onAdded }) {
   const [query, setQuery] = useState('');
   const [debounced, setDebounced] = useState('');
@@ -117,11 +114,7 @@ function LibrarySearchTab({ playlistId, onAdded }) {
   );
 }
 
-// The three ways a playlist gains tracks, as tabs over one panel: propose from
-// artists you own (SuggestPanel), recover a remembered list (PastePanel), or
-// just search and add (LibrarySearchTab, above). `onAdded` is the one thing
-// all three share — PlaylistDetail passes its own `load`, so any of the three
-// writing an item is what makes the row appear.
+// Tabs: suggest, paste, or search. `onAdded` reloads the playlist.
 export default function AddTracksPanel({ playlistId, onAdded }) {
   const [tab, setTab] = useState('suggest');
 

@@ -3,9 +3,7 @@ import { useState } from 'react';
 import { changePassword } from '../api/auth.js';
 import { useAuth } from '../AuthContext.jsx';
 
-// Password change, which also revokes every other session. Previously the only
-// way to change the credential was to stop the app and edit the database, and
-// that route left every already-issued cookie working for its full 30 days.
+// Password change, which also revokes every other session.
 export default function AccountPage() {
   useTitle('Account');
   const { username } = useAuth();

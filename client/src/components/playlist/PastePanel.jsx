@@ -3,23 +3,14 @@ import { reconstructPlaylist } from '../../api/library.js';
 import { addPlaylistItems } from '../../api/playlists.js';
 import { formatDuration } from '../../lib/format.js';
 
-// Playlist reconstruction, feeding a specific playlist rather than just
-// showing you what you have: paste what you remember, then pull any of it in.
-//
-// Entirely offline — matched against the index, no upstream call — so unlike
-// the rest of this app it answers instantly and keeps working when
-// MusicBrainz doesn't. A miss can still be added: it lands in the playlist as
-// a gap, the same shape a suggestion or a manual add takes when there is no
-// file behind it yet, and PlaylistDetail already knows how to show that with
-// a working Find-on-YouTube link.
+// Paste-to-playlist. Offline (index match only); a miss is added as a gap.
 export default function PastePanel({ playlistId, onAdded }) {
   const [text, setText] = useState('');
   const [state, setState] = useState('idle'); // idle | loading | ready | error
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
 
-  // Which rows have already been sent, keyed by index within their own list —
-  // found and missing are tracked separately so the two tables never collide.
+  // Sent rows, keyed by index; found and missing tracked separately.
   const [addedFound, setAddedFound] = useState(new Set());
   const [addedMissing, setAddedMissing] = useState(new Set());
   const [addingKey, setAddingKey] = useState(null); // `f${i}` | `m${i}` | 'all-found' | null
@@ -82,9 +73,7 @@ export default function PastePanel({ playlistId, onAdded }) {
     }
   }
 
-  // A miss still carries a parsed artist/title from the server — the same
-  // "Artist - Title" split `found` rows resolved against, just with nothing on
-  // disk to show for it — so this needs no client-side re-parsing of the line.
+  // Misses already carry the server's parsed artist/title.
   async function addMissing(i, m) {
     setAddingKey(`m${i}`);
     setAddError(null);
@@ -150,9 +139,7 @@ export default function PastePanel({ playlistId, onAdded }) {
                   <tr><th>Artist</th><th>Title</th><th>Album</th><th>Length</th><th aria-label="Add" /></tr>
                 </thead>
                 <tbody>
-                  {/* Keyed on the index as well as the line: a playlist you're
-                      rebuilding from memory routinely repeats a track, and a bare
-                      line key made those duplicate React keys. */}
+                  {/* Index in the key: pasted lines can repeat. */}
                   {data.found.map(({ line, track }, i) => (
                     <tr key={`${i}-${line}`}>
                       <td>{track.artist ?? <span className="muted">—</span>}</td>

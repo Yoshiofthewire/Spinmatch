@@ -7,9 +7,7 @@ const TIMEOUT_MS = 15000;
 const MAX_BUFFER_BYTES = 5 * 1024 * 1024;
 const BOT_CHECK_PATTERN = /sign in to confirm|too many requests|http error 429/i;
 
-// yt-dlp has no official quota, but scraping YouTube directly risks bot
-// detection whether it's one call or a bulk album run, so serialize calls
-// app-wide at <=1/sec — same pattern as the MusicBrainz limiter.
+// <=1/sec app-wide to avoid YouTube bot detection.
 const rateLimiter = new RateLimiter(1000);
 
 function execYtDlp(args) {
@@ -52,9 +50,7 @@ async function runSearch(query, maxResults) {
         'YouTube is temporarily rate-limiting automated requests — try again shortly.'
       );
     }
-    // Log the real stderr for operators; return a generic message to the client
-    // so subprocess output (which can contain internal paths) is never
-    // reflected back over HTTP.
+    // stderr can contain internal paths: log it, return a generic message.
     console.error(`yt-dlp failed: ${(stderr || err.message).slice(0, 500)}`);
     throw new UpstreamUnavailableError('The YouTube lookup tool failed — see the server logs for details.');
   }

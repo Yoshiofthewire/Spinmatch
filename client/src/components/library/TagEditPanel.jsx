@@ -2,23 +2,10 @@ import { useMemo, useState } from 'react';
 import { editTrackTags } from '../../api/library.js';
 import { TAG_FIELDS, toFormValue, rowState, patchFrom } from '../../lib/tagFields.js';
 
-// Editing one file's tags by hand.
-//
-// The counterpart to FixTrackPanel, and the two answer different questions.
-// FixTrackPanel asks MusicBrainz what this file is, which is the right tool when
-// you don't know — and useless for the files that need it most, since it searches
-// on the tags that are missing. This panel is for when you already know: you can
-// see the album sleeve, or the folder, or you just recognise the song.
-//
-// It overwrites, which nothing else outside the fingerprint path does. It cannot
-// remove a tag: a field left blank means "leave this alone". That is stated on the
-// row the moment it happens rather than only in the docs, because "I blanked it
-// and pressed save" is otherwise a silent no-op.
+// Hand-edit one file's tags. Overwrites (like the fingerprint path), but cannot
+// remove a tag: blank means "leave alone", and the row says so.
 export default function TagEditPanel({ track, onSaved, onCancel, onPlay }) {
-  // Synthesized values start the form blank with the synthesized text as a
-  // placeholder. Pre-filling them would be a trap: the scanner fills album from
-  // the folder name and title from the filename when the tag is empty, so
-  // pre-filling and saving would write a folder name the file never claimed.
+  // Synthesized values are placeholders only, or saving would write a folder name as a tag.
   const current = useMemo(() => ({
     artist: track.artist ?? null,
     title: track.titleSynthesized ? null : (track.title ?? null),
@@ -81,10 +68,7 @@ export default function TagEditPanel({ track, onSaved, onCancel, onPlay }) {
         {track.path && <p className="muted mono fix-path">{track.path}</p>}
       </div>
 
-      {/* The pending changes are listed on their own before anything is written.
-          Nothing in this app can be undone, and this is the one path where the
-          values came from a keyboard rather than from a lookup — so the last thing
-          before the write is a plain reading of what it will do. */}
+      {/* Read back hand-typed changes before an irreversible write. */}
       {(stage === 'confirm' || stage === 'saving') && (
         <div className="tag-edit-confirm">
           <p>Write these tags to the file?</p>
@@ -118,9 +102,7 @@ export default function TagEditPanel({ track, onSaved, onCancel, onPlay }) {
         <>
           <div className="tag-edit-grid">
             {states.map((field) => {
-              // Boolean(), because the synthesized flags arrive from SQLite as 0
-              // or 1 — without it this is 0 rather than false for an ordinary
-              // field, and React renders that 0 next to the input below.
+              // Boolean(): SQLite flags are 0/1 and React renders a bare 0.
               const synthesized = Boolean(
                 (field.key === 'album' && track.albumSynthesized)
                 || (field.key === 'title' && track.titleSynthesized)
@@ -167,8 +149,7 @@ export default function TagEditPanel({ track, onSaved, onCancel, onPlay }) {
             })}
           </div>
 
-          {/* Read joined, written back as one value — a real limitation of the tag
-              layer, and better admitted than discovered. */}
+          {/* Tag layer limitation: read joined, written back as one value. */}
           <p className="muted">
             Artist and genre can hold several values in a file; Spinmatch shows them joined
             with commas and saves what you type back as a single value.

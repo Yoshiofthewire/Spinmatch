@@ -5,20 +5,9 @@ import EqualizerLoader from '../EqualizerLoader.jsx';
 import CandidateRow from '../CandidateRow.jsx';
 import { getFixCandidates, getFingerprintCandidates, applyFix } from '../../api/library.js';
 
-// Repairs the tags of a file already in the library. The ingest counterpart of
-// this (IngestMatchPicker) tags AND moves the file; here the file is already
-// where it belongs, so applying a match only writes tags.
-//
-// Two ways to identify the file, and the difference matters. The candidates
-// loaded on open come from its own tags and path, which is free but useless for
-// exactly the files that need repairing most. "Identify by audio" fingerprints
-// it instead — the one signal that doesn't depend on the metadata being fixed —
-// but that costs an fpcalc run and a rate-limited AcoustID call, so it waits to
-// be asked for.
-//
-// Only a fingerprint match may overwrite tags the file already has, and only
-// when explicitly ticked: the tag/path candidates are a guess built from the
-// same metadata they'd be replacing.
+// Rewrites tags of a library file (never moves it). Candidates come from its
+// tags/path; "Identify by audio" fingerprints on request (costly). Only a
+// fingerprint match, explicitly ticked, may overwrite existing tags.
 export default function FixTrackPanel({ track, onFixed, onCancel, onPlay }) {
   const { acoustidConfigured } = useConfig();
   const [candidates, setCandidates] = useState(null);
@@ -73,8 +62,7 @@ export default function FixTrackPanel({ track, onFixed, onCancel, onPlay }) {
     }
   }
 
-  // `fromFingerprint` gates the overwrite: a tag-derived candidate never gets to
-  // replace the tags it was derived from.
+  // A tag-derived candidate never replaces the tags it was derived from.
   async function handleUse(recordingMbid, fromFingerprint = false) {
     setApplyingMbid(recordingMbid);
     setApplyError(null);
@@ -91,18 +79,13 @@ export default function FixTrackPanel({ track, onFixed, onCancel, onPlay }) {
     }
   }
 
-  // A recording the fingerprint already offered isn't offered again below with a
-  // weaker score and a different apply behaviour.
+  // Drop recordings the fingerprint already offered.
   const fpMbids = new Set((fpCandidates ?? []).map((c) => c.recordingMbid));
   const tagCandidates = (candidates ?? []).filter((c) => !fpMbids.has(c.recordingMbid));
 
   return (
     <div className="ingest-match-picker">
-      {/* Playing the file is the other way to answer "what *is* this?", and the
-          cheap one — no fpcalc, no rate-limited lookup, and it works on the
-          files AcoustID has never heard of. A row is here precisely because its
-          tags don't say what it is, so the path and the audio are the only two
-          things that do. */}
+      {/* Listening is the cheap way to identify an untagged file. */}
       <div className="fix-identify">
         {onPlay && (
           <button
@@ -135,11 +118,7 @@ export default function FixTrackPanel({ track, onFixed, onCancel, onPlay }) {
       {fpCandidates && fpCandidates.length > 0 && (
         <>
           <h4 className="fix-section-title">AcoustID matches</h4>
-          {/* Above the list, not below it: these change what "Use this" does, so
-              they have to be read before the button is reached. Both off by
-              default and offered only here — nothing in this app can be undone.
-              Separate boxes because they're separate decisions: plenty of people
-              want the tags corrected and their own artwork left alone. */}
+          {/* Above the list: they change what "Use this" does. Off by default; irreversible. */}
           <label className="fix-overwrite">
             <input
               type="checkbox"

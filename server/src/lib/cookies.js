@@ -1,16 +1,5 @@
-// Minimal cookie parse/serialize so we don't pull in cookie-parser for the one
-// session cookie this app sets. Only handles what we actually use.
-
-// decodeURIComponent throws URIError on a malformed escape ('%', '%zz'), and a
-// cookie value is attacker-controlled: any page on a sibling subdomain can set
-// one scoped to the parent domain. Unguarded, that URIError propagated out of
-// requireAuth — which runs on every protected route — and out of /api/auth/status,
-// which is how the client decides whether to show login. One junk cookie turned
-// the whole app into a 500 wall with no in-app way back.
-//
-// A value that isn't valid percent-encoding is returned raw rather than dropped:
-// it can't be our own token (which is base64url and never needs escaping), so it
-// fails the signature check a moment later, which is the correct outcome.
+// Cookies are attacker-controlled (sibling subdomains can set them); a malformed
+// escape must not throw. Returned raw: it can't be our base64url token, so it fails signature checks.
 function safeDecode(value) {
   try {
     return decodeURIComponent(value);

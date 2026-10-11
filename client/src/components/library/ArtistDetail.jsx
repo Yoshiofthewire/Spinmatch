@@ -73,8 +73,7 @@ export default function ArtistDetail({ artist, onSelectAlbum, albumHref, incompl
         </>
       )}
 
-      {/* Rendered regardless of the local album load, so an upstream failure
-          and a local failure stay independent of each other. */}
+      {/* Independent of the local load, so failures stay separate. */}
       <DiscographyPanel artist={artist} />
     </div>
   );

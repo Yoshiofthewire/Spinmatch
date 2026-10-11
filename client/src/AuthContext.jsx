@@ -18,8 +18,7 @@ export function AuthProvider({ children }) {
         username: status.username ?? null,
       });
     } catch {
-      // /auth/status is public and shouldn't fail; if it does, treat as
-      // unauthenticated so the app shows login rather than a broken shell.
+      // On failure, treat as unauthenticated: show login, not a broken shell.
       setState({ loading: false, setupRequired: false, authenticated: false, username: null });
     }
   }, []);
@@ -28,8 +27,7 @@ export function AuthProvider({ children }) {
     refresh();
   }, [refresh]);
 
-  // Any protected call that 401s (expired session) re-checks status, which
-  // flips the gate back to login/setup.
+  // Any 401 re-checks status, flipping the gate back to login/setup.
   useEffect(() => {
     const onAuthRequired = () => refresh();
     window.addEventListener('spinmatch:auth-required', onAuthRequired);

@@ -14,14 +14,7 @@ export const authRouter = Router();
 
 const SESSION_MAX_AGE_S = 30 * 24 * 60 * 60;
 
-// Throttle the credential endpoints per client IP.
-//
-// One limiter per endpoint, not one shared between them: they were on the same
-// bucket, so changing your password a few times spent the allowance for logging
-// in and locked you out of your own account for five minutes. They also guard
-// different things — /login is unauthenticated guessing, /password is an
-// already-authenticated session confirming the current password — and have no
-// reason to share a budget.
+// Per-IP throttle, one bucket per endpoint so password changes can't lock out login.
 function rateLimitBy(limiter) {
   return function rateLimit(req, res, next) {
     const key = req.ip || req.socket?.remoteAddress || 'unknown';
@@ -38,11 +31,7 @@ const rateLimitLogin = rateLimitBy(createAttemptLimiter({ max: 10, windowMs: 5 *
 const rateLimitSetup = rateLimitBy(createAttemptLimiter({ max: 10, windowMs: 5 * 60 * 1000 }));
 const rateLimitPassword = rateLimitBy(createAttemptLimiter({ max: 10, windowMs: 5 * 60 * 1000 }));
 
-// req.secure already accounts for X-Forwarded-Proto, but only when the app has
-// been told to trust the proxy (TRUST_PROXY — see app.js). Reading the header
-// directly instead let anyone set Secure on the cookie by sending
-// `X-Forwarded-Proto: https` to a plain-HTTP deployment, at which point the
-// browser stopped sending the cookie back and login became impossible.
+// req.secure honours X-Forwarded-Proto only under TRUST_PROXY; never read the header directly.
 function setSession(req, res, username, epoch) {
   const token = issueToken(getSigningSecret(getDb()), username, epoch);
   res.setHeader('Set-Cookie', serializeCookie(SESSION_COOKIE, token, {
@@ -89,15 +78,8 @@ authRouter.get('/status', (req, res) => {
   });
 });
 
-// First-run only: creates the single admin, then logs them in.
-//
-// The existence check and the insert have to be one atomic step. Hashing the
-// password is ~100ms of deliberate CPU, and awaiting it between a
-// SELECT-then-INSERT let two concurrent first-run requests both pass the check;
-// the loser then hit a UNIQUE constraint on app_auth.id and surfaced as a 500
-// rather than "already configured". So the hash happens first and createAdmin
-// reports whether it actually won the insert — the same fix, for the same
-// reason, as the ON CONFLICT in getSigningSecret.
+// First-run only: creates the single admin, then logs them in. createAdmin's
+// return is the atomic check; adminExists is just a fast path before hashing.
 authRouter.post('/setup', rateLimitSetup, async (req, res, next) => {
   try {
     if (adminExists(getDb())) {
@@ -127,23 +109,15 @@ authRouter.post('/login', rateLimitLogin, async (req, res, next) => {
   try {
     const { username, password } = req.body || {};
     const admin = getAdmin(getDb());
-    // Verify a password on every attempt, even when there is no admin or the
-    // username is wrong. Short-circuiting on the username meant a wrong name
-    // returned in microseconds while a right one paid the hash's ~100ms, which is
-    // a username oracle with a 1000x separation — the response body says nothing
-    // but the clock says everything. dummyHash() gives the miss path the same
-    // cost as the hit path.
+    // Always hash (dummyHash on a miss) so timing doesn't reveal the username.
     const passwordOk = await verifyPassword(
       String(password ?? ''),
       admin ? admin.passwordHash : await dummyHash(),
     );
-    // Folded on both sides — see foldUsername. The admin's own stored spelling
-    // is what gets stamped into the session below, so matching loosely here
-    // never changes what the token or the UI says their name is.
+    // Loose match; the session still carries the stored spelling.
     const usernameOk = Boolean(admin)
       && foldUsername(username) === foldUsername(admin.username);
-    // Single generic error for any failure so we never reveal which half
-    // (username vs. password) was wrong.
+    // One generic error: never reveal which half was wrong.
     if (!usernameOk || !passwordOk) throw new BadRequestError('Invalid username or password');
     if (needsRehash(admin.passwordHash)) {
       rehashPassword(getDb(), admin.passwordHash, await hashPassword(password));
@@ -155,10 +129,8 @@ authRouter.post('/login', rateLimitLogin, async (req, res, next) => {
   }
 });
 
-// Changes the password and invalidates every other session at the same time
-// (updatePassword bumps token_epoch). The caller gets a fresh cookie so the tab
-// they're in stays logged in; every other cookie in existence stops working.
-// Requires the current password, so a hijacked session can't lock the owner out.
+// Revokes all other sessions (token_epoch bump) and reissues this one. Requires the
+// current password so a hijacked session can't lock the owner out.
 authRouter.post('/password', requireAuth, rateLimitPassword, async (req, res, next) => {
   try {
     const { currentPassword, newPassword } = req.body || {};
@@ -178,17 +150,7 @@ authRouter.post('/password', requireAuth, rateLimitPassword, async (req, res, ne
   }
 });
 
-// Clears this browser's cookie *and* revokes the token server-side.
-//
-// Clearing the cookie alone was not a logout: the token is stateless and
-// self-verifying, so a copy taken from anywhere else — a shared machine, a
-// backup, a proxy log — kept working for the rest of its 30 days no matter how
-// many times the owner pressed the button. Bumping token_epoch is what makes the
-// button mean something.
-//
-// This being a single-admin app, that necessarily signs out every device rather
-// than just this one, which is the safe direction for the trade to fall: someone
-// pressing Logout wants the session gone, not gone-here-but-fine-over-there.
+// Tokens are stateless, so logout must revoke server-side; this signs out every device.
 authRouter.post('/logout', requireAuth, (req, res) => {
   revokeSessions(getDb());
   clearSession(req, res);

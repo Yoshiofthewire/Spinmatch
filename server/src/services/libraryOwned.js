@@ -2,16 +2,13 @@ import { getDb } from '../lib/db.js';
 import { collectionKeys, getStats } from './libraryRepo.js';
 import { normalizeTitle } from '../lib/normalize.js';
 
-// "Do I already own this?" for MusicBrainz search results. Entirely offline —
-// one SQL pass over the index, no upstream calls — so the badge never slows a
-// search down or breaks when MusicBrainz is unreachable.
+// "Do I already own this?" for search results. Offline: one SQL pass, no upstream calls.
 
 function key(artist, name) {
   return `${normalizeTitle(artist ?? '')}|${normalizeTitle(name ?? '')}`;
 }
 
-// Rebuilt only when a scan has changed the library, since normalizing every
-// album and title in a 16k-track index on each search would be wasted work.
+// Rebuilt only when a scan changed the library.
 let cache = null;
 
 function keySets(db) {
@@ -28,10 +25,7 @@ function keySets(db) {
   return cache;
 }
 
-// Takes the items a page is showing and returns the ids of the ones already in
-// the library, so the caller doesn't have to care how matching is done.
-// Matching folds case, punctuation and parenthetical suffixes via
-// normalizeTitle, so "Kid A (Deluxe Edition)" on disk counts as owning "Kid A".
+// Ids of owned items. Folds via normalizeTitle: "Kid A (Deluxe Edition)" owns "Kid A".
 export function checkOwned({ albums = [], recordings = [] }, { db = getDb() } = {}) {
   const sets = keySets(db);
   const owned = (list, set) => list
@@ -43,8 +37,7 @@ export function checkOwned({ albums = [], recordings = [] }, { db = getDb() } = 
   };
 }
 
-// Test seam: the cache is keyed on scan state, which an in-memory test DB
-// reuses across cases.
+// Test seam: in-memory test DBs reuse scan state across cases.
 export function resetOwnedCacheForTest() {
   cache = null;
 }

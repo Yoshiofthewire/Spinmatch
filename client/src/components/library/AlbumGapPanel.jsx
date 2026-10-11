@@ -5,13 +5,8 @@ import BulkVerifyPanel from '../BulkVerifyPanel.jsx';
 import { getAlbumGapsFromLibrary, missingStreamUrl } from '../../api/library.js';
 import { formatDuration } from '../../lib/format.js';
 
-// The MusicBrainz check for a single owned album. The tracklist on disk can look
-// complete (numbered 1..10 with no holes) and still be missing tracks 11 and 12,
-// which only the upstream tracklist reveals — so this complements, rather than
-// duplicates, the inline gap rows.
-//
-// Opt-in on a button press: resolving the album plus fetching its tracklist is
-// two rate-limited upstream calls, so it must not run on mount.
+// Finds trailing missing tracks the inline gap rows can't see. Opt-in: two
+// rate-limited upstream calls.
 export default function AlbumGapPanel({ artist, album }) {
   const [state, setState] = useState('idle'); // idle | loading | ready | error
   const [data, setData] = useState(null);
@@ -69,8 +64,7 @@ export default function AlbumGapPanel({ artist, album }) {
             You have {data.owned.length} of {data.owned.length + data.missing.length} tracks.
           </p>
 
-          {/* One action for the whole gap instead of a button per row. Scoped to
-              the missing tracks, so nothing you already own is looked up. */}
+          {/* Verifies only the missing tracks. */}
           {data.album?.mbid && data.missing.length > 1 && (
             <BulkVerifyPanel
               artist={data.album?.artist ?? artist}

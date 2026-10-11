@@ -29,8 +29,7 @@ export default function AboutPage() {
         MIT License · Copyright © 2026 Yoshiofthewire ·{' '}
         <a href={REPO_URL} target="_blank" rel="noreferrer">Source on GitHub</a>
       </p>
-      {/* The full text has to be here to satisfy the license, but it is
-          reference material, not something anyone reads on the way past. */}
+      {/* Full text required by the license; collapsed as reference. */}
       <details className="about-license">
         <summary>Full license text</summary>
         <p>

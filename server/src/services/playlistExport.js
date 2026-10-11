@@ -7,23 +7,11 @@ import { noteWrite } from '../lib/recentWrites.js';
 import { withFileLock } from '../lib/fileLock.js';
 import { BadRequestError } from '../lib/httpErrors.js';
 
-// Writing a playlist out: an m3u at the music root, or a folder of copies bound
-// for an MP3 player.
-
 function m3uPathFor(name) {
   return path.join(config.ingest.musicDir, `${sanitizeSegment(name)}.m3u`);
 }
 
-/**
- * What is already at the m3u destination, so the caller can confirm.
- *
- * The same collision the drop-off folder has, one directory up and with less to
- * go on: two playlist names sanitize to one filename, and MUSIC_DIR/Road
- * Trip.m3u may just as easily be a file written by hand years ago that
- * Spinmatch has never heard of. Nothing records who wrote it, so the honest
- * answer is to report the file and let the person decide, rather than to
- * overwrite it silently the way this used to.
- */
+// Reports an existing m3u (possibly hand-written) so the user confirms the overwrite.
 export async function inspectM3u(name) {
   const target = m3uPathFor(name);
   assertInsideMusicDir(target);
@@ -36,13 +24,7 @@ export async function inspectM3u(name) {
   }
 }
 
-/**
- * Extended M3U at MUSIC_DIR/<name>.m3u.
- *
- * Paths are relative to the music root: the file sits at that root, and a
- * relative path is what survives the playlist being read on another machine or
- * under a different mount point.
- */
+// Relative paths, so the playlist survives a different mount point.
 export async function writeM3u({ name, items }) {
   const target = m3uPathFor(name);
   assertInsideMusicDir(target);
@@ -53,9 +35,7 @@ export async function writeM3u({ name, items }) {
 
   for (const item of items) {
     if (!item.track) {
-      // A gap can't be a path. Written as a comment so the file stays a complete
-      // record of the playlist instead of a silently shortened one — players
-      // ignore '#' lines.
+      // Gaps kept as comments; players ignore '#' lines.
       lines.push(`# missing: ${item.artist ? `${item.artist} - ` : ''}${item.title}`);
       skipped += 1;
       continue;
@@ -73,10 +53,7 @@ export async function writeM3u({ name, items }) {
   await fs.writeFile(temp, `${lines.join('\n')}\n`, 'utf8');
   await fs.rename(temp, target);
 
-  // Without this the MUSIC_DIR watcher sees a new file at the root and debounces
-  // into a full scanLibrary() — librarySync.js does not filter by extension, so
-  // every export would rescan the whole collection. Both names are noted because
-  // the rename fires an event for each.
+  // Keeps the MUSIC_DIR watcher from triggering a full rescan; the rename fires for both names.
   noteWrite(temp);
   noteWrite(target);
 
@@ -88,12 +65,7 @@ function dropoffDirFor(name) {
   return path.join(config.playlist.dropoffDir ?? '', segment);
 }
 
-// How much a wipe of this folder would hand back. Top-level regular files only:
-// an export writes a flat folder, so that is everything it put there, and
-// anything nested came from somewhere else. Counting less than fs.rm actually
-// frees only ever makes the free-space check stricter, which is the safe
-// direction to be wrong in. A file that vanishes between the readdir and the
-// stat counts as zero for the same reason.
+// Bytes a wipe would free. Top-level files only: undercounting keeps the space check strict.
 async function dirBytes(dir) {
   let entries;
   try {
@@ -112,7 +84,7 @@ async function dirBytes(dir) {
   return sizes.reduce((sum, n) => sum + n, 0);
 }
 
-/** What is already at the drop-off destination, so the caller can confirm. */
+// What is already at the drop-off destination, so the caller can confirm.
 export async function inspectDropoff(name) {
   const dir = await assertInsideDropoffDir(dropoffDirFor(name));
   try {
@@ -124,9 +96,7 @@ export async function inspectDropoff(name) {
   }
 }
 
-// Zero-padded to the width of the track count, not to two digits. A 100-track
-// playlist padded to two sorts as 1, 10, 100, 11 on a device that orders by
-// filename — which defeats the entire purpose of numbering it.
+// Pad to the track count's width so devices sort by filename correctly.
 function fileNameFor(item, index, total) {
   const width = String(total).length;
   const position = String(index).padStart(width, '0');
@@ -140,24 +110,8 @@ async function freeBytes(dir) {
   return stat.bavail * stat.bsize;
 }
 
-// One pass over the sources, doing two jobs that both have to happen before
-// anything is deleted.
-//
-// Readability. fs.access is what stands between a dropped NAS mount and an
-// export that deletes the previous one and copies nothing back. The index keeps
-// resolving every row when the volume goes away — size_bytes is a column, not a
-// stat — so a pre-flight that trusted that column touched no source file at
-// all: the wipe ran, and the first fs.copyFile threw ENOENT onto a folder that
-// had already been emptied. One access per track, in parallel, is cheap next to
-// the copies that follow.
-//
-// Size. The column isn't always populated (older scans, rows written before it
-// existed) — `sizeBytes ?? 0` silently turned a playlist of all-NULL sizes into
-// a "0 bytes needed" check that always passed, defeating the free-space guard
-// entirely. The fs.stat fallback keeps the total accurate instead of
-// optimistic, and only costs a second syscall on the rows that need it. Where
-// the column is populated it is preferred, so the number checked here is the
-// same one the playlist list and the size budget were computed from.
+// Pre-wipe check: the source must be readable (a dropped mount still has index
+// rows), and size falls back to stat when size_bytes is NULL.
 async function checkedBytes(track) {
   const real = await assertReadableInsideMusicDir(track.path);
   await fs.access(real, fs.constants.R_OK);
@@ -179,27 +133,14 @@ async function bytesFor(playable) {
   }
 }
 
-/**
- * Copy the playlist's resolved tracks into DROPOFF_DIR/<name>/.
- *
- * Wipe-and-rewrite rather than a sync: the destructive step happens only after
- * the caller has seen inspectDropoff's count and asked for it, and "delete the
- * folder, write it fresh" is a few lines that are easy to get right where a
- * diff-and-renumber has to reason about which files it owns.
- *
- * Everything that can refuse the export refuses it before fs.rm runs: an
- * all-gap playlist, a source that isn't readable, and a total that doesn't fit.
- * A rejected export leaves the previous one exactly as it was.
- */
+// Wipe-and-rewrite DROPOFF_DIR/<name>/ after the user confirms. Every refusal
+// happens before fs.rm, so a rejected export leaves the previous one intact.
 export async function exportToDropoff({ name, items, onProgress, signal }) {
   const dir = await assertInsideDropoffDir(dropoffDirFor(name));
   const playable = items.filter((i) => i.track);
   const skipped = items.length - playable.length;
 
-  // A playlist with nothing behind it would otherwise delete the last export
-  // and leave an empty folder in its place — the worst possible reading of
-  // "replace". Refused instead: no resolvable track is a statement about the
-  // library, not an instruction about the device.
+  // Don't replace the last export with an empty folder.
   if (!playable.length) {
     throw new BadRequestError(
       'Nothing to export: no track in this playlist resolves to a file on disk'
@@ -207,17 +148,7 @@ export async function exportToDropoff({ name, items, onProgress, signal }) {
   }
 
   return withFileLock(`dropoff:${dir}`, async () => {
-    // Fail before copying — and before the existing folder is touched at
-    // all — rather than halfway through filling a device. sizes is computed
-    // once and reused below, so a track with no size_bytes only costs one
-    // fs.stat rather than one here and another during the copy loop.
-    //
-    // reclaimable is what the wipe below is about to hand back. Without it the
-    // most ordinary case there is — re-exporting an unchanged playlist onto a
-    // device sized for exactly that playlist — fails with "Not enough room",
-    // because `available` is measured while the previous copy still occupies
-    // the space. The check still runs before the delete; only the arithmetic
-    // knows about it.
+    // Space check before the wipe, crediting what the wipe will free.
     const [sizes, available, reclaimable] = await Promise.all([
       bytesFor(playable),
       freeBytes(config.playlist.dropoffDir),
@@ -241,8 +172,7 @@ export async function exportToDropoff({ name, items, onProgress, signal }) {
       if (signal?.aborted) break;
       const dest = path.join(dir, fileNameFor(item, i + 1, playable.length));
       await assertInsideDropoffDir(dest);
-      // Resolved again at copy time: a symlink swapped in since the pre-flight
-      // must not copy a file from outside the library onto the device.
+      // Re-resolve at copy time (symlink swap since pre-flight).
       await fs.copyFile(await assertReadableInsideMusicDir(item.track.path), dest);
       copied += 1;
       bytes += sizes[i];

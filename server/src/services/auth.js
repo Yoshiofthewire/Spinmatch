@@ -66,19 +66,11 @@ export function needsRehash(stored) {
     || parsed.hash.length !== ARGON2.tagLength || parsed.salt.length !== SALT_BYTES;
 }
 
-// A real hash of nothing in particular, used to give the "no such user"
-// path the same cost as the "wrong password" path. Computed once and reused:
-// it is not a secret (verifying against it always fails), and re-deriving it per
-// request would double the CPU cost of a login flood rather than hide anything.
+// Gives "no such user" the same cost as "wrong password". Not secret; computed once.
 let dummyHashPromise = null;
 
 export function dummyHash() {
-  // A rejection must not be what gets memoized. Hashing can fail transiently
-  // (it allocates, and this runs under exactly the memory pressure a login flood
-  // creates), and caching the rejected promise made every subsequent failed
-  // login throw a 500 instead of returning "Invalid username or password" —
-  // turning the timing-attack mitigation into a louder behavioural oracle than
-  // the timing difference it exists to hide.
+  // Don't memoize a rejection: every failed login would 500, an oracle.
   dummyHashPromise ??= hashPassword(randomBytes(32).toString('hex')).catch((err) => {
     dummyHashPromise = null;
     throw err;
@@ -107,20 +99,8 @@ export function checkSetupToken(candidate) {
 
 // ---- Username matching ----
 
-// Usernames are compared folded, so the admin can type theirs however their
-// keyboard, phone autocapitalise, or password manager felt like spelling it.
-// The stored row keeps the original spelling — that is what the UI shows and
-// what the session token carries — and only the comparison folds.
-//
-// toLowerCase(), not toLocaleLowerCase(): the latter is locale-dependent, and
-// under a Turkish locale 'I' lowercases to dotless 'ı'. That would make a login
-// succeed or fail based on the server process's locale, which is not a property
-// anyone would think to check.
-//
-// NFC first, because two spellings of an accented name can be different byte
-// sequences that render identically, and which one the browser sends depends on
-// the OS and keyboard that composed it. Composing them to one canonical form is
-// what RFC 8265's UsernameCaseMapped profile does, and for the same reason.
+// Comparison only; the stored spelling is kept. NFC per RFC 8265; toLowerCase,
+// not toLocaleLowerCase, so login doesn't depend on server locale (Turkish 'I').
 export function foldUsername(username) {
   return String(username ?? '').trim().normalize('NFC').toLowerCase();
 }
@@ -131,9 +111,7 @@ function sign(secret, data) {
   return createHmac('sha256', secret).update(data).digest('base64url');
 }
 
-// `epoch` is the admin's current token_epoch, stamped into the payload so the
-// token can be invalidated server-side without a session table — see
-// sessionFromToken below.
+// `epoch` (token_epoch) lets sessionFromToken revoke tokens without a session table.
 export function issueToken(secret, username, epoch = 0, now = Date.now(), exp = now + TOKEN_TTL_MS) {
   const body = Buffer.from(JSON.stringify({ u: username, e: epoch, exp })).toString('base64url');
   return `${body}.${sign(secret, body)}`;
@@ -156,8 +134,7 @@ export function verifyToken(secret, token, now = Date.now()) {
   }
   if (!payload || typeof payload.u !== 'string' || typeof payload.exp !== 'number') return null;
   if (payload.exp < now) return null;
-  // A token predating the epoch column has no `e`; treat it as epoch 0, which
-  // the v4 migration bumps every existing install past.
+  // Missing `e` = epoch 0, which the v4 migration bumped past.
   return { username: payload.u, epoch: typeof payload.e === 'number' ? payload.e : 0 };
 }
 
@@ -176,34 +153,19 @@ export function getAdmin(db) {
     : null;
 }
 
-// Creates the single admin row, or reports that someone else already did.
-//
-// ON CONFLICT DO NOTHING rather than a bare INSERT: the caller has to hash a
-// password first, and that await is a window in which a second concurrent
-// first-run request can land. A UNIQUE constraint failure there escaped as a 500
-// on the very first request an install ever serves; `false` lets the route say
-// "already configured" instead.
-//
-// @returns {boolean} true if this call created the admin.
+// Returns false if a concurrent first-run request already created the admin.
 export function createAdmin(db, username, passwordHash) {
   const { changes } = db.prepare(
     'INSERT INTO app_auth (id, username, password_hash, token_epoch, created_at) '
     + 'VALUES (1, ?, ?, 0, ?) ON CONFLICT(id) DO NOTHING'
   ).run(username, passwordHash, Date.now());
   if (!changes) return false;
-  // A brand-new admin must not inherit the previous one's signing secret. The
-  // documented recovery path is "delete the app_auth row and set up again", and
-  // without this rotation every token issued to the *old* admin would still
-  // verify — and, since the payload's username is now checked against the
-  // current admin, would simply be rejected rather than silently accepted. The
-  // rotation makes that airtight regardless of what the payload claims.
+  // A recreated admin must not accept the previous admin's tokens.
   rotateSigningSecret(db);
   return true;
 }
 
-// Changes the password and revokes every outstanding session in one step.
-// Bumping token_epoch is what does the revoking: sessionFromToken compares the
-// epoch in the cookie against this value on every request.
+// Also revokes every session by bumping token_epoch.
 export function updatePassword(db, passwordHash) {
   db.prepare(
     'UPDATE app_auth SET password_hash = ?, token_epoch = token_epoch + 1 WHERE id = 1'
@@ -217,50 +179,30 @@ export function rehashPassword(db, oldHash, newHash) {
     .run(newHash, oldHash);
 }
 
-// Invalidates every outstanding token without touching the password. What makes
-// logout actually log you out: the token is stateless and self-verifying, so
-// clearing the cookie only ever disarmed the browser that asked, and a copy
-// taken from anywhere else stayed valid for the rest of its 30 days. Bumping the
-// epoch is a single-admin app's whole session table.
+// Logout: tokens are stateless, so clearing the cookie alone leaves copies valid.
 export function revokeSessions(db) {
   db.prepare('UPDATE app_auth SET token_epoch = token_epoch + 1 WHERE id = 1').run();
 }
 
-// Resolves a cookie value to a session, or null. The single place that decides
-// whether a token is currently good: the signature has to verify, it has to be
-// unexpired, and — the part a bare HMAC check misses — it has to name the admin
-// that exists *right now*, at their current token epoch. Without those last two
-// checks a stolen 30-day cookie survives both a password change and the
-// delete-the-row-and-start-over recovery procedure.
+// The single token check: valid HMAC, unexpired, current admin, current epoch.
 export function sessionFromToken(db, token) {
   const admin = getAdmin(db);
   if (!admin) return null;
   const payload = verifyToken(getSigningSecret(db), token);
   if (!payload) return null;
-  // Exact, deliberately — not foldUsername. Login folds because what arrives
-  // there is a human typing their name; this value was minted by issueToken from
-  // the admin row itself, so anything other than an exact match means the token
-  // is not one we issued for the admin who currently exists. Folding it would
-  // widen what a forged or stale payload can claim, and buy nothing.
+  // Exact match, not folded: we minted this from the admin row.
   if (payload.username !== admin.username) return null;
   if (payload.epoch !== admin.tokenEpoch) return null;
   return { username: admin.username };
 }
 
-// Lazily generates and persists a random HMAC secret on first use so session
-// tokens survive restarts (a fresh secret would invalidate everyone's cookie).
-//
-// Memoized per database: this is read on every authenticated request, and it is
-// a value that changes only when the admin is recreated.
+// Persisted so tokens survive restarts; memoized per db.
 const secretCache = new WeakMap();
 
 export function getSigningSecret(db) {
   const cached = secretCache.get(db);
   if (cached) return cached;
-  // ON CONFLICT rather than SELECT-then-INSERT: two requests racing on a fresh
-  // database both saw no row and both inserted id = 1, and the loser got a
-  // UNIQUE constraint failure as a 500. The SPA's first paint fires several
-  // requests at once, so that race was on the very first page load.
+  // Insert-or-ignore then read: concurrent first requests race here.
   const secret = randomBytes(32).toString('hex');
   db.prepare('INSERT INTO auth_secret (id, secret) VALUES (1, ?) ON CONFLICT(id) DO NOTHING')
     .run(secret);

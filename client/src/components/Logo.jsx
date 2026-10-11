@@ -1,6 +1,4 @@
-// Play-triangle inscribed in a ring: a record label on the outside (MusicBrainz
-// metadata), a play button on the inside (the YouTube video) — the two accent
-// colors of the palette, together, are the whole idea of this app in one mark.
+// Ring (MusicBrainz metadata) around a play triangle (YouTube).
 export default function Logo({ size = 32 }) {
   return (
     <svg width={size} height={size} viewBox="0 0 32 32" className="app-mark" aria-hidden="true">

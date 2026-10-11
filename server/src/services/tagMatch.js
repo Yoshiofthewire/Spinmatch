@@ -1,32 +1,22 @@
 import * as tags from './tags.js';
-// Namespace imports (like ingest.js's own `tags`/`organize`) so this module
-// links against whatever musicbrainz.js exposes — the search endpoints used
-// here are only reached on the no-AcoustID path.
+// Namespace import so this links against whatever musicbrainz.js exposes.
 import * as mb from './musicbrainz.js';
 import { luceneQuoted } from '../lib/lucene.js';
 import { rankCandidates } from './durationMatch.js';
 import { normalizeTitle } from '../lib/normalize.js';
 
-// Fallback identification for when ACOUSTID_API_KEY isn't set (or AcoustID
-// can't issue one): instead of sending everything to manual review, match on
-// the tags the files already carry. A hit is only accepted when MusicBrainz
-// agrees on the *title* and the *duration* — the same "confirm before we touch
-// anything" bar the fingerprint path applies, just with the file's own metadata
-// as the query instead of an acoustic fingerprint.
+// Identification without AcoustID: match on existing tags, accepted only when
+// MusicBrainz agrees on both title and duration.
 
-// How many search hits are considered before duration confirmation. MusicBrainz
-// returns them best-scoring first, and the real filter is the title/duration
-// agreement below, so a handful is plenty.
+// Hits come best-first and title/duration is the real filter, so a handful is plenty.
 const SEARCH_LIMIT = 5;
 
-// Escaped rather than stripped, so a file tagged "AC\DC" searches for the band
-// it names instead of for "AC DC".
+// Escaped, not stripped: "AC\DC" must not search for "AC DC".
 function term(value) {
   return luceneQuoted(String(value).trim());
 }
 
-// A corrupt or non-audio file that slipped past the extension check has nothing
-// to match on — that's a review item, not a crash.
+// A corrupt or non-audio file is a review item, not a crash.
 async function readTagsSafely(filePath) {
   try {
     return await tags.readTags(filePath);
@@ -41,8 +31,7 @@ function recordingQuery({ artist, title }) {
     .join(' AND ');
 }
 
-// The candidates whose title agrees with the file's own title tag and that
-// carry a length to confirm against, ranked by how close that length is.
+// Title-matching candidates with a length, ranked by duration closeness.
 function rankByDuration(recordings, { title, durationMs }) {
   const wanted = normalizeTitle(title);
   const plausible = recordings
@@ -51,16 +40,8 @@ function rankByDuration(recordings, { title, durationMs }) {
   return rankCandidates(plausible, durationMs);
 }
 
-/**
- * Mirrors ingest.js's identifyFile. Exactly one of `confirmed` / `reason` is set:
- *  - matched: `{ confirmed: Recording, reason: null }` — a full getRecording()
- *    result, ready to tag and file.
- *  - not matched: `{ confirmed: null, reason: string }` — the reason is shown to
- *    the user in the review list, so it explains what to do next.
- *
- * @param {string} filePath
- * @returns {Promise<{confirmed: object|null, reason: string|null}>}
- */
+// Mirrors ingest.js's identifyFile: exactly one of `confirmed` (a getRecording()
+// result) or `reason` (shown to the user in review) is set.
 export async function identifyFileFromTags(filePath) {
   const current = await readTagsSafely(filePath);
   if (!current?.artist || !current.title) {
@@ -80,18 +61,8 @@ export async function identifyFileFromTags(filePath) {
   return { confirmed: await mb.getRecording(best.mbid), reason: null };
 }
 
-/**
- * Mirrors the fingerprint path's per-file candidate gathering for an album folder.
- * Either shape, never a mixture — callers discriminate on `reason`:
- *  - `{ perFile: Array<{filePath, durationMs, recMbids, tags}>, releaseGroupMbids: string[] }`
- *  - `{ reason: string }` when the tags give us nothing to go on.
- *
- * `recMbids` is always empty here: without fingerprints the folder's coherence
- * check rests entirely on durations.
- *
- * @param {string[]} files
- * @returns {Promise<{perFile?: object[], releaseGroupMbids?: string[], reason?: string}>}
- */
+// Album-folder counterpart: `{ perFile, releaseGroupMbids }` or `{ reason }`, never both.
+// recMbids is always empty; without fingerprints coherence rests on durations.
 export async function albumCandidatesFromTags(files) {
   const perFile = [];
   for (const filePath of files) {
@@ -99,9 +70,7 @@ export async function albumCandidatesFromTags(files) {
     perFile.push({ filePath, durationMs: current.durationMs ?? null, recMbids: [], tags: current });
   }
 
-  // Filename order is only a proxy for track order; when every file carries a
-  // track number, trust that instead so the positional coherence check lines up
-  // with the tracklist even for folders named "Title.mp3".
+  // Prefer track numbers over filename order when every file has one.
   if (perFile.every((f) => f.tags.trackNumber)) {
     perFile.sort((a, b) => (a.tags.disc || 1) - (b.tags.disc || 1) || a.tags.trackNumber - b.tags.trackNumber);
   }
@@ -126,15 +95,8 @@ export async function albumCandidatesFromTags(files) {
   return { perFile, releaseGroupMbids: groups.slice(0, SEARCH_LIMIT).map((g) => g.mbid) };
 }
 
-// Manual-picker counterpart to findCandidatesForFile's AcoustID near-misses:
-// whatever MusicBrainz returns for the file's tags, unfiltered, so a human can
-// pick even when the automatic tag match above wasn't confident enough.
-//
-// `fallback` fills in fields the file's own tags don't carry. The library's
-// repair flow passes the file's path-derived tags here, because the files that
-// need repairing are precisely the ones whose tags are too empty to search on —
-// without it, every Health row returns zero candidates and the picker is a bare
-// search box. Only used to fill gaps; a real tag always wins.
+// Unfiltered tag-search results for the manual picker. `fallback` (e.g. path
+// tags) fills only fields the file lacks; a real tag always wins.
 export async function candidatesFromTags(filePath, { fallback = null } = {}) {
   const tags = await readTagsSafely(filePath);
   const current = {
@@ -150,8 +112,7 @@ export async function candidatesFromTags(filePath, { fallback = null } = {}) {
     title: r.title,
     artist: r.artist,
     lengthMs: r.lengthMs,
-    // MusicBrainz scores 0–100; AcoustID scores 0–1. Normalize so the picker
-    // renders one scale regardless of which path produced the candidate.
+    // MusicBrainz scores 0-100, AcoustID 0-1; normalize to one scale.
     score: r.score / 100,
     releaseGroupTitle: r.releaseGroupTitle ?? null,
   }));

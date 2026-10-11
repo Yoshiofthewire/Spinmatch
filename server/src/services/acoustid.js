@@ -29,10 +29,7 @@ export async function lookup({ fingerprint, durationSeconds }) {
 
     let response;
     try {
-      // Timed out for the same reason MusicBrainz is: the rate limiter above is
-      // one process-wide queue, so a stalled request holds up every fingerprint
-      // lookup behind it, and Node's fetch waits on a half-open socket for
-      // minutes by default.
+      // A stalled request would block the process-wide limiter queue.
       response = await fetch(BASE_URL, {
         method: 'POST',
         body,
@@ -56,8 +53,7 @@ export async function lookup({ fingerprint, durationSeconds }) {
     return parsed;
   });
 
-  // Flatten and deduplicate: if a recordingMbid appears in multiple results,
-  // keep only the highest score.
+  // Dedupe by recordingMbid, keeping the highest score.
   const deduped = new Map();
   for (const result of json.results || []) {
     for (const recording of result.recordings || []) {

@@ -24,8 +24,7 @@ export function startLibrarySync({ scan = scanLibrary, watch = true } = {}) {
   let scanning = false;
   let dirty = false;
 
-  // Never two scans at once. A trigger that lands mid-scan may describe a
-  // change the walk already passed, so it buys exactly one more scan after.
+  // One scan at a time; a mid-scan trigger buys exactly one more.
   const runScan = async () => {
     if (scanning) {
       dirty = true;
@@ -52,8 +51,6 @@ export function startLibrarySync({ scan = scanLibrary, watch = true } = {}) {
     try {
       count = getStats(getDb()).totalTracks;
     } catch (err) {
-      // Falling back to the shortest interval is the safe choice, but silently
-      // is not: a database that can't be read is worth knowing about.
       console.warn(`librarySync: could not read collection size, using the default interval: ${err.message}`);
     }
     timer = setTimeout(async () => {
@@ -63,28 +60,18 @@ export function startLibrarySync({ scan = scanLibrary, watch = true } = {}) {
     timer.unref?.();
   };
 
-  // Kick off the initial scan, then schedule the recurring one.
   runScan().then(scheduleNext);
 
   if (watch && config.ingest.musicDir) {
     try {
       watcher = fs.watch(config.ingest.musicDir, { recursive: true }, (eventType, filename) => {
-        // Ignore the app's own writes. Every tag repair changes an mtime, so a
-        // 500-file bulk fix fired 500 watch events, which debounced into a full
-        // library scan — one that then re-read the tags of all 500 files, since
-        // the app had just changed every one of their change_keys. The individual
-        // reindexFile calls had already done that work.
+        // Our own writes are already reindexed; don't rescan for them.
         if (filename && wasWrittenByUs(filename)) return;
         if (debounce) clearTimeout(debounce);
         debounce = setTimeout(runScan, WATCH_DEBOUNCE_MS);
         debounce.unref?.();
       });
-      // Without this the watcher is a live grenade. Recursive fs.watch on Linux
-      // takes one inotify watch per directory, and a large library against the
-      // default max_user_watches hits ENOSPC — which arrives as an 'error' event,
-      // and an EventEmitter 'error' with no listener throws. That went to the
-      // global uncaughtException handler, printed one line, and left the app
-      // reporting itself healthy with file-change detection silently dead.
+      // An unhandled 'error' (e.g. ENOSPC on inotify limits) would throw.
       watcher.on('error', (err) => {
         console.warn(`librarySync: watch on MUSIC_DIR failed, falling back to interval scans only: ${err.message}`);
         if (err.code === 'ENOSPC') {
@@ -105,11 +92,8 @@ export function startLibrarySync({ scan = scanLibrary, watch = true } = {}) {
       if (debounce) clearTimeout(debounce);
       if (watcher) watcher.close();
     },
-    // Whether file-change detection is actually running. Surfaced so an operator
-    // can tell "nothing changed" from "the watcher died and nobody said so".
     watching: () => watcher !== null,
-    // Exposed only so tests can prove the concurrency guard above coalesces
-    // overlapping scans; not used by production callers.
+    // Test seam.
     _triggerScan: runScan,
   };
 }
