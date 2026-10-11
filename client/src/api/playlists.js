@@ -8,6 +8,11 @@ export function createPlaylist(name) {
   return post('/playlists', { name });
 }
 
+// `text` is the .m3u file's contents; answers { playlist, added, gaps, truncated }.
+export function importPlaylist(name, text) {
+  return post('/playlists/import', { name, text });
+}
+
 export function getPlaylist(id) {
   return get(`/playlists/${id}`);
 }

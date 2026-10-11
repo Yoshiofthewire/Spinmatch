@@ -400,6 +400,12 @@ There are three ways to add tracks to a playlist:
   tracks by the artists connected to them that you also own. Nothing is added until you review the
   proposal and press **Add selected**.
 
+**Import .m3u** on the Playlists page creates a new playlist from an `.m3u` or `.m3u8` file (UTF-8,
+up to 5000 entries). Each entry is matched by its path first: an absolute path inside `MUSIC_DIR`, a
+path relative to `MUSIC_DIR`, or a `file://` URL. Windows backslashes are accepted. An entry that
+points outside `MUSIC_DIR` is never looked up. Otherwise the `#EXTINF` line's `Artist - Title` is
+matched the way a pasted line is, and anything still unmatched becomes a gap.
+
 ### Choosing tracks
 
 The Suggest tab offers two selection methods:

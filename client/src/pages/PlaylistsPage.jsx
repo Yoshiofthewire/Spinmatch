@@ -4,6 +4,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import EqualizerLoader from '../components/EqualizerLoader.jsx';
 import ErrorBanner from '../components/ErrorBanner.jsx';
 import PlaylistDetail from '../components/playlist/PlaylistDetail.jsx';
+import ImportM3uForm from '../components/playlist/ImportM3uForm.jsx';
 import PlayerBar from '../components/library/PlayerBar.jsx';
 import { listPlaylists, createPlaylist } from '../api/playlists.js';
 import { formatBytes } from '../lib/format.js';
@@ -23,6 +24,7 @@ export default function PlaylistsPage() {
   const [createError, setCreateError] = useState(null);
 
   const [playing, setPlaying] = useState(null); // { track, queue }
+  const [imported, setImported] = useState(null); // last import's result, shown on its playlist
 
   const load = useCallback(async () => {
     setError(null);
@@ -46,7 +48,13 @@ export default function PlaylistsPage() {
   }
 
   function backToList() {
+    setImported(null);
     setParams({});
+  }
+
+  function onImported(result) {
+    setImported(result);
+    openPlaylist(result.playlist.id);
   }
 
   async function submitCreate(e) {
@@ -78,6 +86,13 @@ export default function PlaylistsPage() {
               ← Back to playlists
             </button>
           </div>
+          {imported?.playlist.id === Number(selectedId) && (
+            <div className="banner banner-success">
+              Imported {imported.added} track{imported.added === 1 ? '' : 's'}
+              {imported.gaps > 0 && `, ${imported.gaps} not in your library`}.
+              {imported.truncated && ' The file had more entries than one import takes; the rest were skipped.'}
+            </div>
+          )}
           <PlaylistDetail
             id={Number(selectedId)}
             onPlay={(track, queue) => setPlaying({ track, queue })}
@@ -99,6 +114,7 @@ export default function PlaylistsPage() {
             </button>
           </form>
           {createError && <p className="banner banner-error">{createError}</p>}
+          <ImportM3uForm onImported={onImported} />
 
           {error && <ErrorBanner message={error} onRetry={load} />}
           {state === 'loading' && <EqualizerLoader label="Loading playlists…" />}
