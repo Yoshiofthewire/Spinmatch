@@ -9,6 +9,7 @@ import { installFetchMock, jsonResponse } from './test/fetchMock.js';
 vi.mock('./AuthContext.jsx', () => ({ useAuth: () => ({ username: 'me', logout: () => {} }) }));
 
 afterEach(() => {
+  vi.restoreAllMocks();
   cleanup();
   localStorage.clear();
 });
@@ -76,6 +77,40 @@ describe('App', () => {
     // Removed once, after the success; the failed attempt left it alone.
     expect(removeItem).toHaveBeenCalledTimes(1);
     removeItem.mockRestore();
+  });
+
+  it('still shows server history when browser storage throws', async () => {
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new DOMException('blocked', 'SecurityError');
+    });
+    installFetchMock([
+      { test: isConfig, respond: () => jsonResponse({}), once: false },
+      {
+        test: (url) => url.startsWith('/api/history?'),
+        respond: () => jsonResponse({ entries: [{ id: 1, title: 'From the server', artist: 'A', action: 'verified', status: 'confirmed', videoId: null, createdAt: 1 }], total: 1 }),
+      },
+    ]);
+    renderAt('/history');
+    expect(await screen.findByText('From the server')).toBeInTheDocument();
+  });
+
+  it('splits an oversized browser history into imports under the body limit', async () => {
+    const long = 'x'.repeat(480);
+    const legacy = Array.from({ length: 200 }, (_, i) => ({ track: `${long}${i}`, artist: long, album: long, action: 'verified', timestamp: 1000 + i }));
+    localStorage.setItem('spinmatch:history', JSON.stringify(legacy));
+    const calls = installFetchMock([
+      { test: isConfig, respond: () => jsonResponse({}), once: false },
+      { once: false, method: 'POST', test: (url) => url === '/api/history/import', respond: () => jsonResponse({ imported: 1, skipped: 0 }) },
+    ]);
+    renderAt('/about');
+
+    await vi.waitFor(() => expect(localStorage.getItem('spinmatch:history')).toBeNull());
+    const posts = calls.filter((c) => c.url === '/api/history/import');
+    expect(posts.length).toBeGreaterThan(1);
+    for (const post of posts) {
+      expect(new TextEncoder().encode(JSON.stringify(post.body)).length).toBeLessThan(256 * 1024);
+    }
+    expect(posts.flatMap((p) => p.body.entries)).toEqual(legacy);
   });
 
   it('renders NotFound for an unknown route', async () => {

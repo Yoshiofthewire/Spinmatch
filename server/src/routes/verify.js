@@ -73,6 +73,11 @@ verifyRouter.get('/album/:mbid/stream', sameOriginOnly, requireMbidParam(), sseS
     for (const track of tracks) {
       if (signal.aborted) return STREAM_HANDLED;
       if (track.lengthMs == null) {
+        // No length to compare against, so no lookup; still a result worth keeping.
+        recordHistory({
+          recordingMbid: track.recordingMbid, artist: release.artist, title: track.title, album: release.title,
+          action: 'verified', status: 'no_results',
+        });
         send('result', { position: track.position, title: track.title, status: 'no_results', video: null, deltaSeconds: null });
         continue;
       }

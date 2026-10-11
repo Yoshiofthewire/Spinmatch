@@ -350,3 +350,27 @@ test('POST /api/verify rejects non-string, oversized and out-of-range fields', a
     assert.equal(res.status, 400, `expected 400 for ${JSON.stringify(body)}`);
   }
 });
+
+test('GET /api/verify/album/:mbid/stream records a track with no length as no_results', async (t) => {
+  const agent = mockMusicBrainzAgent();
+  const mb = agent.get('https://musicbrainz.org');
+  mb.intercept({ path: /\/ws\/2\/release\?.*release-group=d7d7d7d7-d7d7-4d7d-8d7d-d7d7d7d7d7d7.*/ }).reply(200, {
+    releases: [{ id: 'nolen-release', status: 'Official' }],
+  });
+  mb.intercept({ path: '/ws/2/release/nolen-release?inc=recordings%2Bartist-credits&fmt=json' }).reply(200, {
+    id: 'nolen-release',
+    title: 'Lengthless',
+    'artist-credit': [{ name: 'Someone' }],
+    media: [{ tracks: [{ position: 1, title: 'Hidden Track', length: null, recording: { id: 'r9' } }] }],
+  });
+  mockExecFile(t, () => assert.fail('no lookup without a length'));
+
+  const res = await fetch(`${baseUrl}/api/verify/album/d7d7d7d7-d7d7-4d7d-8d7d-d7d7d7d7d7d7/stream`, {
+    headers: { 'Sec-Fetch-Site': 'same-origin' },
+  });
+  const results = parseSse(await res.text()).filter((e) => e.event === 'result');
+  assert.equal(results[0].data.status, 'no_results');
+  assert.deepEqual(history(), [
+    { mbid: 'r9', artist: 'Someone', title: 'Hidden Track', album: 'Lengthless', action: 'verified', status: 'no_results', videoId: null },
+  ]);
+});
