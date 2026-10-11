@@ -20,10 +20,11 @@ export function installFetchMock(routes) {
   global.fetch = vi.fn(async (input, init = {}) => {
     const url = typeof input === 'string' ? input : input.url;
     const method = (init.method ?? 'GET').toUpperCase();
-    calls.push({ url, method, body: init.body ? JSON.parse(init.body) : undefined });
+    const body = init.body ? JSON.parse(init.body) : undefined;
+    calls.push({ url, method, body });
 
     const index = queue.findIndex(
-      (r) => (!r.method || r.method === method) && r.test(url),
+      (r) => (!r.method || r.method === method) && r.test(url, body),
     );
     if (index === -1) {
       throw new Error(`fetchMock: no route matches ${method} ${url}`);

@@ -197,19 +197,9 @@ playlistsRouter.post('/:id/export/m3u', async (req, res, next) => {
   }
 });
 
-// GET, not POST: house convention. Every SSE stream in this app is a GET that
-// opts into the CSRF guard by hand, and one shared client helper
-// (lib/eventStream.js) that opens all of them beats protocol purity for a
-// single route.
-//
-// It is not a capability claim. The reason given here used to be "EventSource
-// only issues GET requests", but the client abandoned EventSource for fetch —
-// its own header explains why at length — so POST was available the whole time.
-// That distinction has teeth: sameOriginOnly accepts Sec-Fetch-Site: none,
-// which is a user-initiated navigation, so this URL pasted into the address bar
-// of a logged-in browser starts a real export with no confirmation step in
-// front of it. A POST would not have been reachable that way.
-playlistsRouter.get('/:id/export/dropoff', sameOriginOnly, async (req, res, next) => {
+// POST: it deletes and rewrites a folder, so it must not be reachable by a
+// navigation. Answers with an SSE stream.
+playlistsRouter.post('/:id/export/dropoff', sameOriginOnly, async (req, res, next) => {
   try {
     if (!playlistExportEnabled()) {
       throw new NotFoundError('No drop-off folder is configured');
@@ -230,7 +220,7 @@ playlistsRouter.get('/:id/export/dropoff', sameOriginOnly, async (req, res, next
       );
     }
 
-    if (req.query.replace !== '1' && existing.exists) {
+    if (req.body?.replace !== true && existing.exists) {
       res.status(409).json({
         error: {
           code: 'DROPOFF_EXISTS',
@@ -253,7 +243,11 @@ playlistsRouter.get('/:id/export/dropoff', sameOriginOnly, async (req, res, next
         onProgress: (p) => send('progress', p),
         signal,
       });
-      noteExport(getDb(), playlist.id, result.dir);
+      // An aborted export leaves a partial folder; don't record it as this
+      // playlist's export.
+      if (result.copied + result.skipped === playlist.items.length) {
+        noteExport(getDb(), playlist.id, result.dir);
+      }
       return result;
     })(req, res);
   } catch (err) {

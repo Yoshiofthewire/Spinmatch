@@ -43,7 +43,8 @@ export function sseStream(handler) {
     // A comment line keeps the connection warm between real events.
     const heartbeat = setInterval(() => { if (alive()) res.write(': keep-alive\n\n'); }, HEARTBEAT_MS);
     heartbeat.unref?.();
-    req.on('close', () => ac.abort());
+    // res, not req: a POST's req has already closed once its body was read.
+    res.on('close', () => ac.abort());
 
     try {
       // The handler's return value is the `done` payload: undefined for the

@@ -21,8 +21,8 @@ function playlistRoute() {
 
 function dropoffRoute({ replace }, respond) {
   return {
-    test: (url) => url.startsWith('/api/playlists/pl1/export/dropoff')
-      && url.includes('replace=1') === replace,
+    method: 'POST',
+    test: (url, body) => url === '/api/playlists/pl1/export/dropoff' && body?.replace === replace,
     respond,
   };
 }
@@ -58,7 +58,7 @@ describe('PlaylistDetail drop-off Replace gate', () => {
     expect(banner.textContent).toContain(new Date('2026-07-01T12:00:00.000Z').toLocaleString());
   });
 
-  it('does not request replace=1 until Replace is clicked, and does so once clicked', async () => {
+  it('does not request replace until Replace is clicked, and does so once clicked', async () => {
     const calls = installFetchMock([
       playlistRoute(),
       dropoffRoute({ replace: false }, () => errorResponse({
@@ -86,10 +86,10 @@ describe('PlaylistDetail drop-off Replace gate', () => {
     await user.click(screen.getByRole('button', { name: 'Export to player' }));
     await screen.findByText(/A folder already exists/);
 
-    // The pre-check happened, and it did NOT carry replace=1.
+    // The pre-check happened as a POST, and it did NOT ask to replace.
     const dropoffCalls = calls.filter((c) => c.url.includes('/export/dropoff'));
     expect(dropoffCalls).toHaveLength(1);
-    expect(dropoffCalls[0].url).not.toContain('replace=1');
+    expect(dropoffCalls[0]).toMatchObject({ method: 'POST', body: { replace: false } });
 
     await user.click(screen.getByRole('button', { name: 'Replace' }));
 
@@ -97,12 +97,12 @@ describe('PlaylistDetail drop-off Replace gate', () => {
       expect(calls.filter((c) => c.url.includes('/export/dropoff'))).toHaveLength(2);
     });
     const secondCall = calls.filter((c) => c.url.includes('/export/dropoff'))[1];
-    expect(secondCall.url).toContain('replace=1');
+    expect(secondCall).toMatchObject({ method: 'POST', body: { replace: true } });
 
     await screen.findByText(/Copied 5 files/);
   });
 
-  it('never sends replace=1 when the confirmation is cancelled instead of confirmed', async () => {
+  it('never sends replace when the confirmation is cancelled instead of confirmed', async () => {
     const calls = installFetchMock([
       playlistRoute(),
       dropoffRoute({ replace: false }, () => errorResponse({
@@ -125,6 +125,6 @@ describe('PlaylistDetail drop-off Replace gate', () => {
 
     // No further request at all -- cancelling is purely local state.
     expect(calls.filter((c) => c.url.includes('/export/dropoff'))).toHaveLength(1);
-    expect(calls.some((c) => c.url.includes('replace=1'))).toBe(false);
+    expect(calls.some((c) => c.body?.replace === true)).toBe(false);
   });
 });
