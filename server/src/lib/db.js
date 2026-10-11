@@ -185,7 +185,8 @@ CREATE TABLE IF NOT EXISTS tag_writes (
   after             TEXT NOT NULL,
   cover_before      BLOB,
   cover_before_mime TEXT,
-  after_mtime_ms    INTEGER
+  after_mtime_ms    INTEGER,
+  undone_at         INTEGER
 );
 `;
 

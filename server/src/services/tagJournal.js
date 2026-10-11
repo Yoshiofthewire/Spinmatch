@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import { getDb, withTransaction } from '../lib/db.js';
-import { readTags, writeTags } from './tags.js';
+import { readTags, readCoverArt, writeTags } from './tags.js';
 import { reindexFile } from './libraryScanner.js';
 import { assertReadableInsideMusicDir } from '../lib/paths.js';
 import { withFileLock } from '../lib/fileLock.js';
@@ -72,6 +72,22 @@ export function listChanges(db = getDb(), { limit = 50, offset = 0 } = {}) {
   return { changes, total };
 }
 
+const joined = (v) => (Array.isArray(v) ? v.join(', ') : v);
+
+async function matchesBefore(real, current, before, w) {
+  for (const f of Object.keys(current)) {
+    if (f !== 'coverArt') {
+      if (current[f] !== (joined(before[f]) ?? null)) return false;
+    } else if (!w.cover_before) {
+      if (current.coverArt) return false;
+    } else {
+      const cover = await readCoverArt(real);
+      if (!cover || !Buffer.from(w.cover_before).equals(cover.bytes)) return false;
+    }
+  }
+  return true;
+}
+
 // Restores one file unless anything touched it since our write; returns a conflict reason or null.
 async function undoWrite(w) {
   let real;
@@ -85,6 +101,8 @@ async function undoWrite(w) {
     const after = JSON.parse(w.after);
     const { mtimeMs } = await fs.stat(real);
     const current = snapshot(await readTags(real), Object.keys(after));
+    // Already restored by a run that died before recording it.
+    if (await matchesBefore(real, current, before, w)) return null;
     if (Math.trunc(mtimeMs) !== w.after_mtime_ms
       || Object.keys(after).some((f) => current[f] !== after[f])) {
       return 'The file changed after this edit, so it was left alone.';
@@ -104,16 +122,21 @@ async function undoWrite(w) {
   });
 }
 
-export async function undoBatch(batchId, { db = getDb() } = {}) {
+// Idempotent: each file is marked as it is restored, and the batch only once nothing
+// failed, so a run that dies halfway can simply be run again.
+export function undoBatch(batchId, { db = getDb() } = {}) {
+  return withFileLock(`undo:${batchId}`, () => runUndo(db, batchId));
+}
+
+async function runUndo(db, batchId) {
   const batch = db.prepare('SELECT id, undone_at FROM tag_batches WHERE id = ?').get(batchId);
   if (!batch) throw new NotFoundError('That change is no longer in the history');
-  // Claim before writing, so two clicks can't both run it.
-  const claimed = db.prepare(
-    'UPDATE tag_batches SET undone_at = ? WHERE id = ? AND undone_at IS NULL'
-  ).run(Date.now(), batchId).changes;
-  if (!claimed) throw new ConflictError('This change has already been undone');
+  if (batch.undone_at != null) throw new ConflictError('This change has already been undone');
 
-  const writes = db.prepare('SELECT * FROM tag_writes WHERE batch_id = ? ORDER BY id DESC').all(batchId);
+  const writes = db.prepare(
+    'SELECT * FROM tag_writes WHERE batch_id = ? AND undone_at IS NULL ORDER BY id DESC'
+  ).all(batchId);
+  const markWrite = db.prepare('UPDATE tag_writes SET undone_at = ? WHERE id = ?');
   let undone = 0;
   const conflicts = [];
   const failed = [];
@@ -121,12 +144,18 @@ export async function undoBatch(batchId, { db = getDb() } = {}) {
     await yieldToEventLoop();
     try {
       const reason = await undoWrite(w);
-      if (reason) conflicts.push({ path: w.path, reason });
-      else undone += 1;
+      if (reason) {
+        conflicts.push({ path: w.path, reason });
+      } else {
+        markWrite.run(Date.now(), w.id);
+        undone += 1;
+      }
     } catch (err) {
       console.warn(`tagJournal: undo of ${w.path} failed: ${err?.message}`);
       failed.push({ path: w.path, ...describeFailure(err) });
     }
   }
+  // Conflicts are final (we never clobber later edits); failures leave it retryable.
+  if (!failed.length) db.prepare('UPDATE tag_batches SET undone_at = ? WHERE id = ?').run(Date.now(), batchId);
   return { undone, conflicts, failed };
 }

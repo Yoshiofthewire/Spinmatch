@@ -254,12 +254,13 @@ Spinmatch records the old tags (and the old embedded cover) of every file it cha
 Library: hand edits of a track or an album, MusicBrainz fixes, and whole-album repairs. Each of
 those actions can be undone once from the **Changes** tab; album edits and repairs also show an
 **Undo** under their result. Undo puts back what was there, including emptying a field that was
-empty before. An artist or genre that held several values comes back as one joined value, as it
-does when you edit it, and only the front cover is restored.
+empty before, and an artist or genre that held several values. Only the front cover is restored.
 
 - **Undo never overwrites a later change.** If a file was edited again, by Spinmatch or anything
   else, or is no longer there, undo skips it and lists it. The rest of the change is still undone.
 - **Not covered:** the Ingest page, and moving duplicates aside (that has its own Undo).
+- **Safe to retry.** If a file fails (a permissions error, say) or Spinmatch stops partway, run
+  Undo again: files already restored are skipped.
 - **Kept for 90 days, and at most the 500 newest changes.**
 
 ### MusicBrainz checks

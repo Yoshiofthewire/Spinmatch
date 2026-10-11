@@ -30,10 +30,9 @@ function readField(tag, field) {
 // '' clears the field; readField reads every cleared form back as null.
 function writeField(tag, field, value) {
   const prop = FIELD_TO_TAG_PROP[field];
-  if (field === 'artist') {
-    tag.performers = value === '' ? [] : [value];
-  } else if (field === 'genre') {
-    tag.genres = value === '' ? [] : [value];
+  if (field === 'artist' || field === 'genre') {
+    // An array restores a multi-value tag exactly (undo).
+    tag[prop] = value === '' ? [] : Array.isArray(value) ? value : [value];
   } else if (value === '') {
     tag[prop] = NUMERIC_FIELDS.has(field) ? 0 : undefined;
   } else {
@@ -159,7 +158,9 @@ function applyTags(tag, desired, { coverImage, overwrite, replaceCoverArt, remov
     const target = desiredValue === '' ? null : desiredValue;
     const shouldWrite = overwrite ? current !== target : current == null;
     if (shouldWrite) {
-      before[field] = current;
+      const list = tag[FIELD_TO_TAG_PROP[field]];
+      // Multi-value artist/genre is kept as its list so undo restores it exactly.
+      before[field] = Array.isArray(list) && list.length > 1 ? [...list] : current;
       writeField(tag, field, desiredValue);
       filledFields.push(field);
     }

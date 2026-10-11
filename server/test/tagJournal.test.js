@@ -212,3 +212,50 @@ test('HTTP: list changes, undo one, and a second undo is 409', async () => {
     server.close();
   }
 });
+
+test('undo restores a multi-value artist as its separate values', async () => {
+  const { real, id } = await addTrack('tagged.mp3');
+  await writeTags(real, { artist: ['Alpha', 'Beta'] }, { overwrite: true });
+  await reindexFile(real);
+
+  const { batchId } = await editTrackTags({ trackId: id, fields: { artist: 'Gamma' } });
+  await undoBatch(batchId);
+
+  const { File } = await import('node-taglib-sharp');
+  const file = File.createFromPath(real);
+  try {
+    assert.deepEqual([...file.tag.performers], ['Alpha', 'Beta']);
+  } finally {
+    file.dispose();
+  }
+});
+
+test('an undo that died after restoring a file counts it as undone on the rerun', async () => {
+  const { real, id } = await addTrack('tagged.mp3');
+  const original = (await readTags(real)).title;
+  const { batchId } = await editTrackTags({ trackId: id, fields: { title: 'Typo' } });
+  // The file was restored but the run died before recording it.
+  await writeTags(real, { title: original }, { overwrite: true });
+
+  assert.deepEqual(await undoBatch(batchId), { undone: 1, conflicts: [], failed: [] });
+  assert.equal(listChanges(db).changes[0].undoneAt != null, true);
+});
+
+test('a failed file leaves the change retryable, and the rerun finishes it', { skip: process.getuid?.() === 0 && 'root ignores permissions' }, async () => {
+  const { real, id } = await addTrack('tagged.mp3');
+  const original = (await readTags(real)).title;
+  const { batchId } = await editTrackTags({ trackId: id, fields: { title: 'Typo' } });
+
+  fs.chmodSync(path.dirname(real), 0o555); // the temp copy can't be created
+  let first;
+  try {
+    first = await undoBatch(batchId);
+  } finally {
+    fs.chmodSync(path.dirname(real), 0o755);
+  }
+  assert.equal(first.failed.length, 1);
+  assert.equal(listChanges(db).changes[0].undoneAt, null);
+
+  assert.deepEqual(await undoBatch(batchId), { undone: 1, conflicts: [], failed: [] });
+  assert.equal((await readTags(real)).title, original);
+});
