@@ -12,6 +12,16 @@ process.env.MB_CONTACT_EMAIL = 'test@example.com';
 process.env.ACOUSTID_API_KEY = 'test-acoustid-key';
 
 const configModule = await import('../src/config.js');
+const { openDb, setDbForTest } = await import('../src/lib/db.js');
+
+// History rows are written per real move; an in-memory DB keeps them out of data/.
+const db = openDb(':memory:');
+setDbForTest(db);
+test.after(() => { setDbForTest(null); db.close(); });
+test.beforeEach(() => db.exec('DELETE FROM verify_history'));
+const history = () => db.prepare(
+  'SELECT action, title, artist, album, recording_mbid AS mbid FROM verify_history ORDER BY id',
+).all().map((r) => ({ ...r }));
 const { scanIngestDir, processIngest } = await import('../src/services/ingest.js');
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -147,6 +157,10 @@ test('processIngest tags a confirmed loose file, moves it into the library, and 
     assert.equal(result.needsReview.length, 0);
     assert.equal(moveArgs.meta.album, 'Track Album');
     assert.equal(moveArgs.ext, '.mp3');
+    assert.deepEqual(history(), [{
+      action: 'ingested', title: 'Track Title', artist: 'Track Artist', album: 'Track Album',
+      mbid: '77777777-7777-4777-8777-777777777777',
+    }]);
   });
 });
 
@@ -254,6 +268,7 @@ test('a confirmed loose file whose move fails is reported as tagged-but-not-move
     assert.equal(result.needsReview.length, 1);
     assert.match(result.needsReview[0].reason, /tagged in place, but could not be moved/i);
     assert.equal(result.needsReview[0].code, 'move_failed');
+    assert.deepEqual(history(), [], 'a failed move is not history');
   });
 });
 
@@ -600,6 +615,10 @@ test('a coherent single-disc album folder tags and moves every track', async (t)
     assert.equal(moves[0].discNumber, null);
     assert.deepEqual(moves.map((m) => m.trackNumber), [1, 2]);
     assert.deepEqual(moves.map((m) => m.title), ['Opener', 'Closer']);
+    assert.deepEqual(history().map((r) => [r.action, r.title, r.album, r.mbid]), [
+      ['ingested', 'Opener', 'An Album', '77777777-7777-4777-8777-777777777777'],
+      ['ingested', 'Closer', 'An Album', '88888888-8888-4888-8888-888888888888'],
+    ]);
   });
 });
 
@@ -789,6 +808,7 @@ test('a dry-run previews planned tags and target path without writing or moving 
     assert.deepEqual(new Set(result.matched[0].filledFields), new Set(['artist', 'title', 'album', 'year']));
     assert.equal(wrote, false, 'a dry-run must not write tags');
     assert.equal(moved, false, 'a dry-run must not move files');
+    assert.deepEqual(history(), [], 'a dry-run is not history');
   });
 });
 
@@ -855,6 +875,7 @@ test('a dry-run previews an album without writing or moving any track', async (t
     assert.equal(result.matched[0].movedTo, '/music/The Band/Album/1 - One.mp3');
     assert.equal(wrote, false, 'a dry-run must not write album tags');
     assert.equal(moved, false, 'a dry-run must not move album tracks');
+    assert.deepEqual(history(), [], 'an album dry-run is not history');
   });
 });
 

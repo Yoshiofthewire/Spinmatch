@@ -1,5 +1,6 @@
 import { resolvePrimaryReleaseForGroup, getReleaseWithTracks } from './musicbrainz.js';
 import { verifyRecording } from './verifiedLinks.js';
+import { recordHistory } from './verifyHistory.js';
 import { getDb } from '../lib/db.js';
 import { listArtistTitles, getAlbumTracks } from './libraryRepo.js';
 import { NotFoundError } from '../lib/httpErrors.js';
@@ -54,6 +55,10 @@ export async function detectAlbumGaps(releaseGroupMbid, {
       title: track.title,
       album: release.title,
       lengthMs: track.lengthMs,
+    });
+    recordHistory({
+      recordingMbid: track.recordingMbid, artist: release.artist, title: track.title, album: release.title,
+      action: 'verified', status: verified.status, videoId: verified.video?.id,
     });
     record({ position: track.position, title: track.title, lengthMs: track.lengthMs, recordingMbid: track.recordingMbid, ...verified });
   }

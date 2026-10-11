@@ -1,6 +1,6 @@
 import { Router } from 'express';
-import { verifyTrack } from '../services/verifyTrack.js';
 import { verifyRecording } from '../services/verifiedLinks.js';
+import { recordHistory } from '../services/verifyHistory.js';
 import { resolvePrimaryReleaseForGroup, getReleaseWithTracks } from '../services/musicbrainz.js';
 import { sameOriginOnly } from '../middleware/sameOriginOnly.js';
 import { BadRequestError } from '../lib/httpErrors.js';
@@ -46,17 +46,12 @@ verifyRouter.post('/', async (req, res, next) => {
     const title = requireText(body.title, 'title');
     const album = optionalText(body.album, 'album');
     const lengthMs = requireLengthMs(body.lengthMs);
-    const { recordingMbid } = body;
+    const recordingMbid = body.recordingMbid ? assertMbid(String(body.recordingMbid), 'recordingMbid') : null;
 
-    const result = recordingMbid
-      ? await verifyRecording({
-        recordingMbid: assertMbid(String(recordingMbid), 'recordingMbid'),
-        artist,
-        title,
-        album,
-        lengthMs,
-      })
-      : await verifyTrack({ artist, title, album, lengthMs });
+    const result = await verifyRecording({ recordingMbid, artist, title, album, lengthMs });
+    recordHistory({
+      recordingMbid, artist, title, album, action: 'verified', status: result.status, videoId: result.video?.id,
+    });
     res.json(result);
   } catch (err) {
     next(err);
@@ -81,9 +76,14 @@ verifyRouter.get('/album/:mbid/stream', sameOriginOnly, requireMbidParam(), sseS
         send('result', { position: track.position, title: track.title, status: 'no_results', video: null, deltaSeconds: null });
         continue;
       }
-      // A rate limit should end the run as its own terminal event, not `done`.
-      const verified = await verifyTrack({
+      // A RateLimitedError propagates: sseStream sends `rate_limited`, no `done`, and ends.
+      const verified = await verifyRecording({
+        recordingMbid: track.recordingMbid,
         artist: release.artist, title: track.title, album: release.title, lengthMs: track.lengthMs,
+      });
+      recordHistory({
+        recordingMbid: track.recordingMbid, artist: release.artist, title: track.title, album: release.title,
+        action: 'verified', status: verified.status, videoId: verified.video?.id,
       });
       send('result', { position: track.position, title: track.title, lengthMs: track.lengthMs, ...verified });
     }

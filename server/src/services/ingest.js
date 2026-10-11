@@ -11,6 +11,7 @@ import * as tagMatch from './tagMatch.js';
 import * as fingerprintMatch from './fingerprintMatch.js';
 import * as organize from './organize.js';
 import { withFileLock } from '../lib/fileLock.js';
+import { recordHistory } from './verifyHistory.js';
 import { RateLimitedError, BadRequestError } from '../lib/httpErrors.js';
 
 const AUDIO_EXTENSIONS = new Set(['.mp3', '.flac', '.m4a', '.aac', '.ogg']);
@@ -223,6 +224,12 @@ async function finalizeLooseFile(filePath, name, confirmed, { dryRun }) {
     title: confirmed.title,
   }, dryRun);
   if (moved.needsReview) return { needsReview: moved.needsReview };
+  if (!dryRun) {
+    recordHistory({
+      recordingMbid: confirmed.mbid, artist: confirmed.artist, title: confirmed.title, album: albumTitle,
+      action: 'ingested',
+    });
+  }
 
   return {
     matched: {
@@ -354,6 +361,12 @@ async function processAlbumFolder(item, { dryRun }) {
     if (moved.needsReview) {
       needsReview.push(moved.needsReview);
       continue;
+    }
+    if (!dryRun) {
+      recordHistory({
+        recordingMbid: track.recordingMbid, artist: release.artist, title: track.title, album: release.title,
+        action: 'ingested',
+      });
     }
     matched.push({
       path: filePath,

@@ -6,18 +6,28 @@ import child_process from 'node:child_process';
 process.env.MB_CONTACT_EMAIL = 'test@example.com';
 
 const { createApp } = await import('../../src/app.js');
+const { openDb, setDbForTest } = await import('../../src/lib/db.js');
+const { getVerifiedLink } = await import('../../src/services/verifiedLinks.js');
 
 let server;
 let baseUrl;
+let db;
+
+const history = () => db.prepare(
+  'SELECT recording_mbid AS mbid, artist, title, album, action, status, video_id AS videoId FROM verify_history ORDER BY id',
+).all().map((r) => ({ ...r }));
 
 test.before(async () => {
+  db = openDb(':memory:');
+  setDbForTest(db);
   const app = createApp({ gate: (req, res, next) => next() });
   server = app.listen(0);
   await new Promise((resolve) => server.once('listening', resolve));
   baseUrl = `http://localhost:${server.address().port}`;
 });
 
-test.after(() => server.close());
+test.after(() => { server.close(); setDbForTest(null); db.close(); });
+test.beforeEach(() => db.exec('DELETE FROM verify_history'));
 
 function mockMusicBrainzAgent() {
   const agent = new MockAgent();
@@ -75,6 +85,10 @@ test('POST /api/verify returns a confirmed match for a real-looking candidate', 
   const body = await res.json();
   assert.equal(body.status, 'confirmed');
   assert.equal(body.video.id, 'vid-verify-1');
+  assert.deepEqual(history(), [{
+    mbid: null, artist: 'Verify Route Artist', title: 'Verify Route Song', album: 'Verify Route Album',
+    action: 'verified', status: 'confirmed', videoId: 'vid-verify-1',
+  }]);
 });
 
 test('POST /api/verify surfaces a rate-limited message and 429 status', async (t) => {
@@ -155,6 +169,10 @@ test('GET /api/verify/album/:mbid/stream keeps earlier results when a rate limit
   assert.equal(limited.data.code, 'RATE_LIMITED');
   // A rate limit ends the run — it is not a completed run, so no `done`.
   assert.ok(!events.some((e) => e.event === 'done'));
+  // Exactly one terminal event, and it is the last thing sent before the stream closed.
+  assert.equal(events.filter((e) => ['done', 'error', 'rate_limited'].includes(e.event)).length, 1);
+  assert.equal(events.at(-1).event, 'rate_limited');
+  assert.deepEqual(history().map((h) => [h.title, h.status]), [['Bulk Track One', 'confirmed']]);
 });
 
 test('GET /api/verify/album/:mbid/stream emits an album header, a result per track, then done', async (t) => {
@@ -198,6 +216,55 @@ test('GET /api/verify/album/:mbid/stream emits an album header, a result per tra
   assert.equal(results[0].data.status, 'confirmed');
   assert.equal(results[1].data.title, 'Stream Two');
   assert.ok(events.some((e) => e.event === 'done'), 'stream ends with a done event');
+  assert.deepEqual(history(), [
+    { mbid: 'r1', artist: 'Stream Artist', title: 'Stream One', album: 'Stream Album', action: 'verified', status: 'confirmed', videoId: 'v1' },
+    { mbid: 'r2', artist: 'Stream Artist', title: 'Stream Two', album: 'Stream Album', action: 'verified', status: 'confirmed', videoId: 'v2' },
+  ]);
+  // Bulk results fill the same verified_links cache a single verify does.
+  assert.equal(getVerifiedLink(db, 'r1').videoId, 'v1');
+  assert.equal(getVerifiedLink(db, 'r2').videoId, 'v2');
+});
+
+test('GET /api/verify/album/:mbid/stream answers a cached recording without asking yt-dlp', async (t) => {
+  const agent = mockMusicBrainzAgent();
+  const mb = agent.get('https://musicbrainz.org');
+  mb.intercept({ path: /\/ws\/2\/release\?.*release-group=c7c7c7c7-c7c7-4c7c-8c7c-c7c7c7c7c7c7.*/ }).reply(200, {
+    releases: [{ id: 'cached-release', status: 'Official' }],
+  });
+  mb.intercept({ path: '/ws/2/release/cached-release?inc=recordings%2Bartist-credits&fmt=json' }).reply(200, {
+    id: 'cached-release',
+    title: 'Cached Album',
+    'artist-credit': [{ name: 'Cached Artist' }],
+    media: [{
+      tracks: [
+        { position: 1, title: 'Cached One', length: 180000, recording: { id: 'cached-rec' } },
+        { position: 2, title: 'No Mbid', length: 190000 },
+      ],
+    }],
+  });
+  const { saveVerifiedLink } = await import('../../src/services/verifiedLinks.js');
+  saveVerifiedLink(db, { recordingMbid: 'cached-rec', artist: 'Cached Artist', title: 'Cached One', video: { id: 'from-cache', title: 'Cached One', durationMs: 180000 } });
+
+  const queries = [];
+  mockExecFile(t, (bin, args, opts, callback) => {
+    queries.push(args[args.length - 1]);
+    callback(null, ndjson([{ id: 'fresh', title: 'No Mbid', duration: 300 }]), '');
+  });
+
+  const res = await fetch(`${baseUrl}/api/verify/album/c7c7c7c7-c7c7-4c7c-8c7c-c7c7c7c7c7c7/stream`, {
+    headers: { 'Sec-Fetch-Site': 'same-origin' },
+  });
+  const results = parseSse(await res.text()).filter((e) => e.event === 'result');
+  assert.equal(results[0].data.video.id, 'from-cache');
+  assert.equal(results[0].data.cached, true);
+  assert.ok(queries.every((q) => !q.includes('Cached One')), 'the cached track must not reach yt-dlp');
+  // No MBID: still verified (verifyTrack path), recorded, and nothing cached under a null key.
+  assert.equal(results[1].data.status, 'unverified');
+  assert.deepEqual(history().map((h) => [h.title, h.mbid, h.status, h.videoId]), [
+    ['Cached One', 'cached-rec', 'confirmed', 'from-cache'],
+    ['No Mbid', null, 'unverified', 'fresh'],
+  ]);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM verified_links WHERE title = 'No Mbid'").get().n, 0);
 });
 
 // An optional recordingMbid routes the lookup through verifiedLinks instead of
@@ -205,12 +272,6 @@ test('GET /api/verify/album/:mbid/stream emits an album header, a result per tra
 // in memory and remembering it for 30 days in the database. The gap rows pass one;
 // a free-text search result has none to pass.
 test('POST /api/verify with a recordingMbid persists the result in verified_links', async (t) => {
-  const { openDb, setDbForTest } = await import('../../src/lib/db.js');
-  const { getVerifiedLink } = await import('../../src/services/verifiedLinks.js');
-  const db = openDb(':memory:');
-  setDbForTest(db);
-  t.after(() => { setDbForTest(null); db.close(); });
-
   mockMusicBrainzAgent();
   let calls = 0;
   mockExecFile(t, (bin, args, opts, callback) => {

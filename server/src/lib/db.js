@@ -5,7 +5,7 @@ import { config } from '../config.js';
 import { makeDupKey, makeMatchKey, makeTitleKey } from './normalize.js';
 
 // Bump with a matching step in migrate().
-const SCHEMA_VERSION = 9;
+const SCHEMA_VERSION = 10;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS meta (
@@ -188,6 +188,20 @@ CREATE TABLE IF NOT EXISTS tag_writes (
   after_mtime_ms    INTEGER,
   undone_at         INTEGER
 );
+
+-- Verify and ingest log behind the History page, capped in verifyHistory.js.
+CREATE TABLE IF NOT EXISTS verify_history (
+  id             INTEGER PRIMARY KEY,
+  recording_mbid TEXT,
+  artist         TEXT,
+  title          TEXT NOT NULL,
+  album          TEXT,
+  action         TEXT NOT NULL,
+  status         TEXT,
+  video_id       TEXT,
+  created_at     INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_vh_created ON verify_history(created_at);
 `;
 
 // After migrate(): upgraded installs lack these columns until it runs.
@@ -339,6 +353,7 @@ export function migrate(db) {
   }
 
   // v9: tag_batches/tag_writes, new tables only, created by SCHEMA.
+  // v10: verify_history, new table only, created by SCHEMA.
 
   db.prepare(
     "INSERT INTO meta (key, value) VALUES ('schema_version', ?) " +
