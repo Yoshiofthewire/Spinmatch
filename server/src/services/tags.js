@@ -1,3 +1,7 @@
+import fs from 'node:fs/promises';
+import { constants as fsConstants } from 'node:fs';
+import { randomBytes } from 'node:crypto';
+import path from 'node:path';
 import { File, Picture, PictureType, ByteVector } from 'node-taglib-sharp';
 import { MAX_IMAGE_BYTES } from '../lib/imageBytes.js';
 import { noteWrite } from '../lib/recentWrites.js';
@@ -116,50 +120,89 @@ export async function writeTags(
   desired,
   { coverImage, overwrite = false, replaceCoverArt = false } = {},
 ) {
+  const opts = { coverImage, overwrite, replaceCoverArt };
+  // Dry run on the original first: nothing to change means no copy, no save.
+  const filledFields = withFile(filePath, (file) => applyTags(file.tag, desired, opts));
+  // Recorded so the MUSIC_DIR watcher doesn't treat our own write as an
+  // external change (lib/recentWrites.js). Noted even for a no-op: a spurious
+  // note costs nothing, a missing one costs a full rescan.
+  noteWrite(filePath);
+  if (filledFields.length) {
+    await saveViaTemp(filePath, (file) => {
+      applyTags(file.tag, desired, opts);
+      file.save();
+    });
+  }
+  return { filledFields };
+}
+
+function withFile(filePath, fn) {
   const file = File.createFromPath(filePath);
-  const filledFields = [];
   try {
-    const { tag } = file;
-    for (const field of Object.keys(FIELD_TO_TAG_PROP)) {
-      const desiredValue = desired[field];
-      if (desiredValue == null) continue;
-      const current = readField(tag, field);
-      const shouldWrite = overwrite ? current !== desiredValue : current == null;
-      if (shouldWrite) {
-        writeField(tag, field, desiredValue);
-        filledFields.push(field);
-      }
-    }
-
-    // No coverImage means there's nothing to put there — asking to replace art
-    // must never end up removing the art the file already has.
-    const hasCoverArt = Boolean(tag.pictures && tag.pictures.length > 0);
-    if (coverImage && (replaceCoverArt || !hasCoverArt)) {
-      const picture = Picture.fromFullData(
-        ByteVector.fromByteArray(coverImage.bytes),
-        PictureType.FrontCover,
-        coverImage.mimeType,
-        ''
-      );
-      tag.pictures = [picture];
-      filledFields.push('coverArt');
-    }
-
-    // Nothing to write means nothing to save. save() rewrites the whole
-    // container, which bumps mtime and wakes the MUSIC_DIR watcher — so without
-    // this, pressing Save on a manual edit form with nothing dirty rewrites the
-    // file, and a bulk repair of an album that already agrees with its
-    // MusicBrainz tracklist rewrites every file in it, to change nothing.
-    if (filledFields.length) file.save();
+    return fn(file);
   } finally {
     file.dispose();
   }
-  // Recorded so the MUSIC_DIR watcher doesn't mistake our own write for an
-  // external change and schedule a full library rescan for it — see
-  // lib/recentWrites.js. Noted here rather than at each call site so no future
-  // writer can forget, and noted even when the save above was skipped: the note
-  // is a 30-second suppression window, so a spurious one costs nothing and a
-  // missing one costs a full rescan.
-  noteWrite(filePath);
-  return { filledFields };
+}
+
+// save() rewrites the file in place, so a crash mid-save would truncate the
+// user's music. Tag a same-directory copy instead and rename it over the
+// original. The temp is a dot-file (the scanner skips those) and keeps the real
+// extension last so taglib still detects the format.
+async function saveViaTemp(filePath, edit) {
+  const dir = path.dirname(filePath);
+  const ext = path.extname(filePath);
+  const tmp = path.join(dir, `.${path.basename(filePath)}.spinmatch-tmp-${randomBytes(6).toString('hex')}${ext}`);
+  noteWrite(tmp);
+  try {
+    const { mode } = await fs.stat(filePath);
+    await fs.copyFile(filePath, tmp, fsConstants.COPYFILE_EXCL);
+    withFile(tmp, edit);
+    const fh = await fs.open(tmp, 'r+');
+    try {
+      await fh.sync();
+    } finally {
+      await fh.close();
+    }
+    await fs.chmod(tmp, mode);
+    await fs.rename(tmp, filePath);
+  } catch (err) {
+    await fs.rm(tmp, { force: true });
+    throw err;
+  }
+  const dh = await fs.open(dir, 'r');
+  try {
+    await dh.sync();
+  } finally {
+    await dh.close();
+  }
+}
+
+function applyTags(tag, desired, { coverImage, overwrite, replaceCoverArt }) {
+  const filledFields = [];
+  for (const field of Object.keys(FIELD_TO_TAG_PROP)) {
+    const desiredValue = desired[field];
+    if (desiredValue == null) continue;
+    const current = readField(tag, field);
+    const shouldWrite = overwrite ? current !== desiredValue : current == null;
+    if (shouldWrite) {
+      writeField(tag, field, desiredValue);
+      filledFields.push(field);
+    }
+  }
+
+  // No coverImage means there's nothing to put there — asking to replace art
+  // must never end up removing the art the file already has.
+  const hasCoverArt = Boolean(tag.pictures && tag.pictures.length > 0);
+  if (coverImage && (replaceCoverArt || !hasCoverArt)) {
+    const picture = Picture.fromFullData(
+      ByteVector.fromByteArray(coverImage.bytes),
+      PictureType.FrontCover,
+      coverImage.mimeType,
+      ''
+    );
+    tag.pictures = [picture];
+    filledFields.push('coverArt');
+  }
+  return filledFields;
 }

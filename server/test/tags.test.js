@@ -345,3 +345,28 @@ test('writeTags notes the write even when the save was skipped', async () => {
     assert.equal(wasWrittenByUs(file), true);
   });
 });
+
+test('writeTags leaves the original untouched and no temp behind when the swap fails', async (t) => {
+  await withCopiedFixture('silence.mp3', async (file) => {
+    const before = await fs.readFile(file);
+    t.mock.method(fs, 'rename', async () => { throw new Error('simulated crash before rename'); });
+    await assert.rejects(writeTags(file, { artist: 'A', title: 'T' }), /simulated crash/);
+    t.mock.restoreAll();
+
+    assert.deepEqual(await fs.readFile(file), before);
+    assert.deepEqual(await fs.readdir(path.dirname(file)), ['silence.mp3']);
+  });
+});
+
+test('writeTags swaps in a tagged copy and keeps the file mode', async () => {
+  await withCopiedFixture('silence.mp3', async (file) => {
+    await fs.chmod(file, 0o640);
+    const { ino } = await fs.stat(file);
+    await writeTags(file, { artist: 'A', title: 'T' });
+    const after = await fs.stat(file);
+    assert.notEqual(after.ino, ino, 'a new inode means the original was never rewritten in place');
+    assert.equal(after.mode & 0o777, 0o640);
+    assert.equal((await readTags(file)).artist, 'A');
+    assert.deepEqual(await fs.readdir(path.dirname(file)), ['silence.mp3']);
+  });
+});
