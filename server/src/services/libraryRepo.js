@@ -386,18 +386,17 @@ export function getRemovedTrackById(db, id) {
   ).get(id) ?? null;
 }
 
-// How many live copies share this track's dup_key, counting the track itself.
+// Paths of the other live copies sharing this track's dup_key.
 //
-// Counted over the same dup_key findDuplicateGroups groups by, so the last-copy
-// guard and the list the user is looking at can never disagree about what a
-// group contains. A row with no dup_key (no artist, or no title) counts 0 rather
-// than 1: it is not part of any group, and the guard reads that as "refuse".
-export function liveCopyCountForTrack(db, id) {
+// Same dup_key findDuplicateGroups groups by, so the last-copy guard and the
+// list the user is looking at can never disagree about what a group contains.
+// A row with no dup_key is in no group and gets [], which the guard refuses.
+export function otherLiveCopyPaths(db, id) {
   return db.prepare(`
-    SELECT COUNT(*) c FROM local_tracks
-    WHERE removed = 0 AND dup_key IS NOT NULL
+    SELECT path FROM local_tracks
+    WHERE removed = 0 AND dup_key IS NOT NULL AND id != ?
       AND dup_key = (SELECT dup_key FROM local_tracks WHERE id = ?)
-  `).get(id).c;
+  `).all(id, id).map((r) => r.path);
 }
 
 // The group a live track's last-copy guard has to serialize on. A dedicated
@@ -405,7 +404,7 @@ export function liveCopyCountForTrack(db, id) {
 // every track payload the app sends out for the sake of the one caller (the
 // duplicate-trash flow) that needs it to lock a group of copies against a
 // concurrent move-aside of a sibling. Null for an unknown id and for a row
-// with no dup_key, same as liveCopyCountForTrack.
+// with no dup_key, same as otherLiveCopyPaths.
 export function getDupKeyForTrack(db, id) {
   return db.prepare(
     'SELECT dup_key FROM local_tracks WHERE id = ? AND removed = 0'

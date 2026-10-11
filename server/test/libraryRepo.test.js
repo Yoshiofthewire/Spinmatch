@@ -463,43 +463,44 @@ test('getAlbumTracks finds an album whose files carry no artist tag', () => {
 });
 
 // The last-copy guard and Undo both need to ask questions the rest of the app
-// never asks: how many live copies share this key, and where did a row that has
+// never asks: which other live copies share this key, and where did a row that has
 // been marked removed used to live.
-test('liveCopyCountForTrack counts every live copy sharing the key, itself included', () => {
+test('otherLiveCopyPaths lists every other live copy sharing the key', () => {
   const db = openDb(':memory:');
   repo.upsertLocalTrack(db, { path: '/m/a.flac', artist: 'A', album: 'Al', title: 'One', durationMs: 1000, changeKey: '1:1' });
   repo.upsertLocalTrack(db, { path: '/m/b.mp3', artist: 'A', album: 'Al', title: 'One', durationMs: 1000, changeKey: '2:1' });
   const [a, b] = db.prepare('SELECT id FROM local_tracks ORDER BY path').all();
 
-  assert.equal(repo.liveCopyCountForTrack(db, a.id), 2);
-  assert.equal(repo.liveCopyCountForTrack(db, b.id), 2);
+  assert.deepEqual(repo.otherLiveCopyPaths(db, a.id), ['/m/b.mp3']);
+  assert.deepEqual(repo.otherLiveCopyPaths(db, b.id), ['/m/a.flac']);
 });
 
-test('liveCopyCountForTrack stops counting a copy once it is marked removed', () => {
+test('otherLiveCopyPaths drops a copy once it is marked removed', () => {
   const db = openDb(':memory:');
   repo.upsertLocalTrack(db, { path: '/m/a.flac', artist: 'A', album: 'Al', title: 'One', durationMs: 1000, changeKey: '1:1' });
   repo.upsertLocalTrack(db, { path: '/m/b.mp3', artist: 'A', album: 'Al', title: 'One', durationMs: 1000, changeKey: '2:1' });
   const [a] = db.prepare('SELECT id FROM local_tracks ORDER BY path').all();
 
   repo.markRemovedByPath(db, '/m/b.mp3');
-  assert.equal(repo.liveCopyCountForTrack(db, a.id), 1);
+  assert.deepEqual(repo.otherLiveCopyPaths(db, a.id), []);
 });
 
-test('liveCopyCountForTrack returns 0 for an unknown id', () => {
+test('otherLiveCopyPaths is empty for an unknown id', () => {
   const db = openDb(':memory:');
-  assert.equal(repo.liveCopyCountForTrack(db, 999), 0);
+  assert.deepEqual(repo.otherLiveCopyPaths(db, 999), []);
 });
 
 // A row with no artist or title has no dup_key (it is NULL), and null dup_key
-// must count as 0 to the last-copy guard. A future edit swapping the IS NOT NULL
+// must group with nothing for the last-copy guard. A future edit swapping the IS NOT NULL
 // check for a COALESCE pattern would treat two NULLs as equal and break the guard
 // for every untagged track — this test ensures that regression is caught.
-test('liveCopyCountForTrack returns 0 for a row whose dup_key is null', () => {
+test('otherLiveCopyPaths is empty for a row whose dup_key is null', () => {
   const db = openDb(':memory:');
   repo.upsertLocalTrack(db, { path: '/m/untagged.mp3', artist: null, album: null, title: null, durationMs: 1000, changeKey: '1:1' });
-  const { id } = db.prepare('SELECT id FROM local_tracks').get();
+  repo.upsertLocalTrack(db, { path: '/m/untagged2.mp3', artist: null, album: null, title: null, durationMs: 1000, changeKey: '2:1' });
+  const { id } = db.prepare('SELECT id FROM local_tracks ORDER BY path').get();
 
-  assert.equal(repo.liveCopyCountForTrack(db, id), 0);
+  assert.deepEqual(repo.otherLiveCopyPaths(db, id), []);
 });
 
 // getDupKeyForTrack is the group key the duplicate-trash flow locks on, so a
