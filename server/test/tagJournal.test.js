@@ -53,9 +53,13 @@ const PNG = { bytes: Buffer.from([0x89, 0x50, 0x4e, 0x47]), mimeType: 'image/png
 // Cover writes have no hand-edit path (only MusicBrainz fixes), so journal one directly.
 async function journaledCoverWrite(real, opts) {
   const journal = openJournal(db, 'fix', 'cover');
-  const written = await writeTags(real, {}, opts);
-  await journal.record({ trackId: null, real }, written);
-  return journal.batchId;
+  try {
+    const written = await writeTags(real, {}, opts);
+    await journal.record({ trackId: null, real }, written);
+    return journal.batchId;
+  } finally {
+    journal.close();
+  }
 }
 
 test('undo restores the exact previous values and re-empties a filled field', async () => {
@@ -258,4 +262,54 @@ test('a failed file leaves the change retryable, and the rerun finishes it', { s
 
   assert.deepEqual(await undoBatch(batchId), { undone: 1, conflicts: [], failed: [] });
   assert.equal((await readTags(real)).title, original);
+});
+
+test('undo waits while its batch is still being written', async () => {
+  const { real, id } = await addTrack('tagged.mp3');
+  const journal = openJournal(db, 'album-edit', 'in progress');
+  await journal.record({ trackId: id, real }, await writeTags(real, { title: 'First' }, { overwrite: true }));
+
+  await assert.rejects(undoBatch(journal.batchId), (err) => err.status === 409 && /still being written/.test(err.message));
+  journal.close();
+  assert.equal((await undoBatch(journal.batchId)).undone, 1);
+});
+
+test('a path that cannot be read right now is a retryable failure, not a final conflict', { skip: process.getuid?.() === 0 && 'root ignores permissions' }, async () => {
+  const { real, id } = await addTrack('tagged.mp3');
+  const { batchId } = await editTrackTags({ trackId: id, fields: { title: 'Typo' } });
+
+  fs.chmodSync(path.dirname(real), 0o000); // no search permission: lstat fails with EACCES
+  let first;
+  try {
+    first = await undoBatch(batchId);
+  } finally {
+    fs.chmodSync(path.dirname(real), 0o755);
+  }
+  assert.deepEqual([first.undone, first.conflicts.length, first.failed.length], [0, 0, 1]);
+  assert.equal((await undoBatch(batchId)).undone, 1);
+});
+
+test('a file restored by a run that died before re-indexing is re-indexed on the rerun', async () => {
+  const { real, id } = await addTrack('tagged.mp3');
+  const original = (await readTags(real)).title;
+  const { batchId } = await editTrackTags({ trackId: id, fields: { title: 'Typo' } });
+  await writeTags(real, { title: original }, { overwrite: true }); // restored, index not updated
+  assert.equal(repo.getTrackById(db, id).title, 'Typo');
+
+  assert.equal((await undoBatch(batchId)).undone, 1);
+  assert.equal(repo.getTrackById(db, id).title, original);
+});
+
+test('replacing an oversized embedded cover is refused before anything is copied or written', async () => {
+  const { MAX_IMAGE_BYTES } = await import('../src/lib/imageBytes.js');
+  const { real } = await addTrack('silence.mp3');
+  const huge = Buffer.alloc(MAX_IMAGE_BYTES + 1, 0);
+  huge.set([0xff, 0xd8, 0xff], 0);
+  await writeTags(real, {}, { coverImage: { bytes: huge, mimeType: 'image/jpeg' } });
+  const bytesBefore = fs.readFileSync(real);
+  const batchesBefore = listChanges(db).total;
+
+  await assert.rejects(journaledCoverWrite(real, { coverImage: PNG, replaceCoverArt: true }), (err) => err.status === 400);
+  assert.ok(fs.readFileSync(real).equals(bytesBefore), 'file untouched');
+  assert.equal(listChanges(db).total, batchesBefore, 'nothing journaled');
 });

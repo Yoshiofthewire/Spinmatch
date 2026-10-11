@@ -109,7 +109,12 @@ export async function editTrackTags({ trackId, fields, expectedMtimeMs = null, d
   const real = await assertReadableInsideMusicDir(track.path);
 
   const journal = openJournal(db, 'edit', `Edited tags: ${named(track.artist, track.title)}`);
-  const changedFields = await writeOne(journal, trackId, real, patch, expectedMtimeMs);
+  let changedFields;
+  try {
+    changedFields = await writeOne(journal, trackId, real, patch, expectedMtimeMs);
+  } finally {
+    journal.close();
+  }
 
   // Re-read row: re-index recomputes *_synthesized and dup_key.
   return { trackId, changedFields, batchId: journal.batchId, track: getTrackById(db, trackId) };
@@ -156,21 +161,25 @@ export async function editAlbumTags({
   const journal = openJournal(db, 'album-edit', `Album tags: ${named(artist, album)}`);
   const applied = [];
   const failed = [];
-  for (const id of wanted) {
-    const row = byId.get(id);
-    const patch = { ...albumPatch, ...(overrides.get(id) ?? {}) };
-    if (!Object.keys(patch).length) continue;
+  try {
+    for (const id of wanted) {
+      const row = byId.get(id);
+      const patch = { ...albumPatch, ...(overrides.get(id) ?? {}) };
+      if (!Object.keys(patch).length) continue;
 
-    // taglib is sync; yield so the loop doesn't hog the main thread.
-    await yieldToEventLoop();
-    try {
-      const real = await assertReadableInsideMusicDir(row.path);
-      applied.push({ trackId: id, changedFields: await writeOne(journal, id, real, patch) });
-    } catch (err) {
-      // Raw message has an absolute path: log it, don't return it.
-      console.warn(`tagEdit: ${row.path} failed: ${err?.message}`);
-      failed.push({ trackId: id, ...describeFailure(err) });
+      // taglib is sync; yield so the loop doesn't hog the main thread.
+      await yieldToEventLoop();
+      try {
+        const real = await assertReadableInsideMusicDir(row.path);
+        applied.push({ trackId: id, changedFields: await writeOne(journal, id, real, patch) });
+      } catch (err) {
+        // Raw message has an absolute path: log it, don't return it.
+        console.warn(`tagEdit: ${row.path} failed: ${err?.message}`);
+        failed.push({ trackId: id, ...describeFailure(err) });
+      }
     }
+  } finally {
+    journal.close();
   }
 
   // Tells the client its ?artist=/?album= view no longer exists.

@@ -6,6 +6,7 @@ import { File, Picture, PictureType, ByteVector } from 'node-taglib-sharp';
 import { MAX_IMAGE_BYTES } from '../lib/imageBytes.js';
 import { noteWrite } from '../lib/recentWrites.js';
 import { fsyncPath } from '../lib/moveFile.js';
+import { BadRequestError } from '../lib/httpErrors.js';
 
 const FIELD_TO_TAG_PROP = {
   artist: 'performers',
@@ -168,6 +169,10 @@ function applyTags(tag, desired, { coverImage, overwrite, replaceCoverArt, remov
 
   // Replacing without a coverImage must never remove existing art.
   const old = frontPicture(tag);
+  // The old art is copied (for undo); refuse before copying an unbounded image.
+  if (old && (removeCoverArt || (coverImage && replaceCoverArt)) && old.data.length > MAX_IMAGE_BYTES) {
+    throw new BadRequestError('The cover art already in this file is too large to replace safely');
+  }
   if (removeCoverArt && old) {
     before.coverArt = pictureBytes(old);
     tag.pictures = [];

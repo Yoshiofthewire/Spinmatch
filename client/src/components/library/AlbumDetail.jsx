@@ -188,7 +188,8 @@ export default function AlbumDetail({
       ))}
 
       {/* Next to BulkFixPanel: typed values vs. derived fills of blanks. */}
-      {state === 'ready' && editingAlbum && (
+      {/* Stays mounted through the reload a save triggers, or its result (and Undo) vanish. */}
+      {editingAlbum && tracks.length > 0 && (
         <AlbumTagEditPanel
           artist={album.artist}
           album={album.album}

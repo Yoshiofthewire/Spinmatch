@@ -74,17 +74,21 @@ export async function applyFix({ trackId, recordingMbid, overwrite = false, repl
   // Concurrent whole-file rewrites corrupt the file (a double-click does it). Re-index
   // inside the lock too, or it can read a half-written file.
   const filledFields = await withFileLock(real, async () => {
-    const written = await writeTags(real, {
-      artist: recording.artist ?? null,
-      title: recording.title ?? null,
-      album: albumTitle,
-      year: recording.date ? Number(recording.date.slice(0, 4)) || null : null,
-      trackNumber: position.trackNumber ?? null,
-      disc: position.disc ?? null,
-    }, { coverImage, overwrite, replaceCoverArt });
-    await journal.record({ trackId, real }, written);
-    await reindexFile(real);
-    return written.filledFields;
+    try {
+      const written = await writeTags(real, {
+        artist: recording.artist ?? null,
+        title: recording.title ?? null,
+        album: albumTitle,
+        year: recording.date ? Number(recording.date.slice(0, 4)) || null : null,
+        trackNumber: position.trackNumber ?? null,
+        disc: position.disc ?? null,
+      }, { coverImage, overwrite, replaceCoverArt });
+      await journal.record({ trackId, real }, written);
+      await reindexFile(real);
+      return written.filledFields;
+    } finally {
+      journal.close();
+    }
   });
 
   return {

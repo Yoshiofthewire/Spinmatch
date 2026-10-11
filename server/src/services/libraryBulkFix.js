@@ -188,24 +188,28 @@ export async function applyBulkFix({
   const journal = openJournal(db, 'bulk-fix', `Bulk fix: ${resolved.artist ?? 'Unknown artist'} – ${resolved.album}`);
   const applied = [];
   const failed = [];
-  for (const track of chosen) {
-    await yieldToEventLoop();
-    try {
-      const real = await assertReadableInsideMusicDir(track.path);
-      const filledFields = await withFileLock(real, async () => {
-        // Under the lock, so nothing can change the file between check and write.
-        await assertUnchangedSincePreview(track);
-        const written = await writeTags(real, track.proposed);
-        await journal.record({ trackId: track.trackId, real }, written);
-        await reindexFile(real);
-        return written.filledFields;
-      });
-      applied.push({ trackId: track.trackId, filledFields });
-    } catch (err) {
-      // Raw fs messages carry absolute server paths: log them, return only a code.
-      console.warn(`libraryBulkFix: track ${track.trackId} failed: ${err.message}`);
-      failed.push({ trackId: track.trackId, ...describeFailure(err) });
+  try {
+    for (const track of chosen) {
+      await yieldToEventLoop();
+      try {
+        const real = await assertReadableInsideMusicDir(track.path);
+        const filledFields = await withFileLock(real, async () => {
+          // Under the lock, so nothing can change the file between check and write.
+          await assertUnchangedSincePreview(track);
+          const written = await writeTags(real, track.proposed);
+          await journal.record({ trackId: track.trackId, real }, written);
+          await reindexFile(real);
+          return written.filledFields;
+        });
+        applied.push({ trackId: track.trackId, filledFields });
+      } catch (err) {
+        // Raw fs messages carry absolute server paths: log them, return only a code.
+        console.warn(`libraryBulkFix: track ${track.trackId} failed: ${err.message}`);
+        failed.push({ trackId: track.trackId, ...describeFailure(err) });
+      }
     }
+  } finally {
+    journal.close();
   }
 
   return {

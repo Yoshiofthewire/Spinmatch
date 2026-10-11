@@ -10,6 +10,9 @@ import { NotFoundError, ConflictError } from '../lib/httpErrors.js';
 // Undo journal for library tag writes. Ingest is not journaled; undo is not either (no redo).
 
 const KEEP_MS = 90 * 24 * 60 * 60 * 1000;
+// Batches whose write loop is still running; undo waits for close(). In memory on
+// purpose: after a restart no loop is running, so nothing stays blocked.
+const openBatches = new Set();
 const KEEP_BATCHES = 500;
 
 function prune(db, now) {
@@ -30,6 +33,7 @@ export function openJournal(db, kind, label) {
   let batchId = null;
   return {
     get batchId() { return batchId; },
+    close() { openBatches.delete(batchId); },
     async record({ trackId, real }, { filledFields, before }) {
       if (!filledFields.length) return;
       // Read back from disk, so undo compares like with like.
@@ -58,6 +62,7 @@ export function openJournal(db, kind, label) {
         );
         return id;
       });
+      openBatches.add(batchId);
     },
   };
 }
@@ -90,19 +95,25 @@ async function matchesBefore(real, current, before, w) {
 
 // Restores one file unless anything touched it since our write; returns a conflict reason or null.
 async function undoWrite(w) {
-  let real;
-  try {
-    real = await assertReadableInsideMusicDir(w.path);
-  } catch {
-    return 'The file is no longer there.';
-  }
+  // Only a confirmed absence is final; anything else (permissions, a missing mount)
+  // throws, so the batch stays open for a retry.
+  const gone = await fs.lstat(w.path).then(() => false, (err) => {
+    if (err.code === 'ENOENT' || err.code === 'ENOTDIR') return true;
+    throw err;
+  });
+  if (gone) return 'The file is no longer there.';
+  const real = await assertReadableInsideMusicDir(w.path);
   return withFileLock(real, async () => {
     const before = JSON.parse(w.before);
     const after = JSON.parse(w.after);
     const { mtimeMs } = await fs.stat(real);
     const current = snapshot(await readTags(real), Object.keys(after));
     // Already restored by a run that died before recording it.
-    if (await matchesBefore(real, current, before, w)) return null;
+    if (await matchesBefore(real, current, before, w)) {
+      // The index may still show the edit if the last run died before re-indexing.
+      await reindexFile(real);
+      return null;
+    }
     if (Math.trunc(mtimeMs) !== w.after_mtime_ms
       || Object.keys(after).some((f) => current[f] !== after[f])) {
       return 'The file changed after this edit, so it was left alone.';
@@ -132,6 +143,7 @@ async function runUndo(db, batchId) {
   const batch = db.prepare('SELECT id, undone_at FROM tag_batches WHERE id = ?').get(batchId);
   if (!batch) throw new NotFoundError('That change is no longer in the history');
   if (batch.undone_at != null) throw new ConflictError('This change has already been undone');
+  if (openBatches.has(batch.id)) throw new ConflictError('This change is still being written; try again when it finishes');
 
   const writes = db.prepare(
     'SELECT * FROM tag_writes WHERE batch_id = ? AND undone_at IS NULL ORDER BY id DESC'
