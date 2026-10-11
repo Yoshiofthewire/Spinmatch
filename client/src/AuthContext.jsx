@@ -3,7 +3,8 @@ import { getAuthStatus, logout as apiLogout } from './api/auth.js';
 
 const AuthContext = createContext(null);
 
-const INITIAL = { loading: true, setupRequired: false, authenticated: false, username: null };
+const NO_SSO = { enabled: false };
+const INITIAL = { loading: true, setupRequired: false, authenticated: false, username: null, oidc: NO_SSO };
 
 export function AuthProvider({ children }) {
   const [state, setState] = useState(INITIAL);
@@ -16,10 +17,11 @@ export function AuthProvider({ children }) {
         setupRequired: Boolean(status.setupRequired),
         authenticated: Boolean(status.authenticated),
         username: status.username ?? null,
+        oidc: status.oidc ?? NO_SSO,
       });
     } catch {
       // On failure, treat as unauthenticated: show login, not a broken shell.
-      setState({ loading: false, setupRequired: false, authenticated: false, username: null });
+      setState({ loading: false, setupRequired: false, authenticated: false, username: null, oidc: NO_SSO });
     }
   }, []);
 
@@ -36,7 +38,9 @@ export function AuthProvider({ children }) {
 
   const logout = useCallback(async () => {
     try {
-      await apiLogout();
+      const { endSessionUrl } = await apiLogout();
+      // Ends the identity provider's session too; it may send the browser back here.
+      if (endSessionUrl) window.location.assign(endSessionUrl);
     } finally {
       await refresh();
     }
