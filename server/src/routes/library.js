@@ -35,6 +35,7 @@ import { assertMbid, isMbid } from '../lib/mbid.js';
 import { TTLCache } from '../lib/cache.js';
 import { MAX_TRACK_NUMBER, MAX_DISC_NUMBER } from '../lib/tagLimits.js';
 import { sseStream, STREAM_HANDLED } from '../lib/sse.js';
+import { positiveInt, paging } from '../lib/paging.js';
 
 export const libraryRouter = Router();
 
@@ -47,26 +48,10 @@ libraryRouter.get('/stats', (req, res) => {
   res.json(getStats(getDb()));
 });
 
-const MAX_PAGE_SIZE = 200;
 const MAX_PLAYLIST_LINES = 500;
 
 function str(value) {
   return value ? String(value) : undefined;
-}
-
-// The floor matters: SQLite reads a negative LIMIT as unbounded.
-function positiveInt(value, fallback, max) {
-  const n = Number(value);
-  if (!Number.isFinite(n) || n <= 0) return fallback;
-  return Math.min(Math.floor(n), max);
-}
-
-function paging(req, defaultLimit) {
-  const offset = Number(req.query.offset);
-  return {
-    limit: positiveInt(req.query.limit, defaultLimit, MAX_PAGE_SIZE),
-    offset: Number.isFinite(offset) && offset > 0 ? Math.floor(offset) : 0,
-  };
 }
 
 libraryRouter.get('/artists', (req, res) => {
