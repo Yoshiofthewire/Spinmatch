@@ -25,7 +25,7 @@ export default function SearchPage() {
 
   // The library knows instantly whether a result is already on disk, so say so
   // rather than making the user go and check.
-  const owned = useOwned({
+  const { owned, error: ownedError } = useOwned({
     enabled: libraryEnabled,
     albums: (results?.releaseGroups ?? []).map((rg) => ({
       id: rg.mbid, artist: rg.artist, title: rg.title,
@@ -71,6 +71,7 @@ export default function SearchPage() {
       <SearchBox onSearch={handleSearch} loading={loading} initialValue={query} />
 
       {error && <p className="banner banner-error">{error.message}</p>}
+      {ownedError && <p className="muted">Couldn&apos;t check which results you own: {ownedError}</p>}
 
       {results && (
         <>

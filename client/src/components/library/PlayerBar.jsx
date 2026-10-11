@@ -16,6 +16,14 @@ export default function PlayerBar({ track, queue, onChange, onClose }) {
   const previous = index > 0 ? queue[index - 1] : null;
   const next = index >= 0 && index < queue.length - 1 ? queue[index + 1] : null;
 
+  // AbortError only means a newer load() interrupted this play() — not a failure.
+  function start(audio) {
+    audio.play().then(() => setPlaying(true)).catch((err) => {
+      setPlaying(false);
+      if (err.name !== 'AbortError') setError(`Could not play this file: ${err.message}`);
+    });
+  }
+
   // A new track means a new source: reset the transport and autoplay, since
   // reaching here is always the result of an explicit click.
   useEffect(() => {
@@ -24,13 +32,13 @@ export default function PlayerBar({ track, queue, onChange, onClose }) {
     const audio = audioRef.current;
     if (!audio) return;
     audio.load();
-    audio.play().then(() => setPlaying(true)).catch(() => setPlaying(false));
+    start(audio);
   }, [track.id]);
 
   function toggle() {
     const audio = audioRef.current;
     if (!audio) return;
-    if (audio.paused) audio.play().then(() => setPlaying(true)).catch(() => setPlaying(false));
+    if (audio.paused) { setError(null); start(audio); }
     else { audio.pause(); setPlaying(false); }
   }
 
@@ -86,7 +94,7 @@ export default function PlayerBar({ track, queue, onChange, onClose }) {
         {formatDuration(position * 1000)} / {formatDuration(totalSeconds * 1000)}
       </span>
 
-      {error && <span className="player-error">{error}</span>}
+      {error && <span className="player-error" role="alert">{error}</span>}
       <button type="button" onClick={onClose} aria-label="Close player">✕</button>
     </div>
   );
