@@ -16,7 +16,18 @@ const REQUEST_TIMEOUT_MS = 15_000;
 
 // MusicBrainz allows at most 1 request/sec per source IP; this queue is shared
 // across every call this process makes, regardless of which route triggered it.
-const rateLimiter = new RateLimiter(1000);
+// 1100ms leaves margin for clock and network jitter.
+const rateLimiter = new RateLimiter(1100);
+
+const RETRY_AFTER_DEFAULT_S = 2;
+const RETRY_AFTER_MAX_S = 10;
+
+export function retryAfterMs(header) {
+  const seconds = header != null && /^\d+$/.test(header.trim()) ? Number(header) : RETRY_AFTER_DEFAULT_S;
+  return Math.min(seconds, RETRY_AFTER_MAX_S) * 1000;
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 // Bounded: the key is the full request URL, so an unbounded map grows with every
 // distinct search anyone runs, and each entry holds a whole JSON response.
 const cache = new TTLCache({ maxEntries: 2000 });
@@ -32,15 +43,25 @@ async function mbFetch(path, params = {}) {
   const cached = cache.get(cacheKey);
   if (cached !== undefined) return cached;
 
-  const json = await rateLimiter.schedule(async () => {
-    let response;
+  const request = async () => {
     try {
-      response = await fetch(url, {
+      return await fetch(url, {
         headers: { 'User-Agent': userAgent(), Accept: 'application/json' },
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
     } catch (err) {
       throw new UpstreamUnavailableError(`Could not reach MusicBrainz: ${err.message}`);
+    }
+  };
+
+  const json = await rateLimiter.schedule(async () => {
+    let response = await request();
+    // 503 is MusicBrainz's rate-limit answer. Wait as told, inside the queue so
+    // nothing else goes out meanwhile, and retry once.
+    if (response.status === 503) {
+      await response.body?.cancel();
+      await sleep(retryAfterMs(response.headers.get('retry-after')));
+      response = await request();
     }
     if (!response.ok) {
       throw new UpstreamUnavailableError(`MusicBrainz returned ${response.status} for ${path}`);
