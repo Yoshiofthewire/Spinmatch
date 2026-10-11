@@ -505,8 +505,17 @@ text.
 ## First-run login
 
 One admin account protects the whole app. The **first time** you open Spinmatch, it shows a setup
-screen. Enter a username and a password of 8 characters or more. Spinmatch then logs you in. After
-setup, every visit shows a login screen. All `/api` routes need a valid session, except
+screen. Enter the setup token, a username, and a password of 8 characters or more. Spinmatch then
+logs you in. After setup, every visit shows a login screen.
+
+The setup token stops whoever reaches a fresh install first from claiming it. While no admin
+exists, the server prints a new one-time token to its log at every start:
+
+```sh
+docker logs spinmatch 2>&1 | grep 'First-run setup token'
+```
+
+The token lives in memory only. It is spent by a successful setup; restart to get a fresh one. All `/api` routes need a valid session, except
 `/api/health` and `/api/config`.
 
 ![The first-run setup screen, asking for a username and a password](docs/screenshots/first-run-setup.png)
@@ -519,7 +528,7 @@ extra configuration is necessary, because the login is always active.
 password change logs out every other browser and device. The tab that you use stays logged in.
 
 **If you forget your password,** stop the app and delete the `app_auth` row. You can delete the
-whole database file instead. Spinmatch then shows the first-run setup screen again. Each session
+whole database file instead, then start the app and take the new setup token from its log. Each session
 cookie names the admin that it belongs to. A new admin also gets a new token-signing secret. A
 cookie from before the reset therefore stops working immediately.
 

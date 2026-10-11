@@ -1,4 +1,4 @@
-import { scrypt as _scrypt, randomBytes, createHmac, timingSafeEqual } from 'node:crypto';
+import { scrypt as _scrypt, randomBytes, createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 
 const scrypt = promisify(_scrypt);
@@ -34,6 +34,25 @@ export function dummyHash() {
     throw err;
   });
   return dummyHashPromise;
+}
+
+// ---- First-run setup token (memory only, printed to the server log) ----
+
+let setupToken = null;
+
+export function issueSetupToken() {
+  setupToken = randomBytes(24).toString('base64url');
+  return setupToken;
+}
+
+export function clearSetupToken() {
+  setupToken = null;
+}
+
+export function checkSetupToken(candidate) {
+  if (!setupToken || typeof candidate !== 'string') return false;
+  const sha = (v) => createHash('sha256').update(v).digest();
+  return timingSafeEqual(sha(candidate), sha(setupToken));
 }
 
 // ---- Username matching ----

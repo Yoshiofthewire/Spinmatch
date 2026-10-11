@@ -3,7 +3,7 @@ import { getDb } from '../lib/db.js';
 import {
   hashPassword, verifyPassword, dummyHash, issueToken, getSigningSecret, sessionFromToken,
   adminExists, getAdmin, createAdmin, updatePassword, revokeSessions, foldUsername,
-  MIN_PASSWORD_LENGTH,
+  checkSetupToken, clearSetupToken, MIN_PASSWORD_LENGTH,
 } from '../services/auth.js';
 import { SESSION_COOKIE, requireAuth } from '../middleware/requireAuth.js';
 import { serializeCookie, parseCookies } from '../lib/cookies.js';
@@ -103,12 +103,19 @@ authRouter.post('/setup', rateLimitSetup, async (req, res, next) => {
     if (adminExists(getDb())) {
       throw new BadRequestError('Admin account is already configured');
     }
-    const { username, password } = req.body || {};
+    const { username, password, setupToken } = req.body || {};
+    // Without this, whoever reaches a fresh install first owns it.
+    if (!checkSetupToken(setupToken)) {
+      throw new BadRequestError(
+        'Invalid setup token. Copy it from the server log (docker logs spinmatch); restart the server to print a new one.',
+      );
+    }
     const cleanUsername = validateCredentials(username, password);
     const passwordHash = await hashPassword(password);
     if (!createAdmin(getDb(), cleanUsername, passwordHash)) {
       throw new BadRequestError('Admin account is already configured');
     }
+    clearSetupToken();
     setSession(req, res, cleanUsername, getAdmin(getDb()).tokenEpoch);
     res.json({ ok: true, username: cleanUsername });
   } catch (err) {

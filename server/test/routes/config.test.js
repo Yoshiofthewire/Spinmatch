@@ -6,10 +6,12 @@ process.env.MB_CONTACT_EMAIL = 'test@example.com';
 let server;
 let baseUrl;
 let cookie;
+let issueSetupToken;
 
 test.before(async () => {
   process.env.METUBE_URL = 'https://metube.example.com/';
   const { openDb, setDbForTest } = await import('../../src/lib/db.js');
+  ({ issueSetupToken } = await import('../../src/services/auth.js'));
   const { createApp } = await import('../../src/app.js');
   setDbForTest(openDb(':memory:'));
   server = createApp().listen(0);
@@ -20,7 +22,7 @@ test.before(async () => {
   const res = await fetch(`${baseUrl}/api/auth/setup`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Sec-Fetch-Site': 'same-origin' },
-    body: JSON.stringify({ username: 'yoshi', password: 'hunter2hunter2' }),
+    body: JSON.stringify({ username: 'yoshi', password: 'hunter2hunter2', setupToken: issueSetupToken() }),
   });
   cookie = res.headers.get('set-cookie').split(';')[0];
 });

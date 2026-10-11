@@ -17,6 +17,7 @@ process.env.MB_CONTACT_EMAIL = 'test@example.com';
 
 const { openDb, setDbForTest } = await import('../../src/lib/db.js');
 const { createApp } = await import('../../src/app.js');
+const { issueSetupToken } = await import('../../src/services/auth.js');
 
 const asJson = { 'Content-Type': 'application/json', 'Sec-Fetch-Site': 'same-origin' };
 
@@ -32,7 +33,7 @@ test.before(async () => {
   const res = await fetch(`${baseUrl}/api/auth/setup`, {
     method: 'POST',
     headers: asJson,
-    body: JSON.stringify({ username: 'yoshi', password: 'hunter2hunter2' }),
+    body: JSON.stringify({ username: 'yoshi', password: 'hunter2hunter2', setupToken: issueSetupToken() }),
   });
   assert.equal(res.status, 200, await res.text());
 });

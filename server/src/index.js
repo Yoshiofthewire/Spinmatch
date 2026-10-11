@@ -4,12 +4,20 @@ import { startLibrarySync } from './services/librarySync.js';
 import { stopScan } from './services/libraryScanner.js';
 import { ingestInProgress } from './services/ingest.js';
 import { assertDbWritable } from './lib/dbPreflight.js';
+import { getDb } from './lib/db.js';
+import { adminExists, issueSetupToken } from './services/auth.js';
 
 assertRequiredConfig();
 // Before anything opens a connection. getDb() is lazy, so without this a volume
 // the process cannot write turns into a 500 on every request instead of a
 // message saying which directory is wrong and who owns it.
 assertDbWritable(config.library.dbPath);
+
+// Migrate on the main thread before the scan worker opens its own connection.
+const db = getDb();
+if (!adminExists(db)) {
+  console.log(`First-run setup token: ${issueSetupToken()}`);
+}
 
 // Log and exit, not log and continue.
 //

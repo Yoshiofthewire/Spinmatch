@@ -5,12 +5,15 @@ process.env.MB_CONTACT_EMAIL = 'test@example.com';
 
 const { openDb, setDbForTest } = await import('../../src/lib/db.js');
 const { createApp } = await import('../../src/app.js');
+const { issueSetupToken, clearSetupToken, checkSetupToken } =await import('../../src/services/auth.js');
 
 let server;
 let baseUrl;
+let setupToken;
 
 test.before(async () => {
   setDbForTest(openDb(':memory:'));
+  setupToken = issueSetupToken();
   server = createApp().listen(0);
   await new Promise((resolve) => server.once('listening', resolve));
   baseUrl = `http://localhost:${server.address().port}`;
@@ -42,17 +45,41 @@ test('setup rejects a too-short password', async () => {
   const res = await fetch(`${baseUrl}/api/auth/setup`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Sec-Fetch-Site': 'same-origin' },
-    body: JSON.stringify({ username: 'yoshi', password: 'short' }),
+    body: JSON.stringify({ username: 'yoshi', password: 'short', setupToken }),
   });
   assert.equal(res.status, 400);
 });
 
-test('setup creates the admin and issues a session cookie', async () => {
-  const res = await fetch(`${baseUrl}/api/auth/setup`, {
+function postSetup(body) {
+  return fetch(`${baseUrl}/api/auth/setup`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Sec-Fetch-Site': 'same-origin' },
-    body: JSON.stringify({ username: 'yoshi', password: 'hunter2hunter2' }),
+    body: JSON.stringify(body),
   });
+}
+
+test('setup refuses a missing or wrong setup token', async () => {
+  for (const bad of [undefined, '', 'x', setupToken.slice(1), `${setupToken}x`, 42]) {
+    const res = await postSetup({ username: 'mallory', password: 'hunter2hunter2', setupToken: bad });
+    assert.equal(res.status, 400);
+    assert.match((await res.json()).error.message, /setup token/i);
+  }
+  const status = await (await fetch(`${baseUrl}/api/auth/status`)).json();
+  assert.equal(status.setupRequired, true, 'no admin was created');
+});
+
+test('setup refuses when no token has been issued', async () => {
+  clearSetupToken();
+  try {
+    const res = await postSetup({ username: 'mallory', password: 'hunter2hunter2', setupToken });
+    assert.equal(res.status, 400);
+  } finally {
+    setupToken = issueSetupToken();
+  }
+});
+
+test('setup creates the admin and issues a session cookie', async () => {
+  const res = await postSetup({ username: 'yoshi', password: 'hunter2hunter2', setupToken });
   assert.equal(res.status, 200);
   assert.equal((await res.json()).username, 'yoshi');
   const setCookie = res.headers.get('set-cookie');
@@ -70,12 +97,9 @@ test('status reports authenticated when the cookie is presented', async () => {
   assert.equal(body.username, 'yoshi');
 });
 
-test('setup is refused once an admin exists', async () => {
-  const res = await fetch(`${baseUrl}/api/auth/setup`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Sec-Fetch-Site': 'same-origin' },
-    body: JSON.stringify({ username: 'other', password: 'hunter2hunter2' }),
-  });
+test('setup is refused once an admin exists, and the token is spent', async () => {
+  assert.equal(checkSetupToken(setupToken), false);
+  const res = await postSetup({ username: 'other', password: 'hunter2hunter2', setupToken });
   assert.equal(res.status, 400);
 });
 

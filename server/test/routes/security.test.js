@@ -19,7 +19,7 @@ process.env.INGEST_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'spinmatch-sec-in
 const { openDb, setDbForTest } = await import('../../src/lib/db.js');
 const { createApp } = await import('../../src/app.js');
 const repo = await import('../../src/services/libraryRepo.js');
-const { hashPassword } = await import('../../src/services/auth.js');
+const { hashPassword, issueSetupToken } = await import('../../src/services/auth.js');
 
 const FIXTURES_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'fixtures');
 
@@ -52,7 +52,7 @@ test.after(() => {
 
 async function setupAdmin(username, password) {
   const res = await fetch(`${baseUrl}/api/auth/setup`, {
-    method: 'POST', headers: asJson, body: JSON.stringify({ username, password }),
+    method: 'POST', headers: asJson, body: JSON.stringify({ username, password, setupToken: issueSetupToken() }),
   });
   assert.equal(res.status, 200, await res.text());
   return cookieOf(res);

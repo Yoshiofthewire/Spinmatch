@@ -7,6 +7,7 @@ const MIN_PASSWORD_LENGTH = 8;
 
 export default function SetupPage() {
   const { refresh } = useAuth();
+  const [setupToken, setSetupToken] = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
@@ -26,7 +27,7 @@ export default function SetupPage() {
     }
     setBusy(true);
     try {
-      await setupAdmin({ username: username.trim(), password });
+      await setupAdmin({ username: username.trim(), password, setupToken: setupToken.trim() });
       await refresh(); // flips the gate to the authenticated app
     } catch (err) {
       setError(err.message || 'Could not create the account.');
@@ -41,6 +42,18 @@ export default function SetupPage() {
         <h1>Welcome to Spinmatch</h1>
         <p className="muted">Create an admin account to secure this instance. This is a one-time setup.</p>
         {error && <div className="banner banner-error">{error}</div>}
+        <label>
+          Setup token
+          <input
+            value={setupToken}
+            onChange={(e) => setSetupToken(e.target.value)}
+            autoComplete="off"
+            spellCheck={false}
+            aria-describedby="setup-token-help"
+            required
+          />
+          <small id="setup-token-help">Printed in the server log (docker logs spinmatch)</small>
+        </label>
         <label>
           Username
           <input value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" required />
