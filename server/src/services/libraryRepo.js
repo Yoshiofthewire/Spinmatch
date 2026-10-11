@@ -1,7 +1,4 @@
-// The one import this module has. It is deliberately SQL-only otherwise, and the
-// bound below used to be redeclared here rather than shared, on the grounds that
-// importing it would close a cycle — true of the scanner, which imports this
-// file, but not of a constants-only leaf module that imports nothing itself.
+import path from 'node:path';
 import { MAX_TRACK_NUMBER } from '../lib/tagLimits.js';
 import { makeDupKey, makeMatchKey, makeTitleKey } from '../lib/normalize.js';
 
@@ -75,6 +72,17 @@ export function markRemoved(db, paths) {
 export function markRemovedByPath(db, filePath) {
   db.prepare('UPDATE local_tracks SET removed = 1, updated_at = ? WHERE path = ?')
     .run(Date.now(), filePath);
+}
+
+// Moves stored paths from one root spelling to another (a symlinked or relative
+// MUSIC_DIR, now resolved), so rows keep their ids and added_at instead of being
+// swept and re-added. OR IGNORE: a row already at the new path wins.
+export function rebaseTrackPaths(db, fromRoot, toRoot) {
+  if (!fromRoot || !toRoot || fromRoot === toRoot) return 0;
+  const from = fromRoot + path.sep;
+  return db.prepare(
+    'UPDATE OR IGNORE local_tracks SET path = ? || substr(path, ?) WHERE substr(path, 1, ?) = ?'
+  ).run(toRoot + path.sep, from.length + 1, from.length, from).changes;
 }
 
 // One aggregate query rather than four separate ones. This runs after every

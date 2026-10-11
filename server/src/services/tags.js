@@ -156,11 +156,14 @@ async function saveViaTemp(filePath, edit) {
   const tmp = path.join(dir, `.${path.basename(filePath)}.spinmatch-tmp-${randomBytes(6).toString('hex')}${ext}`);
   noteWrite(tmp);
   try {
-    const { mode } = await fs.stat(filePath);
+    const { mode, uid, gid } = await fs.stat(filePath);
     await fs.copyFile(filePath, tmp, fsConstants.COPYFILE_EXCL);
     withFile(tmp, edit);
     await fsyncPath(tmp);
     await fs.chmod(tmp, mode);
+    // Keep the owner where we're allowed to (root, or the same group); a
+    // shared library shouldn't change hands because a tag was edited.
+    await fs.chown(tmp, uid, gid).catch((err) => { if (err.code !== 'EPERM') throw err; });
     await fs.rename(tmp, filePath);
   } catch (err) {
     await fs.rm(tmp, { force: true });

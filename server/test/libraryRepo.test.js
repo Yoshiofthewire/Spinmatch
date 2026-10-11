@@ -578,3 +578,16 @@ test('getRemovedTrackById finds a row the rest of the app is right to hide', () 
   assert.equal(repo.getTrackById(db, id), null, 'and the live lookup no longer finds it');
   assert.equal(repo.getRemovedTrackById(db, id).path, '/m/a.flac');
 });
+
+test('rebaseTrackPaths moves rows to the resolved root, keeping id and added_at', () => {
+  const db = seeded();
+  repo.upsertLocalTrack(db, { path: '/mnt/m2/X/1.mp3', artist: 'X', album: 'Y', title: 'Z', durationMs: 1, changeKey: '1:1' });
+  const before = db.prepare("SELECT id, added_at FROM local_tracks WHERE path = '/m/A/Album/01.mp3'").get();
+
+  assert.equal(repo.rebaseTrackPaths(db, '/m', '/mnt/m'), 3);
+  const after = db.prepare("SELECT id, added_at FROM local_tracks WHERE path = '/mnt/m/A/Album/01.mp3'").get();
+  assert.deepEqual({ ...after }, { ...before });
+  // A sibling root that only shares a prefix is left alone.
+  assert.ok(db.prepare("SELECT 1 FROM local_tracks WHERE path = '/mnt/m2/X/1.mp3'").get());
+  assert.equal(repo.rebaseTrackPaths(db, '/m', '/mnt/m'), 0, 'idempotent');
+});
