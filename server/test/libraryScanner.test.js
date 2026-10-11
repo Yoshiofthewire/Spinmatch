@@ -424,3 +424,20 @@ test('a deleted file is still marked removed when the walk succeeded', async () 
     assert.equal(repo.getStats(db).totalTracks, 1);
   });
 });
+
+test('a row indexed while the scan is running is not swept as removed', async () => {
+  await withMusicDir(async (dir, db) => {
+    await fs.writeFile(path.join(dir, 'a.mp3'), 'x');
+    const repo = await import('../src/services/libraryRepo.js');
+    const ingested = path.join(dir, 'Ingested', 'new.mp3');
+    // Stands in for ingest's reindexFile landing mid-walk, after this scan
+    // snapshotted the known paths.
+    const { runScanOnce } = await freshScanner(async () => {
+      repo.upsertLocalTrack(db, { path: ingested, artist: 'N', album: 'N', title: 'New', durationMs: 1, changeKey: '1:1' });
+      return { artist: 'A', album: 'B', title: 'T' };
+    });
+    const summary = await runScanOnce();
+    assert.equal(summary.removed, 0);
+    assert.ok(repo.getChangeKeys(db).has(ingested), 'the mid-scan row is still live');
+  });
+});

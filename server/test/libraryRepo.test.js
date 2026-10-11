@@ -38,9 +38,9 @@ test('upsert on the same path updates rather than duplicates', () => {
   db.close();
 });
 
-test('markRemoved drops rows absent from the keep set and stats update', () => {
+test('markRemoved drops the given rows and stats update', () => {
   const db = seeded();
-  repo.markRemoved(db, new Set(['/m/A/Album/01.mp3', '/m/A/Album/02.mp3']));
+  repo.markRemoved(db, ['/m/B/Other/01.mp3']);
   repo.recomputeStats(db);
   const stats = repo.getStats(db);
   assert.equal(stats.totalTracks, 2);
@@ -52,7 +52,7 @@ test('hasRecording matches artist+title case-insensitively, ignoring removed row
   const db = seeded();
   assert.equal(repo.hasRecording(db, { artist: 'a', title: 'one' }), true);
   assert.equal(repo.hasRecording(db, { artist: 'A', title: 'Nope' }), false);
-  repo.markRemoved(db, new Set(['/m/A/Album/01.mp3', '/m/B/Other/01.mp3']));
+  repo.markRemoved(db, ['/m/A/Album/02.mp3']);
   assert.equal(repo.hasRecording(db, { artist: 'A', title: 'Two' }), false);
   db.close();
 });
@@ -317,7 +317,7 @@ test('a search for a literal % is not treated as a wildcard', () => {
 
 test('getChangeKeys returns path->key for live rows only', () => {
   const db = seeded();
-  repo.markRemoved(db, new Set(['/m/A/Album/01.mp3']));
+  repo.markRemoved(db, ['/m/A/Album/02.mp3', '/m/B/Other/01.mp3']);
   const keys = repo.getChangeKeys(db);
   assert.equal(keys.get('/m/A/Album/01.mp3'), '10:1');
   assert.equal(keys.has('/m/B/Other/01.mp3'), false);
@@ -372,7 +372,7 @@ test('purgeRemoved deletes only long-gone tombstones', () => {
   const db = openDb(':memory:');
   repo.upsertLocalTrack(db, { path: '/m/gone.mp3', artist: 'A', album: 'Al', title: 'Gone', durationMs: 1, changeKey: '1:1' });
   repo.upsertLocalTrack(db, { path: '/m/here.mp3', artist: 'A', album: 'Al', title: 'Here', durationMs: 1, changeKey: '2:1' });
-  repo.markRemoved(db, new Set(['/m/here.mp3']));
+  repo.markRemoved(db, ['/m/gone.mp3']);
 
   // Just removed: still a tombstone, still protected.
   assert.equal(repo.purgeRemoved(db), 0);

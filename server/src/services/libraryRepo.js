@@ -64,13 +64,10 @@ export function getChangeKeys(db) {
   return new Map(rows.map((r) => [r.path, r.change_key]));
 }
 
-export function markRemoved(db, keepPaths) {
-  const rows = db.prepare('SELECT id, path FROM local_tracks WHERE removed = 0').all();
-  const stmt = db.prepare('UPDATE local_tracks SET removed = 1, updated_at = ? WHERE id = ?');
+export function markRemoved(db, paths) {
+  const stmt = db.prepare('UPDATE local_tracks SET removed = 1, updated_at = ? WHERE path = ? AND removed = 0');
   const now = Date.now();
-  for (const row of rows) {
-    if (!keepPaths.has(row.path)) stmt.run(now, row.id);
-  }
+  for (const p of paths) stmt.run(now, p);
 }
 
 // Single-path counterpart to markRemoved, for the targeted rescan: that one

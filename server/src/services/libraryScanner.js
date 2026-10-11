@@ -266,8 +266,11 @@ export async function runScanOnce() {
       for (const row of batch) upsertLocalTrack(db, row);
     });
   }
+  // Only paths known at scan start: a row indexed mid-scan (ingest, a tag fix)
+  // was never walked and must not be swept.
+  const gone = [...known.keys()].filter((p) => !seen.has(p));
   withTransaction(db, () => {
-    markRemoved(db, seen);
+    markRemoved(db, gone);
     // Tombstones exist so a file on a temporarily-unavailable volume isn't
     // forgotten and then re-added as brand new (losing its added_at). After a
     // month it isn't coming back, and keeping the row makes every later scan's
@@ -276,8 +279,7 @@ export async function runScanOnce() {
     recomputeStats(db);
   });
 
-  const removed = known.size - [...known.keys()].filter((p) => seen.has(p)).length;
-  return { scanned, added, updated, removed };
+  return { scanned, added, updated, removed: gone.length };
 }
 
 // Re-reads one file's tags and updates its row. Used after the fix flow writes
