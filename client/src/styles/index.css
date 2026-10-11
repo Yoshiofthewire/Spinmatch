@@ -1156,9 +1156,11 @@ a:hover {
   margin-top: 0.75rem;
 }
 
-.playlist-delete-confirm {
+.playlist-delete-confirm,
+.inline-confirm {
   display: inline-flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 0.5rem;
 }
 

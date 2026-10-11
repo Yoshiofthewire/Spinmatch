@@ -9,10 +9,12 @@ function actionLabel(action) {
 
 export default function HistoryPage() {
   const [entries, setEntries] = useState(() => getHistory());
+  const [confirmClear, setConfirmClear] = useState(false);
 
   function handleClear() {
     clearHistory();
     setEntries([]);
+    setConfirmClear(false);
   }
 
   return (
@@ -23,7 +25,17 @@ export default function HistoryPage() {
       ) : (
         <>
           <div className="bulk-verify-actions">
-            <button type="button" onClick={handleClear}>Clear All</button>
+            {!confirmClear ? (
+              <button type="button" onClick={() => setConfirmClear(true)}>Clear All</button>
+            ) : (
+              <span className="inline-confirm">
+                <span className="muted">Clear all history? This can&apos;t be undone.</span>
+                <button type="button" className="chip-button" onClick={handleClear}>Confirm</button>
+                <button type="button" className="link-button" onClick={() => setConfirmClear(false)}>
+                  Cancel
+                </button>
+              </span>
+            )}
           </div>
           <table>
             <thead>
