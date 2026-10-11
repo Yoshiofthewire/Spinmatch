@@ -1,6 +1,6 @@
 import { useTitle } from '../lib/useTitle.js';
 import { useEffect, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { get } from '../api/client.js';
 import SearchBox from '../components/SearchBox.jsx';
 import ResultsGroup from '../components/ResultsGroup.jsx';
@@ -16,11 +16,9 @@ export default function SearchPage() {
   const [results, setResults] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const navigate = useNavigate();
   const { libraryEnabled } = useConfig();
-  // A link elsewhere in the app (a playlist gap row's "Find this track") can
-  // land here with the search already decided.
-  // The query lives in the URL so Back/Forward restore a search.
+  // The query lives in the URL so Back/Forward restore a search, and links
+  // elsewhere (a playlist gap's "Find this track") can land here with one.
   const [searchParams, setSearchParams] = useSearchParams();
   const query = searchParams.get('q') ?? '';
   const [attempt, setAttempt] = useState(0);
@@ -82,10 +80,10 @@ export default function SearchPage() {
             items={results.artists}
             emptyText="No matching artists."
             renderItem={(a) => (
-              <button className="result-row" onClick={() => navigate(`/artist/${a.mbid}`)}>
+              <Link className="result-row" to={`/artist/${a.mbid}`}>
                 <span>{a.name}</span>
                 {a.disambiguation && <span className="muted"> — {a.disambiguation}</span>}
-              </button>
+              </Link>
             )}
           />
           <ResultsGroup
@@ -93,13 +91,13 @@ export default function SearchPage() {
             items={results.releaseGroups}
             emptyText="No matching albums."
             renderItem={(rg) => (
-              <button className="result-row" onClick={() => navigate(`/release-group/${rg.mbid}`)}>
+              <Link className="result-row" to={`/release-group/${rg.mbid}`}>
                 <CoverArt src={rg.coverArtUrl} alt={rg.title} />
                 <span>
                   {rg.title} <span className="muted">by {rg.artist}</span>
                 </span>
                 <OwnedBadge owned={owned.has(rg.mbid)} />
-              </button>
+              </Link>
             )}
           />
           <ResultsGroup

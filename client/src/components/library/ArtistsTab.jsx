@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 import Pagination from '../Pagination.jsx';
 import SortSelect from './SortSelect.jsx';
 import EqualizerLoader from '../EqualizerLoader.jsx';
@@ -17,7 +18,7 @@ const SORTS = [
 // Filtered and paged on the server, like the tracks tab. Holding the whole list
 // client-side bought instant filtering at demo scale, and cost a response
 // carrying every artist in the collection on every visit to the page.
-export default function ArtistsTab({ sort, onSortChange, onSelect }) {
+export default function ArtistsTab({ sort, onSortChange, artistHref }) {
   const list = useServerList({
     fetcher: ({ q, sort: s, limit, offset }) => getLibraryArtists({ q, sort: s, limit, offset }),
     sort,
@@ -54,9 +55,9 @@ export default function ArtistsTab({ sort, onSortChange, onSelect }) {
               {artists.map((a) => (
                 <tr key={a.artist}>
                   <td>
-                    <button type="button" className="link-button" onClick={() => onSelect(a.artist)}>
+                    <Link className="link-button" to={artistHref(a.artist)}>
                       {a.artist}
-                    </button>
+                    </Link>
                   </td>
                   <td className="mono">{a.albumCount}</td>
                   <td className="mono">{a.trackCount}</td>

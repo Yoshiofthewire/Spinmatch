@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import EqualizerLoader from '../EqualizerLoader.jsx';
 import CoverArt from '../CoverArt.jsx';
 import BulkVerifyPanel from '../BulkVerifyPanel.jsx';
@@ -14,7 +14,6 @@ export default function DiscographyPanel({ artist }) {
   const [state, setState] = useState('idle'); // idle | loading | ready | error
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
-  const navigate = useNavigate();
 
   async function load() {
     setState('loading');
@@ -119,16 +118,16 @@ export default function DiscographyPanel({ artist }) {
           ) : (
             <div className="album-grid">
               {data.missing.map((album) => (
-                <button
+                <Link
                   key={album.mbid}
                   className="album-card"
-                  onClick={() => navigate(`/release-group/${album.mbid}`)}
+                  to={`/release-group/${album.mbid}`}
                   title="Find and verify this album"
                 >
                   <CoverArt src={album.coverArtUrl} alt={album.title} />
                   <span className="album-title">{album.title}</span>
                   {album.year && <span className="muted">{album.year}</span>}
-                </button>
+                </Link>
               ))}
             </div>
           )}
