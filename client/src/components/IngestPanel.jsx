@@ -1,4 +1,4 @@
-import { Fragment, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { get, post } from '../api/client.js';
 import { addEntry } from '../lib/history.js';
 import EqualizerLoader from './EqualizerLoader.jsx';
@@ -18,8 +18,13 @@ export default function IngestPanel() {
   const [error, setError] = useState(null);
   const [processed, setProcessed] = useState(0);
   const doneRef = useRef(false);
+  const esRef = useRef(null);
   const [expandedPath, setExpandedPath] = useState(null);
   const [confirmProcess, setConfirmProcess] = useState(false);
+  const [scanning, setScanning] = useState(false);
+
+  // Leaving the page mid-run closes the stream rather than leaking it.
+  useEffect(() => () => esRef.current?.close(), []);
 
   function handleResolved(oldItem, resolution) {
     if (resolution.matched) {
@@ -47,11 +52,14 @@ export default function IngestPanel() {
     setError(null);
     setResult(null);
     setExpandedPath(null);
+    setScanning(true);
     try {
       const data = await get('/ingest/scan');
       setItems(data.items);
     } catch (err) {
       setError(err);
+    } finally {
+      setScanning(false);
     }
   }
 
@@ -83,6 +91,7 @@ export default function IngestPanel() {
     const acc = { matched: [], needsReview: [], dryRun };
     setResult({ matched: [], needsReview: [], dryRun });
     const es = new EventSource(`/api/ingest/process-stream${dryRun ? '?dryRun=1' : ''}`);
+    esRef.current = es;
 
     es.addEventListener('item', (e) => {
       const item = JSON.parse(e.data);
@@ -118,18 +127,21 @@ export default function IngestPanel() {
   }
 
   const isPreview = result?.dryRun === true;
+  const busy = scanning || state === 'running';
 
   return (
     <div className="bulk-verify-panel">
       <div className="bulk-verify-actions">
-        <button onClick={handleScan} disabled={state === 'running'}>Scan ingest folder</button>
+        <button onClick={handleScan} disabled={busy}>
+          {scanning ? 'Scanning…' : 'Scan ingest folder'}
+        </button>
         {items && items.length > 0 && (
           <>
-            <button onClick={() => runProcess({ dryRun: true })} disabled={state === 'running'}>
+            <button onClick={() => runProcess({ dryRun: true })} disabled={busy}>
               Preview {items.length} item{items.length === 1 ? '' : 's'}
             </button>
             {!confirmProcess ? (
-              <button onClick={() => setConfirmProcess(true)} disabled={state === 'running'}>
+              <button onClick={() => setConfirmProcess(true)} disabled={busy}>
                 Process {items.length} item{items.length === 1 ? '' : 's'}
               </button>
             ) : (

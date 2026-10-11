@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import IngestPanel from './IngestPanel.jsx';
@@ -7,6 +7,7 @@ import { installFetchMock, jsonResponse } from '../test/fetchMock.js';
 afterEach(() => {
   cleanup();
   localStorage.clear();
+  vi.unstubAllGlobals();
 });
 
 const items = [{ path: '/in/a.flac', name: 'a.flac' }, { path: '/in/b.flac', name: 'b.flac' }];
@@ -40,5 +41,42 @@ describe('IngestPanel', () => {
     await screen.findByText('Matched & tagged (0)');
     const run = calls.find((c) => c.url === '/api/ingest/process');
     expect(run.body).toEqual({ dryRun: false });
+  });
+
+  it('shows a busy state while scanning', async () => {
+    let release;
+    installFetchMock([{
+      test: (url) => url === '/api/ingest/scan',
+      respond: () => new Promise((resolve) => { release = () => resolve(jsonResponse({ items })); }),
+    }]);
+    const user = userEvent.setup();
+    render(<IngestPanel />);
+
+    await user.click(screen.getByRole('button', { name: 'Scan ingest folder' }));
+    expect(screen.getByRole('button', { name: 'Scanning…' })).toBeDisabled();
+
+    release();
+    expect(await screen.findByRole('button', { name: 'Scan ingest folder' })).toBeEnabled();
+  });
+
+  it('closes the process stream on unmount', async () => {
+    const opened = [];
+    vi.stubGlobal('EventSource', class {
+      constructor(url) { this.url = url; this.close = vi.fn(); opened.push(this); }
+      addEventListener() {}
+    });
+    installFetchMock([
+      { test: (url) => url === '/api/ingest/scan', respond: () => jsonResponse({ items }) },
+    ]);
+    const user = userEvent.setup();
+    const { unmount } = render(<IngestPanel />);
+
+    await user.click(screen.getByRole('button', { name: 'Scan ingest folder' }));
+    await user.click(await screen.findByRole('button', { name: 'Preview 2 items' }));
+    expect(opened).toHaveLength(1);
+    expect(opened[0].close).not.toHaveBeenCalled();
+
+    unmount();
+    expect(opened[0].close).toHaveBeenCalled();
   });
 });
