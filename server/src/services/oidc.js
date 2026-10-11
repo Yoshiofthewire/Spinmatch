@@ -31,6 +31,7 @@ export function oidcEnabled() {
 
 // Keyed on the settings object, so replacing config.oidc re-runs discovery.
 let cached = null;
+export const DISCOVERY_RETRY_MS = 30_000;
 
 export function discover() {
   const settings = config.oidc;
@@ -59,9 +60,10 @@ export function discover() {
     return { cfg, meta, jwks };
   })();
   cached = { settings, promise };
-  // Don't pin a failure: the next request retries discovery.
+  // A failure is held briefly, so junk requests during an IdP outage can't each
+  // cost an outbound discovery; after that the next request retries.
   promise.catch(() => {
-    if (cached?.promise === promise) cached = null;
+    setTimeout(() => { if (cached?.promise === promise) cached = null; }, DISCOVERY_RETRY_MS).unref();
   });
   return promise;
 }

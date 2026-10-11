@@ -493,3 +493,21 @@ test('only the back-channel path is exempt from the CSRF guard', async () => {
   const exempt = await postLogout('junk', evil);
   assert.deepEqual(await exempt.json(), { error: { code: 'BAD_REQUEST', message: 'Invalid logout token' } });
 });
+
+test('a failed discovery is held briefly, so repeated requests during an outage cost one fetch', async () => {
+  const http = await import('node:http');
+  const { discover } = await import('../../src/services/oidc.js');
+  let hits = 0;
+  const down = http.createServer((req, res) => { hits += 1; res.writeHead(503).end(); }).listen(0);
+  await new Promise((resolve) => down.once('listening', resolve));
+  try {
+    configure({ issuer: `http://127.0.0.1:${down.address().port}` });
+    await assert.rejects(discover());
+    await assert.rejects(discover());
+    await assert.rejects(discover());
+    assert.equal(hits, 1);
+  } finally {
+    down.close();
+    configure();
+  }
+});
