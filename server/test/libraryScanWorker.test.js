@@ -44,3 +44,30 @@ test('scanLibrary runs the scan in a worker and the main thread reads the result
     await fs.rm(dbDir, { recursive: true, force: true });
   }
 });
+
+// Progress messages must not be mistaken for the single result message.
+test('the worker reports progress every 250 files and still resolves with the summary', async () => {
+  const musicDir = await fs.mkdtemp(path.join(os.tmpdir(), 'spinmatch-worker-music-'));
+  const dbDir = await fs.mkdtemp(path.join(os.tmpdir(), 'spinmatch-worker-db-'));
+  await fs.mkdir(path.join(musicDir, 'A'), { recursive: true });
+  const first = path.join(musicDir, 'A', '000.mp3');
+  await fs.copyFile(FIXTURE, first);
+  for (let i = 1; i < 520; i += 1) {
+    await fs.link(first, path.join(musicDir, 'A', `${String(i).padStart(3, '0')}.mp3`));
+  }
+  process.env.MUSIC_DIR = musicDir;
+  process.env.LIBRARY_DB = path.join(dbDir, 'library.db');
+
+  try {
+    const { scanLibrary } = await import('../src/services/libraryScanner.js');
+    const progress = [];
+    const summary = await scanLibrary({ onProgress: (n) => progress.push(n) });
+    assert.deepEqual(progress, [250, 500]);
+    assert.equal(summary.scanned, 520);
+  } finally {
+    delete process.env.MUSIC_DIR;
+    delete process.env.LIBRARY_DB;
+    await fs.rm(musicDir, { recursive: true, force: true });
+    await fs.rm(dbDir, { recursive: true, force: true });
+  }
+});

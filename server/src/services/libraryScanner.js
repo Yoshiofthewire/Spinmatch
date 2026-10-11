@@ -16,6 +16,8 @@ import {
 const AUDIO_EXTENSIONS = new Set(['.mp3', '.flac', '.m4a', '.aac', '.ogg']);
 // Batch writes so the SQLite write lock is released for concurrent auth writes.
 const WRITE_CHUNK = 5000;
+// Files walked between progress messages from the worker.
+export const PROGRESS_EVERY = 250;
 
 function isAudioFile(name) {
   return AUDIO_EXTENSIONS.has(path.extname(name).toLowerCase());
@@ -98,9 +100,10 @@ let activeWorker = null;
 const SCAN_TIMEOUT_MS = 60 * 60 * 1000;
 
 // Worker thread: tag reads (sync taglib) and DB writes would block the event loop.
-export function scanLibrary() {
+// A caller joining a scan in flight gets its result but not its progress.
+export function scanLibrary({ onProgress } = {}) {
   if (inFlight) return inFlight;
-  inFlight = spawnScanWorker().finally(() => { inFlight = null; activeWorker = null; });
+  inFlight = spawnScanWorker(onProgress).finally(() => { inFlight = null; activeWorker = null; });
   return inFlight;
 }
 
@@ -109,7 +112,7 @@ export async function stopScan() {
   if (activeWorker) await activeWorker.terminate();
 }
 
-function spawnScanWorker() {
+function spawnScanWorker(onProgress) {
   return new Promise((resolve, reject) => {
     // Don't inherit CLI flags like --test; process.env is still inherited.
     const worker = new Worker(new URL('./libraryScanWorker.js', import.meta.url), { execArgv: [] });
@@ -127,8 +130,9 @@ function spawnScanWorker() {
     }, SCAN_TIMEOUT_MS);
     timer.unref?.();
 
-    worker.once('message', (msg) => {
-      if (msg.ok) settle(resolve, msg.summary);
+    worker.on('message', (msg) => {
+      if ('progress' in msg) onProgress?.(msg.progress);
+      else if (msg.ok) settle(resolve, msg.summary);
       else settle(reject, new Error(msg.error));
     });
     worker.once('error', (err) => settle(reject, err));
@@ -139,7 +143,7 @@ function spawnScanWorker() {
 }
 
 // Runs inside the worker (or in-process in tests); production uses scanLibrary().
-export async function runScanOnce() {
+export async function runScanOnce({ onProgress } = {}) {
   const root = config.ingest.musicDir;
   const db = getDb();
 
@@ -162,6 +166,7 @@ export async function runScanOnce() {
   // Phase 1: read tags of changed files; no DB writes.
   for await (const filePath of walk(root, unreadableDirs)) {
     scanned += 1;
+    if (scanned % PROGRESS_EVERY === 0) onProgress?.(scanned);
     seen.add(filePath);
     let stat;
     try {

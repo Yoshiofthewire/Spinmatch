@@ -23,7 +23,8 @@ import { checkOwned } from '../services/libraryOwned.js';
 import { readCoverArt } from '../services/tags.js';
 import { readSidecarCover } from '../services/coverArt.js';
 import { assertReadableInsideMusicDir } from '../lib/paths.js';
-import { scanLibrary, rescanDirs } from '../services/libraryScanner.js';
+import { rescanDirs } from '../services/libraryScanner.js';
+import { trackedScan, getScanStatus } from '../services/librarySync.js';
 import { detectAlbumGaps } from '../services/libraryGaps.js';
 import { sweepArtistMissing } from '../services/libraryArtistGaps.js';
 import { sameOriginOnly } from '../middleware/sameOriginOnly.js';
@@ -187,11 +188,18 @@ libraryRouter.get('/stream/:trackId', async (req, res, next) => {
 
 libraryRouter.post('/scan', async (req, res, next) => {
   try {
-    const summary = await scanLibrary();
+    const summary = await trackedScan();
     res.json(summary);
   } catch (err) {
     next(err);
   }
+});
+
+libraryRouter.get('/scan/status', (req, res) => {
+  const status = getScanStatus();
+  // Before this process's first scan, fall back to the stored stamp.
+  status.lastScanAt ??= getStats(getDb()).lastScanAt || null;
+  res.json(status);
 });
 
 libraryRouter.get('/missing', sameOriginOnly, async (req, res, next) => {

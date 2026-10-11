@@ -38,6 +38,16 @@ test('GET /api/library/stats returns the collection summary', async () => {
   assert.equal(body.totalAlbums, 1);
 });
 
+test('GET /api/library/scan/status reports idle and falls back to the stored scan time', async () => {
+  const res = await fetch(`${baseUrl}/api/library/scan/status`);
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.scanning, false);
+  assert.equal(body.lastError, null);
+  assert.equal(body.lastScanAt, repo.getStats(db).lastScanAt);
+  assert.ok(body.lastScanAt > 0);
+});
+
 test('GET /api/library/tracks filters by album', async () => {
   const res = await fetch(`${baseUrl}/api/library/tracks?artist=A&album=Al`);
   const body = await res.json();
