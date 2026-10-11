@@ -349,7 +349,14 @@ export default function PlaylistDetail({ id, onPlay, onDeleted }) {
           <div className="bulk-verify-progress">
             <EqualizerLoader />
             <div style={{ flex: 1 }}>
-              <div className="progress-bar">
+              <div
+                className="progress-bar"
+                role="progressbar"
+                aria-label="Files copied"
+                aria-valuemin={0}
+                aria-valuemax={dropoffProgress?.total || undefined}
+                aria-valuenow={dropoffProgress?.total ? dropoffProgress.index : undefined}
+              >
                 <div
                   className="progress-bar-fill"
                   style={{

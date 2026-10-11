@@ -210,6 +210,7 @@ export default function FixTrackPanel({ track, onFixed, onCancel, onPlay }) {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Search MusicBrainz by artist / title"
+          aria-label="Search MusicBrainz by artist or title"
         />
         <button type="submit" disabled={searching}>
           {searching ? 'Searching…' : 'Search'}

@@ -1,3 +1,4 @@
+import { useTitle } from '../lib/useTitle.js';
 import { useState } from 'react';
 import { getHistory, clearHistory } from '../lib/history.js';
 
@@ -8,6 +9,7 @@ function actionLabel(action) {
 }
 
 export default function HistoryPage() {
+  useTitle('History');
   const [entries, setEntries] = useState(() => getHistory());
   const [confirmClear, setConfirmClear] = useState(false);
 

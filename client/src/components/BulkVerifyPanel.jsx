@@ -124,10 +124,18 @@ export default function BulkVerifyPanel({
         <div className="bulk-verify-progress">
           <EqualizerLoader />
           <div style={{ flex: 1 }}>
-            <div className="progress-bar">
+            {/* No total (artist sweep) leaves valuenow unset: indeterminate. */}
+            <div
+              className="progress-bar"
+              role="progressbar"
+              aria-label="Tracks matched"
+              aria-valuemin={0}
+              aria-valuemax={total || undefined}
+              aria-valuenow={total ? results.length : undefined}
+            >
               <div className="progress-bar-fill" style={{ width: `${progress}%` }} />
             </div>
-            <p className="muted" style={{ margin: 0 }}>
+            <p className="muted" style={{ margin: 0 }} aria-live="polite">
               Matched {results.length}{total ? ` of ${total}` : ''} tracks…
               {currentAlbum && (
                 <> — album {currentAlbum.albumIndex} of {currentAlbum.albumCount}: {currentAlbum.title}</>

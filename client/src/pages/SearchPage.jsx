@@ -1,3 +1,4 @@
+import { useTitle } from '../lib/useTitle.js';
 import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { get } from '../api/client.js';
@@ -11,6 +12,7 @@ import { useConfig } from '../ConfigContext.jsx';
 import { useOwned } from '../lib/useOwned.js';
 
 export default function SearchPage() {
+  useTitle('Search');
   const [results, setResults] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);

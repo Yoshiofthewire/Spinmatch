@@ -1,3 +1,4 @@
+import { useTitle } from '../lib/useTitle.js';
 import { useCallback, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import EqualizerLoader from '../components/EqualizerLoader.jsx';
@@ -12,6 +13,7 @@ import { formatBytes } from '../lib/format.js';
 // makes the browser Back button step out of a playlist instead of leaving
 // the page entirely.
 export default function PlaylistsPage() {
+  useTitle('Playlists');
   const [params, setParams] = useSearchParams();
   const selectedId = params.get('id');
 
