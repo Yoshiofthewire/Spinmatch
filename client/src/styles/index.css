@@ -229,18 +229,6 @@ button:disabled {
   cursor: default;
 }
 
-.metube-button {
-  padding: 0.4rem 0.8rem;
-  font-size: 0.8rem;
-  background: transparent;
-  border: 1px solid var(--lock);
-  color: var(--lock);
-}
-
-.metube-button:hover:not(:disabled) {
-  background: rgba(47, 217, 196, 0.12);
-}
-
 .copy-button {
   padding: 0.4rem 0.8rem;
   font-size: 0.8rem;

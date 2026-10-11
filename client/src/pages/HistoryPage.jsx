@@ -3,7 +3,6 @@ import { useState } from 'react';
 import { getHistory, clearHistory } from '../lib/history.js';
 
 function actionLabel(action) {
-  if (action === 'sent') return 'Sent to MeTube';
   if (action === 'ingested') return 'Ingested';
   return 'Verified';
 }

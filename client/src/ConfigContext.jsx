@@ -2,12 +2,12 @@ import { createContext, useCallback, useContext, useEffect, useState } from 'rea
 import { get } from './api/client.js';
 
 const ConfigContext = createContext({
-  metubeUrl: null, ingestEnabled: false, libraryEnabled: false, acoustidConfigured: false,
+  ingestEnabled: false, libraryEnabled: false, acoustidConfigured: false,
   loading: false, error: null, retry: () => {},
 });
 
 export function ConfigProvider({ children }) {
-  const [config, setConfig] = useState({ metubeUrl: null });
+  const [config, setConfig] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [attempt, setAttempt] = useState(0);

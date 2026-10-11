@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { post } from '../api/client.js';
 import EqualizerLoader from './EqualizerLoader.jsx';
-import SendToMeTubeButton from './SendToMeTubeButton.jsx';
 import CopyButton from './CopyButton.jsx';
 import { addEntry } from '../lib/history.js';
 
@@ -64,7 +63,6 @@ export default function VerifyButton({ artist, title, album, lengthMs, recording
             {result.video.title}
           </a>
           <CopyButton text={result.video.url} />
-          <SendToMeTubeButton url={result.video.url} artist={artist} title={title} album={album} />
         </>
       )}
       {result.deltaSeconds != null && <span className="muted"> Δ{result.deltaSeconds}s</span>}

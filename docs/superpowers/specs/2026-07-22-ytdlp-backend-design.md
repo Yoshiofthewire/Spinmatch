@@ -6,8 +6,7 @@ Spinmatch currently verifies YouTube matches via the YouTube Data API v3 (`searc
 `videos.list`), which requires an API key and is capped at ~100 track lookups/day on the free
 quota tier. This design replaces that with `yt-dlp`, which scrapes YouTube directly and has no
 formal daily quota, removing the API key requirement entirely. Scope is unchanged: Spinmatch
-still only finds and verifies YouTube links — it does not download or rip audio (MeTube remains
-the download path).
+still only finds and verifies YouTube links — it does not download or rip audio.
 
 ## Architecture
 
@@ -95,4 +94,4 @@ gathered (same early-exit shape as today's quota-exceeded handling, minus the qu
 ## Out of scope
 
 - No change to the app's scope: still find/verify only, no downloading/ripping via yt-dlp.
-- No change to MusicBrainz integration, cover art, MeTube send-to, history, or navigation.
+- No change to MusicBrainz integration, cover art, history, or navigation.
