@@ -100,6 +100,22 @@ test('a read token can GET but not change anything', async () => {
   assert.equal((await call('/api/library/missing/stream', { headers: bearer(token) })).status, 403);
 });
 
+// Over HTTP the CSRF guard refuses read tokens first; this is the gate's own layer.
+test('the gate alone refuses a read token anything but GET/HEAD', async () => {
+  const { requireAuth } = await import('../../src/middleware/requireAuth.js');
+  const gate = (method, scope) => {
+    let passed;
+    requireAuth({ method, auth: { kind: 'token', scope } }, {}, (err) => { passed = err ?? true; });
+    return passed;
+  };
+  assert.equal(gate('GET', 'read'), true);
+  assert.equal(gate('HEAD', 'read'), true);
+  for (const method of ['POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']) {
+    assert.equal(gate(method, 'read').status, 403, method);
+    assert.equal(gate(method, 'full'), true, method);
+  }
+});
+
 // CSRF can't ride a bearer header, so a token request needs no origin headers. A cookie still does.
 test('a full token POSTs without origin headers; the same request with only a cookie is refused', async () => {
   const { token } = await mint('full');
