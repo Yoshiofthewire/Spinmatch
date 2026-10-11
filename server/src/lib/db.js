@@ -385,15 +385,17 @@ export function openDb(dbPath) {
   db.exec(SCHEMA);
   // A fresh DB gets every column from SCHEMA, so migrate() finds nothing to
   // alter and just stamps the version. Only an upgraded install does real work.
-  withTransaction(db, () => migrate(db));
+  // IMMEDIATE takes the write lock before reading schema_version, so a second
+  // connection waits (busy_timeout) and then sees the finished migration.
+  withTransaction(db, () => migrate(db), 'IMMEDIATE');
   db.exec(INDEXES);
   return db;
 }
 
 // Runs fn inside a single transaction, rolling back on error. node:sqlite has
 // no db.transaction() helper, so this is the manual BEGIN/COMMIT/ROLLBACK.
-export function withTransaction(db, fn) {
-  db.exec('BEGIN');
+export function withTransaction(db, fn, mode = 'DEFERRED') {
+  db.exec(`BEGIN ${mode}`);
   try {
     const result = fn();
     db.exec('COMMIT');

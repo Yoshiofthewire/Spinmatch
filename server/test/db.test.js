@@ -65,6 +65,40 @@ test('openDb waits out a lock another connection is holding', async () => {
   }
 });
 
+// The main thread and the scan worker both open the file at startup. Under a
+// deferred BEGIN the second reads the old schema_version from its snapshot, then
+// fails with SQLITE_BUSY_SNAPSHOT when it tries to write after the first commits.
+test('openDb waits for a concurrent migration instead of racing it', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'spinmatch-db-migrate-'));
+  const dbPath = path.join(dir, 'library.db');
+  const seed = openDb(dbPath);
+  seed.exec("UPDATE meta SET value = '7' WHERE key = 'schema_version'");
+  seed.close();
+
+  const source = `
+    const { DatabaseSync } = require('node:sqlite');
+    const { workerData, parentPort } = require('node:worker_threads');
+    const db = new DatabaseSync(workerData.dbPath);
+    db.exec('BEGIN IMMEDIATE');
+    db.exec("UPDATE meta SET value = '8' WHERE key = 'schema_version'");
+    parentPort.postMessage('migrating');
+    setTimeout(() => { db.exec('COMMIT'); db.close(); }, 250);
+  `;
+  const worker = new Worker(source, { eval: true, workerData: { dbPath } });
+  await new Promise((resolve, reject) => {
+    worker.once('message', resolve);
+    worker.once('error', reject);
+  });
+  try {
+    const db = openDb(dbPath);
+    assert.equal(db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value, '8');
+    db.close();
+  } finally {
+    await worker.terminate();
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('openDb enforces the single-row constraint on collection_stats', () => {
   const db = openDb(':memory:');
   db.prepare('INSERT INTO collection_stats (id, total_tracks) VALUES (1, 0)').run();
