@@ -41,6 +41,8 @@ describe('TrashTab', () => {
         test: (url, body) => url === '/api/library/trash/restore' && body.relPath === 'A/Al/a.flac',
         respond: () => jsonResponse({ relPath: 'A/Al/a.flac', restoredPath: '/music/A/Al/a.flac' }),
       },
+      // The refetch after the restore.
+      trashList([entry('B/Bl/b.mp3', false)]),
       {
         method: 'POST',
         test: (url, body) => url === '/api/library/trash/restore' && body.relPath === 'B/Bl/b.mp3',
@@ -60,9 +62,10 @@ describe('TrashTab', () => {
 
     const [first, second] = screen.getAllByRole('button', { name: 'Restore' });
     await user.click(first);
-    expect(await screen.findByText('Restored')).toBeInTheDocument();
+    expect(await screen.findByText('Restored: A/Al/a.flac')).toBeInTheDocument();
     expect(onRestored).toHaveBeenCalledTimes(1);
-    expect(screen.getByText(/^1 file \(2\.0 MB\) moved aside/)).toBeInTheDocument();
+    expect(await screen.findByText(/^1 file \(2\.0 MB\) moved aside/)).toBeInTheDocument();
+    expect(screen.queryByText('A/Al/a.flac')).not.toBeInTheDocument();
 
     await user.click(second);
     expect(await screen.findByText(/so the copy has been left in the trash/)).toBeInTheDocument();
@@ -70,6 +73,70 @@ describe('TrashTab', () => {
     expect(calls.filter((c) => c.method === 'POST').map((c) => c.body)).toEqual([
       { relPath: 'A/Al/a.flac' }, { relPath: 'B/Bl/b.mp3' },
     ]);
+  });
+
+
+  it('keeps every remaining file reachable after a restore on page 1 of 2', async () => {
+    let files = Array.from({ length: 101 }, (_, k) => entry(`F/${String(k).padStart(3, '0')}.flac`));
+    let lastUrl = '';
+    installFetchMock([
+      {
+        once: false,
+        test: (url) => { lastUrl = url; return url.startsWith('/api/library/trash?'); },
+        respond: () => {
+          const offset = Number(new URL(lastUrl, 'http://x').searchParams.get('offset') ?? 0);
+          return jsonResponse({
+            entries: files.slice(offset, offset + 100),
+            total: files.length,
+            totals: { count: files.length, bytes: files.length * 2 * 1024 * 1024 },
+          });
+        },
+      },
+      {
+        once: false,
+        method: 'POST',
+        test: (url, body) => {
+          if (url !== '/api/library/trash/restore') return false;
+          files = files.filter((f) => f.relPath !== body.relPath);
+          return true;
+        },
+        respond: () => jsonResponse({}),
+      },
+    ]);
+    const user = userEvent.setup();
+    render(<TrashTab />);
+
+    await screen.findByText('F/000.flac');
+    expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled();
+    await user.click(screen.getAllByRole('button', { name: 'Restore' })[0]);
+
+    // The refetch shows the 100 that remain on one page; nothing is stranded on page 2.
+    expect(await screen.findByText('F/100.flac')).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: 'Restore' })).toHaveLength(100);
+    expect(screen.queryByRole('button', { name: 'Next' })).not.toBeInTheDocument();
+  });
+
+  it('keeps each row busy until its own restore settles', async () => {
+    const settle = {};
+    installFetchMock([
+      { once: false, ...trashList([entry('A/a.flac'), entry('B/b.flac')]) },
+      ...['A/a.flac', 'B/b.flac'].map((rel) => ({
+        method: 'POST',
+        test: (url, body) => url === '/api/library/trash/restore' && body.relPath === rel,
+        respond: () => new Promise((resolve) => { settle[rel] = () => resolve(jsonResponse({})); }),
+      })),
+    ]);
+    const user = userEvent.setup();
+    render(<TrashTab />);
+
+    const [a, b] = await screen.findAllByRole('button', { name: 'Restore' });
+    await user.click(a);
+    await user.click(b);
+    expect(screen.getAllByRole('button', { name: 'Restoring…' })).toHaveLength(2);
+
+    await act(async () => { settle['A/a.flac'](); });
+    // B is still in flight, so its button stays disabled.
+    expect(screen.getByRole('button', { name: 'Restoring…' })).toBeDisabled();
   });
 });
 
