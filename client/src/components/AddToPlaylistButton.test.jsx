@@ -11,6 +11,16 @@ function listRoute(playlists) {
 }
 
 describe('AddToPlaylistButton', () => {
+  // Fixed, not absolute: a table's overflow-x wrapper clipped the absolute menu.
+  it('positions the menu fixed so a scrolling table cannot clip it', async () => {
+    installFetchMock([listRoute([])]);
+    const user = userEvent.setup();
+    render(<AddToPlaylistButton artist="A" title="T" album={null} />);
+    await user.click(screen.getByRole('button', { name: '+ Playlist' }));
+    const menu = (await screen.findByText('No playlists yet.')).closest('.add-to-playlist-menu');
+    expect(menu.style.position).toBe('fixed');
+  });
+
   it('posts source: manual when adding to an existing playlist', async () => {
     const calls = installFetchMock([
       listRoute([{ id: 'p1', name: 'Chill' }]),

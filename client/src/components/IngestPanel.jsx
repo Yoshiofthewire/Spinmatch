@@ -49,6 +49,7 @@ export default function IngestPanel() {
   }
 
   async function handleScan() {
+    setConfirmProcess(false);
     setError(null);
     setResult(null);
     setExpandedPath(null);
@@ -78,6 +79,8 @@ export default function IngestPanel() {
   }
 
   function runProcess({ dryRun }) {
+    // A pending confirm must not start a second stream once this one runs.
+    setConfirmProcess(false);
     setState('running');
     setError(null);
     setProcessed(0);
@@ -152,7 +155,8 @@ export default function IngestPanel() {
                 <button
                   type="button"
                   className="chip-button"
-                  onClick={() => { setConfirmProcess(false); runProcess({ dryRun: false }); }}
+                  disabled={busy}
+                  onClick={() => runProcess({ dryRun: false })}
                 >
                   Confirm
                 </button>
