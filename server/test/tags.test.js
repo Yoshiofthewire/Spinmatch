@@ -370,3 +370,60 @@ test('writeTags swaps in a tagged copy and keeps the file mode', async () => {
     assert.deepEqual(await fs.readdir(path.dirname(file)), ['silence.mp3']);
   });
 });
+
+// Undo depends on these: `before` is what a write replaced, and '' plus overwrite is
+// the only way back to an empty field.
+
+test('writeTags reports the old value of every field it wrote, null for blanks', async () => {
+  await withCopiedFixture('tagged.mp3', async (file) => {
+    const { before } = await writeTags(file, { title: 'New', year: 2001, genre: 'Jazz' }, { overwrite: true });
+    assert.deepEqual(before, { title: 'Existing Title', year: null, genre: null });
+  });
+});
+
+test('writeTags clears fields with "" under overwrite, across every format', async () => {
+  const all = { artist: 'A', title: 'T', album: 'B', trackNumber: 3, disc: 2, year: 1999, genre: 'G' };
+  const cleared = Object.fromEntries(Object.keys(all).map((key) => [key, '']));
+  for (const name of ['silence.mp3', 'silence.flac', 'silence.m4a', 'silence.ogg']) {
+    await withCopiedFixture(name, async (file) => {
+      await writeTags(file, all);
+      const { filledFields, before } = await writeTags(file, cleared, { overwrite: true });
+      assert.deepEqual(new Set(filledFields), new Set(Object.keys(all)), name);
+      assert.deepEqual(before, all, name);
+      const after = await readTags(file);
+      for (const key of Object.keys(all)) assert.equal(after[key], null, `${name} ${key}`);
+    });
+  }
+});
+
+test('writeTags ignores "" without overwrite, so a fill can never clear', async () => {
+  await withCopiedFixture('tagged.mp3', async (file) => {
+    const { filledFields } = await writeTags(file, { title: '' });
+    assert.deepEqual(filledFields, []);
+    assert.equal((await readTags(file)).title, 'Existing Title');
+  });
+});
+
+test('writeTags reports the cover it replaced, or null when there was none', async () => {
+  await withCopiedFixture('silence.mp3', async (file) => {
+    const first = { bytes: Buffer.from([0xff, 0xd8, 0xff, 0xd9]), mimeType: 'image/jpeg' };
+    const added = await writeTags(file, {}, { coverImage: first });
+    assert.equal(added.before.coverArt, null);
+
+    const second = { bytes: Buffer.from([0x89, 0x50, 0x4e, 0x47]), mimeType: 'image/png' };
+    const replaced = await writeTags(file, {}, { coverImage: second, replaceCoverArt: true });
+    assert.deepEqual(replaced.before.coverArt, first);
+  });
+});
+
+test('writeTags removeCoverArt strips embedded art and reports it', async () => {
+  await withCopiedFixture('silence.mp3', async (file) => {
+    const cover = { bytes: Buffer.from([0xff, 0xd8, 0xff, 0xd9]), mimeType: 'image/jpeg' };
+    await writeTags(file, {}, { coverImage: cover });
+    const { filledFields, before } = await writeTags(file, {}, { removeCoverArt: true });
+    assert.deepEqual(filledFields, ['coverArt']);
+    assert.deepEqual(before.coverArt, cover);
+    assert.equal(await readCoverArt(file), null);
+    assert.deepEqual((await writeTags(file, {}, { removeCoverArt: true })).filledFields, [], 'no art, no write');
+  });
+});

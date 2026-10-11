@@ -17,6 +17,8 @@ const FIELD_TO_TAG_PROP = {
   genre: 'genres',
 };
 
+const NUMERIC_FIELDS = new Set(['trackNumber', 'disc', 'year']);
+
 function readField(tag, field) {
   const prop = FIELD_TO_TAG_PROP[field];
   if (field === 'artist') return tag.performers && tag.performers.length ? tag.performers.join(', ') : null;
@@ -25,12 +27,15 @@ function readField(tag, field) {
   return value === undefined || value === null || value === '' || value === 0 ? null : value;
 }
 
+// '' clears the field; readField reads every cleared form back as null.
 function writeField(tag, field, value) {
   const prop = FIELD_TO_TAG_PROP[field];
   if (field === 'artist') {
-    tag.performers = [value];
+    tag.performers = value === '' ? [] : [value];
   } else if (field === 'genre') {
-    tag.genres = [value];
+    tag.genres = value === '' ? [] : [value];
+  } else if (value === '') {
+    tag[prop] = NUMERIC_FIELDS.has(field) ? 0 : undefined;
   } else {
     tag[prop] = value;
   }
@@ -62,23 +67,28 @@ export async function readTags(filePath) {
   }
 }
 
+function frontPicture(tag) {
+  const pictures = tag.pictures || [];
+  return pictures.find((p) => p.type === PictureType.FrontCover) || pictures[0] || null;
+}
+
+function pictureBytes(picture) {
+  return { bytes: Buffer.from(picture.data.toByteArray()), mimeType: picture.mimeType || 'image/jpeg' };
+}
+
 // Embedded cover as {bytes, mimeType} or null; prefers FrontCover.
 export async function readCoverArt(filePath) {
   const file = File.createFromPath(filePath);
   try {
-    const pictures = file.tag.pictures || [];
-    if (!pictures.length) return null;
-    const picture = pictures.find((p) => p.type === PictureType.FrontCover) || pictures[0];
+    const picture = frontPicture(file.tag);
+    if (!picture) return null;
     // Size-check before toByteArray() copies it; embedded art is unbounded and served over HTTP.
     const length = picture.data?.length ?? 0;
     if (length > MAX_IMAGE_BYTES) {
       console.warn(`tags: embedded cover in ${filePath} is ${length} bytes, over the ${MAX_IMAGE_BYTES} limit — skipping`);
       return null;
     }
-    return {
-      bytes: Buffer.from(picture.data.toByteArray()),
-      mimeType: picture.mimeType || 'image/jpeg',
-    };
+    return pictureBytes(picture);
   } finally {
     file.dispose();
   }
@@ -86,15 +96,16 @@ export async function readCoverArt(filePath) {
 
 // Fills only empty fields by default. `overwrite` writes any field that differs;
 // `replaceCoverArt` is the separate equivalent for art. A null in `desired` means
-// "no opinion", so a partial `desired` touches only its fields and can't remove a tag.
+// "no opinion"; only '' with `overwrite` (or `removeCoverArt`) removes anything.
+// `before` holds each written field's old value (coverArt: {bytes, mimeType} or null).
 export async function writeTags(
   filePath,
   desired,
-  { coverImage, overwrite = false, replaceCoverArt = false } = {},
+  { coverImage, overwrite = false, replaceCoverArt = false, removeCoverArt = false } = {},
 ) {
-  const opts = { coverImage, overwrite, replaceCoverArt };
+  const opts = { coverImage, overwrite, replaceCoverArt, removeCoverArt };
   // Dry run on the original first: nothing to change means no copy, no save.
-  const filledFields = withFile(filePath, (file) => applyTags(file.tag, desired, opts));
+  const { filledFields, before } = withFile(filePath, (file) => applyTags(file.tag, desired, opts));
   // Tell the watcher this is our write; noted even for a no-op (a miss costs a rescan).
   noteWrite(filePath);
   if (filledFields.length) {
@@ -103,7 +114,7 @@ export async function writeTags(
       file.save();
     });
   }
-  return { filledFields };
+  return { filledFields, before };
 }
 
 function withFile(filePath, fn) {
@@ -138,22 +149,30 @@ async function saveViaTemp(filePath, edit) {
   await fsyncPath(dir);
 }
 
-function applyTags(tag, desired, { coverImage, overwrite, replaceCoverArt }) {
+function applyTags(tag, desired, { coverImage, overwrite, replaceCoverArt, removeCoverArt }) {
   const filledFields = [];
+  const before = {};
   for (const field of Object.keys(FIELD_TO_TAG_PROP)) {
     const desiredValue = desired[field];
-    if (desiredValue == null) continue;
+    if (desiredValue == null || (desiredValue === '' && !overwrite)) continue;
     const current = readField(tag, field);
-    const shouldWrite = overwrite ? current !== desiredValue : current == null;
+    const target = desiredValue === '' ? null : desiredValue;
+    const shouldWrite = overwrite ? current !== target : current == null;
     if (shouldWrite) {
+      before[field] = current;
       writeField(tag, field, desiredValue);
       filledFields.push(field);
     }
   }
 
   // Replacing without a coverImage must never remove existing art.
-  const hasCoverArt = Boolean(tag.pictures && tag.pictures.length > 0);
-  if (coverImage && (replaceCoverArt || !hasCoverArt)) {
+  const old = frontPicture(tag);
+  if (removeCoverArt && old) {
+    before.coverArt = pictureBytes(old);
+    tag.pictures = [];
+    filledFields.push('coverArt');
+  } else if (coverImage && (replaceCoverArt || !old)) {
+    before.coverArt = old ? pictureBytes(old) : null;
     const picture = Picture.fromFullData(
       ByteVector.fromByteArray(coverImage.bytes),
       PictureType.FrontCover,
@@ -163,5 +182,5 @@ function applyTags(tag, desired, { coverImage, overwrite, replaceCoverArt }) {
     tag.pictures = [picture];
     filledFields.push('coverArt');
   }
-  return filledFields;
+  return { filledFields, before };
 }
