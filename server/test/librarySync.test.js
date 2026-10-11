@@ -38,17 +38,20 @@ test('startLibrarySync coalesces a scan that starts while one is already in flig
   await new Promise((r) => setImmediate(r));
   assert.equal(calls, 1);
 
-  // Simulate a second trigger (e.g. the watch debounce firing) while the
-  // first scan is still in flight -- it must be coalesced (a no-op), not run.
+  // Triggers (e.g. the watch debounce) while the first scan is in flight must
+  // not start a concurrent scan...
+  await handle._triggerScan();
   await handle._triggerScan();
   assert.equal(calls, 1, 'a scan in flight should coalesce a concurrent second scan');
 
+  // ...but they must not be lost either: exactly one follow-up scan runs.
   releaseGate();
   await new Promise((r) => setImmediate(r));
+  assert.equal(calls, 2, 'one rerun for any number of mid-scan triggers');
 
-  // Now that the first scan finished, a fresh trigger should run for real.
+  // Idle again, so a fresh trigger runs for real.
   await handle._triggerScan();
-  assert.equal(calls, 2);
+  assert.equal(calls, 3);
 
   handle.stop();
 });
