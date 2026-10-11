@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import Pagination from '../Pagination.jsx';
 import { usePagination } from '../../lib/usePagination.js';
 import { albumKey } from '../../lib/albumKey.js';
@@ -11,7 +12,7 @@ const REASONS = [
 
 // Entirely offline: computed from track numbers already in the index, so this
 // works with no network and answers instantly even on a large library.
-export default function IncompleteTab({ albums, onSelect }) {
+export default function IncompleteTab({ albums, onSelect, albumHref }) {
   const [reason, setReason] = useState('gaps');
 
   const filtered = useMemo(
@@ -61,9 +62,9 @@ export default function IncompleteTab({ albums, onSelect }) {
                 <tr key={albumKey(a.artist, a.album)}>
                   <td>{a.artist ?? <span className="muted">Unknown</span>}</td>
                   <td>
-                    <button type="button" className="link-button" onClick={() => onSelect(a)}>
+                    <Link className="link-button" to={albumHref(a)} onClick={() => onSelect(a)}>
                       {a.album}
-                    </button>
+                    </Link>
                   </td>
                   <td className="mono">
                     {a.trackCount}{a.maxTrackNumber ? ` / ${a.maxTrackNumber}` : ''}
@@ -78,9 +79,9 @@ export default function IncompleteTab({ albums, onSelect }) {
                       {a.missingPositions.slice(0, 12).map((position, i) => (
                         <span key={position}>
                           {i > 0 && ', '}
-                          <button type="button" className="link-button" onClick={() => onSelect(a)}>
+                          <Link className="link-button" to={albumHref(a)} onClick={() => onSelect(a)}>
                             {position}
-                          </button>
+                          </Link>
                         </span>
                       ))}
                       {a.missingPositions.length > 12 && ` +${a.missingPositions.length - 12}`}

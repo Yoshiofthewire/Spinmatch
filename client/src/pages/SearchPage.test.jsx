@@ -50,4 +50,23 @@ describe('SearchPage', () => {
     expect(input).toHaveValue('first');
     await waitFor(() => expect(searches()).toEqual(['first', 'second', 'first']));
   });
+
+  it('renders artist and album results as real links', async () => {
+    installFetchMock([{
+      test: (url) => url.startsWith('/api/search?'),
+      respond: () => jsonResponse({
+        artists: [{ mbid: 'a1', name: 'Autechre' }],
+        releaseGroups: [{ mbid: 'rg1', title: 'Amber', artist: 'Autechre' }],
+        recordings: [],
+      }),
+    }]);
+    render(
+      <MemoryRouter initialEntries={['/?q=autechre']}>
+        <SearchPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByRole('link', { name: /^Autechre/ })).toHaveAttribute('href', '/artist/a1');
+    expect(screen.getByRole('link', { name: /Amber/ })).toHaveAttribute('href', '/release-group/rg1');
+  });
 });

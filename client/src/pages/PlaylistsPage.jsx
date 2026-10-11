@@ -1,6 +1,6 @@
 import { useTitle } from '../lib/useTitle.js';
 import { useCallback, useEffect, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import EqualizerLoader from '../components/EqualizerLoader.jsx';
 import ErrorBanner from '../components/ErrorBanner.jsx';
 import PlaylistDetail from '../components/playlist/PlaylistDetail.jsx';
@@ -125,9 +125,9 @@ export default function PlaylistsPage() {
                 {playlists.map((p) => (
                   <tr key={p.id}>
                     <td>
-                      <button type="button" className="link-button" onClick={() => openPlaylist(p.id)}>
+                      <Link className="link-button" to={`?id=${p.id}`}>
                         {p.name}
-                      </button>
+                      </Link>
                     </td>
                     <td className="mono">{p.itemCount}</td>
                     <td className="mono">{p.gapCount > 0 ? p.gapCount : <span className="muted">0</span>}</td>

@@ -123,15 +123,24 @@ export default function LibraryPage() {
   // `replace` is for the one move that isn't navigation: renaming the album you
   // are looking at. Pushing there would leave a history entry pointing at a name
   // that no longer resolves, so Back would land on an empty tracklist.
-  function go({ tab: nextTab = tab, artist = null, album = null, replace = false }) {
+  function paramsFor({ tab: nextTab = tab, artist = null, album = null }) {
     const next = { tab: nextTab };
     if (artist) next.artist = artist;
     if (album) {
       next.album = album.album;
       if (album.artist) next.albumArtist = album.artist;
     }
-    setParams(next, { replace });
+    return next;
   }
+
+  function go({ replace = false, ...where }) {
+    setParams(paramsFor(where), { replace });
+  }
+
+  // Drill-downs render as links to these, so they can open in a new tab. The
+  // link's onClick only remembers the album row (setAlbumMeta); the link navigates.
+  const artistHref = (artist) => `?${new URLSearchParams(paramsFor({ artist }))}`;
+  const albumHref = (album) => `?${new URLSearchParams(paramsFor({ artist: selectedArtist, album }))}`;
 
   function openArtist(artist) {
     go({ artist });
@@ -231,7 +240,8 @@ export default function LibraryPage() {
           ) : selectedArtist ? (
             <ArtistDetail
               artist={selectedArtist}
-              onSelectAlbum={openAlbum}
+              onSelectAlbum={setAlbumMeta}
+              albumHref={albumHref}
               incompleteKeys={incompleteKeys}
               onLibraryChanged={refresh}
             />
@@ -249,14 +259,15 @@ export default function LibraryPage() {
                 <ArtistsTab
                   sort={artistSort}
                   onSortChange={setArtistSort}
-                  onSelect={openArtist}
+                  artistHref={artistHref}
                 />
               )}
               {tab === 'albums' && (
                 <AlbumsTab
                   sort={albumSort}
                   onSortChange={setAlbumSort}
-                  onSelect={openAlbum}
+                  onSelect={setAlbumMeta}
+                  albumHref={albumHref}
                   incomplete={incomplete}
                   incompleteKeys={incompleteKeys}
                 />
@@ -265,7 +276,7 @@ export default function LibraryPage() {
                 <TracksTab onPlay={(track, queue) => setPlaying({ track, queue })} />
               )}
               {tab === 'incomplete' && (
-                <IncompleteTab albums={incomplete} onSelect={openAlbum} />
+                <IncompleteTab albums={incomplete} onSelect={setAlbumMeta} albumHref={albumHref} />
               )}
               {tab === 'health' && (
                 <HealthTab

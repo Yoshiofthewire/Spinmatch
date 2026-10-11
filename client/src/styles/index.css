@@ -381,6 +381,16 @@ button:disabled {
   box-shadow: 0 8px 24px -8px rgba(255, 90, 70, 0.35);
 }
 
+/* Rows and cards that navigate are links (so they open in a new tab) but keep
+   the card look rather than the global link colour and underline. */
+a.result-row,
+a.album-card,
+a.result-row:hover,
+a.album-card:hover {
+  color: var(--text);
+  text-decoration: none;
+}
+
 .album-title {
   font-family: var(--font-display);
   font-weight: 600;

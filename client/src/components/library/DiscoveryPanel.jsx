@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import EqualizerLoader from '../EqualizerLoader.jsx';
 import CoverArt from '../CoverArt.jsx';
 import { getSimilarArtists, getRecommendations } from '../../api/library.js';
@@ -35,7 +35,6 @@ function SignalBadge({ artist }) {
 }
 
 export default function DiscoveryPanel() {
-  const navigate = useNavigate();
   const [mode, setMode] = useState(null); // null | 'artists' | 'albums'
   const [state, setState] = useState('idle'); // idle | loading | ready | error
   const [data, setData] = useState(null);
@@ -147,17 +146,17 @@ export default function DiscoveryPanel() {
             ) : (
               <div className="album-grid">
                 {data.albums.map((album) => (
-                  <button
+                  <Link
                     key={album.mbid}
                     className="album-card"
-                    onClick={() => navigate(`/release-group/${album.mbid}`)}
+                    to={`/release-group/${album.mbid}`}
                     title={`Reached from ${album.via.join(', ')} — find and verify this album`}
                   >
                     <CoverArt src={album.coverArtUrl} alt={album.title} />
                     <span className="album-title">{album.title}</span>
                     <span className="muted">{album.artist}</span>
                     {album.year && <span className="muted">{album.year}</span>}
-                  </button>
+                  </Link>
                 ))}
               </div>
             )
