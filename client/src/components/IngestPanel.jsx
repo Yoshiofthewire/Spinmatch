@@ -19,6 +19,7 @@ export default function IngestPanel() {
   const [processed, setProcessed] = useState(0);
   const doneRef = useRef(false);
   const [expandedPath, setExpandedPath] = useState(null);
+  const [confirmProcess, setConfirmProcess] = useState(false);
 
   function handleResolved(oldItem, resolution) {
     if (resolution.matched) {
@@ -127,9 +128,27 @@ export default function IngestPanel() {
             <button onClick={() => runProcess({ dryRun: true })} disabled={state === 'running'}>
               Preview {items.length} item{items.length === 1 ? '' : 's'}
             </button>
-            <button onClick={() => runProcess({ dryRun: false })} disabled={state === 'running'}>
-              Process {items.length} item{items.length === 1 ? '' : 's'}
-            </button>
+            {!confirmProcess ? (
+              <button onClick={() => setConfirmProcess(true)} disabled={state === 'running'}>
+                Process {items.length} item{items.length === 1 ? '' : 's'}
+              </button>
+            ) : (
+              <span className="inline-confirm">
+                <span className="muted">
+                  Write tags and move {items.length} file{items.length === 1 ? '' : 's'}?
+                </span>
+                <button
+                  type="button"
+                  className="chip-button"
+                  onClick={() => { setConfirmProcess(false); runProcess({ dryRun: false }); }}
+                >
+                  Confirm
+                </button>
+                <button type="button" className="link-button" onClick={() => setConfirmProcess(false)}>
+                  Cancel
+                </button>
+              </span>
+            )}
           </>
         )}
       </div>

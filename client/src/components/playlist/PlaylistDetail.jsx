@@ -93,7 +93,10 @@ export default function PlaylistDetail({ id, onPlay, onDeleted }) {
   }
 
   // ---- Item removal ----
+  const [removeConfirmId, setRemoveConfirmId] = useState(null);
+
   async function removeItem(itemId) {
+    setRemoveConfirmId(null);
     setActionError(null);
     try {
       await removePlaylistItem(id, itemId);
@@ -466,9 +469,20 @@ export default function PlaylistDetail({ id, onPlay, onDeleted }) {
                       Find this track
                     </Link>
                   )}
-                  <button type="button" className="link-button" onClick={() => removeItem(item.id)}>
-                    Remove
-                  </button>
+                  {removeConfirmId !== item.id ? (
+                    <button type="button" className="link-button" onClick={() => setRemoveConfirmId(item.id)}>
+                      Remove
+                    </button>
+                  ) : (
+                    <span className="playlist-delete-confirm">
+                      <button type="button" className="chip-button" onClick={() => removeItem(item.id)}>
+                        Confirm remove
+                      </button>
+                      <button type="button" className="link-button" onClick={() => setRemoveConfirmId(null)}>
+                        Cancel
+                      </button>
+                    </span>
+                  )}
                 </td>
               </tr>
             ))}
