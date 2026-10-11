@@ -27,7 +27,7 @@ export default function ArtistPage() {
 
   // Turns this page into a coverage view of the artist: which of their albums
   // you have and which you don't, without a second lookup.
-  const owned = useOwned({
+  const { owned, error: ownedError } = useOwned({
     enabled: libraryEnabled,
     albums: (data?.albums ?? []).map((a) => ({
       id: a.mbid, artist: data.artist.name, title: a.title,
@@ -41,6 +41,7 @@ export default function ArtistPage() {
     <div className="artist-page">
       <Breadcrumbs crumbs={[{ label: 'Home', to: '/' }, { label: data.artist.name || 'Artist' }]} />
       <h1>{data.artist.name || 'Artist'}</h1>
+      {ownedError && <p className="muted">Couldn&apos;t check which albums you own: {ownedError}</p>}
       <AlbumGrid albums={data.albums} ownedMbids={owned} />
     </div>
   );

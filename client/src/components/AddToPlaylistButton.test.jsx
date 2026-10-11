@@ -92,4 +92,36 @@ describe('AddToPlaylistButton', () => {
     expect(secondToggle).toHaveAttribute('aria-expanded', 'false');
     expect(screen.getAllByText('Added')).toHaveLength(1);
   });
+
+  it('closes on Escape and returns focus to the trigger', async () => {
+    installFetchMock([listRoute([{ id: 'p1', name: 'Chill' }])]);
+    const user = userEvent.setup();
+    render(<AddToPlaylistButton artist="A" title="T" album={null} />);
+
+    const trigger = screen.getByRole('button', { name: '+ Playlist' });
+    await user.click(trigger);
+    await user.click(await screen.findByLabelText('New playlist name'));
+    await user.keyboard('{Escape}');
+
+    expect(trigger).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByLabelText('New playlist name')).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+  });
+
+  it('shows an error with Retry instead of loading forever when listing fails', async () => {
+    installFetchMock([
+      { test: (url) => url === '/api/playlists', respond: () => jsonResponse({ error: { message: 'db locked' } }, { status: 500 }) },
+      listRoute([{ id: 'p1', name: 'Chill' }]),
+    ]);
+    const user = userEvent.setup();
+    render(<AddToPlaylistButton artist="A" title="T" album={null} />);
+
+    await user.click(screen.getByRole('button', { name: '+ Playlist' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('db locked');
+    expect(screen.queryByText('Loading…')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(await screen.findByRole('button', { name: 'Chill' })).toBeInTheDocument();
+  });
 });
