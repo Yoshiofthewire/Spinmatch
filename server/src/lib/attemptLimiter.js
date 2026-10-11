@@ -1,5 +1,5 @@
 // Fixed-window, per-key attempt limiter for unauthenticated auth routes, so a
-// bad actor can't hammer /auth/login as a password-guessing (and scrypt-CPU)
+// bad actor can't hammer /auth/login as a password-guessing (and hash-CPU)
 // oracle. In-memory is fine for a single-instance self-hosted app; expired
 // entries are pruned opportunistically so the map can't grow unbounded.
 export function createAttemptLimiter({ max, windowMs, now = () => Date.now() }) {

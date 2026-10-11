@@ -520,7 +520,8 @@ The token lives in memory only. It is spent by a successful setup; restart to ge
 
 ![The first-run setup screen, asking for a username and a password](docs/screenshots/first-run-setup.png)
 
-Spinmatch stores the password as a scrypt hash. It uses the same SQLite database as the library
+Spinmatch stores the password as an Argon2id hash (64 MiB, 3 passes). A hash from an older
+version is upgraded at your next login. It uses the same SQLite database as the library
 index (`LIBRARY_DB`, default `/data/db/library.db`). Keep that path on a persistent volume. No
 extra configuration is necessary, because the login is always active.
 
