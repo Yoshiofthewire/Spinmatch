@@ -39,26 +39,28 @@ export default function HistoryPage() {
               </span>
             )}
           </div>
-          <table>
-            <thead>
-              <tr>
-                <th>Track</th>
-                <th>Artist</th>
-                <th>Action</th>
-                <th>When</th>
-              </tr>
-            </thead>
-            <tbody>
-              {entries.map((entry, i) => (
-                <tr key={i}>
-                  <td>{entry.track}</td>
-                  <td>{entry.artist}</td>
-                  <td>{actionLabel(entry.action)}</td>
-                  <td className="muted">{new Date(entry.timestamp).toLocaleString()}</td>
+          <div className="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Track</th>
+                  <th>Artist</th>
+                  <th>Action</th>
+                  <th>When</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {entries.map((entry, i) => (
+                  <tr key={i}>
+                    <td>{entry.track}</td>
+                    <td>{entry.artist}</td>
+                    <td>{actionLabel(entry.action)}</td>
+                    <td className="muted">{new Date(entry.timestamp).toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </>
       )}
     </div>

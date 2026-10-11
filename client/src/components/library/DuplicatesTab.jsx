@@ -109,68 +109,70 @@ export default function DuplicatesTab({ onPlay }) {
               </span>
             </h3>
             {groupError ? <p className="banner banner-error">{groupError}</p> : null}
-            <table className="library-table">
-              <thead>
-                <tr>
-                  <th aria-label="Play" /><th>#</th><th>Length</th>
-                  <th>Format</th><th>Size</th><th>Path</th><th aria-label="Actions" />
-                </tr>
-              </thead>
-              <tbody>
-                {group.copies.map((copy) => {
-                  const trashedPath = trashed[copy.id];
-                  return (
-                    <tr key={copy.id} className={trashedPath ? 'duplicate-copy-trashed' : undefined}>
-                      <td>
-                        {/* The album no longer tells two copies apart — they share it — and neither
-                            does the format when a folder was simply copied twice. The path does. */}
-                        <button
-                          type="button"
-                          className="play-button"
-                          onClick={() => onPlay(copy, group.copies.filter((c) => !trashed[c.id]))}
-                          disabled={Boolean(trashedPath)}
-                          aria-label={`Play ${copy.title} — ${copy.path}`}
-                        >
-                          ▶
-                        </button>
-                      </td>
-                      <td className="mono">{copy.trackNumber ?? '—'}</td>
-                      <td className="mono">{formatDuration(copy.durationMs)}</td>
-                      <td className="mono">{copy.ext ?? '—'}</td>
-                      <td className="mono">{copy.sizeBytes ? formatBytes(copy.sizeBytes) : '—'}</td>
-                      <td className="mono duplicate-path">{trashedPath ?? copy.path}</td>
-                      <td>
-                        {trashedPath ? (
-                          <>
-                            <span className="muted">Moved aside. </span>
-                            <button
-                              type="button"
-                              className="link-button"
-                              onClick={() => undo(group, copy)}
-                              disabled={Boolean(busy[copy.id])}
-                            >
-                              Undo
-                            </button>
-                          </>
-                        ) : (
+            <div className="table-scroll">
+              <table className="library-table">
+                <thead>
+                  <tr>
+                    <th aria-label="Play" /><th>#</th><th>Length</th>
+                    <th>Format</th><th>Size</th><th>Path</th><th aria-label="Actions" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {group.copies.map((copy) => {
+                    const trashedPath = trashed[copy.id];
+                    return (
+                      <tr key={copy.id} className={trashedPath ? 'duplicate-copy-trashed' : undefined}>
+                        <td>
+                          {/* The album no longer tells two copies apart — they share it — and neither
+                              does the format when a folder was simply copied twice. The path does. */}
                           <button
                             type="button"
-                            className="copy-button"
-                            onClick={() => moveAside(group, copy)}
-                            disabled={Boolean(busy[copy.id]) || liveCopies < 2}
-                            title={liveCopies < 2
-                              ? 'This is the only copy left — Spinmatch will not move it aside.'
-                              : 'Move this copy into .spinmatch-trash'}
+                            className="play-button"
+                            onClick={() => onPlay(copy, group.copies.filter((c) => !trashed[c.id]))}
+                            disabled={Boolean(trashedPath)}
+                            aria-label={`Play ${copy.title} — ${copy.path}`}
                           >
-                            {busy[copy.id] ? 'Moving…' : 'Move aside'}
+                            ▶
                           </button>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                        </td>
+                        <td className="mono">{copy.trackNumber ?? '—'}</td>
+                        <td className="mono">{formatDuration(copy.durationMs)}</td>
+                        <td className="mono">{copy.ext ?? '—'}</td>
+                        <td className="mono">{copy.sizeBytes ? formatBytes(copy.sizeBytes) : '—'}</td>
+                        <td className="mono duplicate-path">{trashedPath ?? copy.path}</td>
+                        <td>
+                          {trashedPath ? (
+                            <>
+                              <span className="muted">Moved aside. </span>
+                              <button
+                                type="button"
+                                className="link-button"
+                                onClick={() => undo(group, copy)}
+                                disabled={Boolean(busy[copy.id])}
+                              >
+                                Undo
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              type="button"
+                              className="copy-button"
+                              onClick={() => moveAside(group, copy)}
+                              disabled={Boolean(busy[copy.id]) || liveCopies < 2}
+                              title={liveCopies < 2
+                                ? 'This is the only copy left — Spinmatch will not move it aside.'
+                                : 'Move this copy into .spinmatch-trash'}
+                            >
+                              {busy[copy.id] ? 'Moving…' : 'Move aside'}
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           </div>
         );
       })}

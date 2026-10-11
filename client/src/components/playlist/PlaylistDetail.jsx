@@ -399,7 +399,7 @@ export default function PlaylistDetail({ id, onPlay, onDeleted }) {
       {playlist.items.length === 0 ? (
         <p className="muted">This playlist is empty.</p>
       ) : (
-        <table className="library-table playlist-table">
+        <div className="table-scroll"><table className="library-table playlist-table">
           <thead>
             <tr>
               <th aria-label="Reorder" />
@@ -495,7 +495,7 @@ export default function PlaylistDetail({ id, onPlay, onDeleted }) {
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       )}
     </div>
   );

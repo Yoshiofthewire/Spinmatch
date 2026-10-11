@@ -415,6 +415,11 @@ table {
   margin-bottom: 2rem;
 }
 
+/* Wide tables scroll sideways on narrow screens instead of pushing the page wide. */
+.table-scroll {
+  overflow-x: auto;
+}
+
 th, td {
   text-align: left;
   padding: 0.65rem 0.75rem;
@@ -1563,6 +1568,28 @@ a:hover {
   .player-time { display: none; }
   .album-detail-header { flex-direction: column; }
   .album-detail-header .cover-art { width: 140px; height: 140px; }
+
+  .app { padding: 0 1rem 4rem; }
+  .app-header { padding: 1.75rem 0 1.25rem; }
+  .app-nav { flex-wrap: wrap; gap: 0.5rem 1rem; }
+
+  /* Header and form rows wrap rather than overflow. */
+  .bulk-verify-actions,
+  .search-box,
+  .playlist-create-form,
+  .playlist-rename-form,
+  .ingest-candidate-search,
+  .library-scan,
+  .library-back {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+  .search-box input,
+  .playlist-create-form input,
+  .playlist-rename-form input,
+  .ingest-candidate-search input {
+    min-width: 0;
+  }
 }
 
 /* ---------- Library: health drill-down, duplicates, rescan ---------- */
