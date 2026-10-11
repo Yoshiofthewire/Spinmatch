@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import Pagination from '../Pagination.jsx';
 import EqualizerLoader from '../EqualizerLoader.jsx';
+import ErrorBanner from '../ErrorBanner.jsx';
 import { usePagination } from '../../lib/usePagination.js';
 import { getDuplicates, trashDuplicate, restoreDuplicate } from '../../api/library.js';
 import { formatDuration, formatBytes } from '../../lib/format.js';
@@ -34,14 +35,16 @@ export default function DuplicatesTab({ onPlay }) {
   // doesn't blank the rest of the list.
   const [groupErrors, setGroupErrors] = useState({});
   const { page, setPage, pageCount, pageItems } = usePagination(groups ?? [], 20);
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
+    setError(null);
     getDuplicates()
       .then((data) => { if (!cancelled) setGroups(data.groups); })
       .catch((err) => { if (!cancelled) setError(err.message); });
     return () => { cancelled = true; };
-  }, []);
+  }, [attempt]);
 
   const keyFor = (group) => `${group.artist}-${group.album}-${group.title}`;
 
@@ -75,7 +78,7 @@ export default function DuplicatesTab({ onPlay }) {
     });
   });
 
-  if (error) return <p className="banner banner-error">{error}</p>;
+  if (error) return <ErrorBanner message={error} onRetry={() => setAttempt((n) => n + 1)} />;
   if (!groups) return <EqualizerLoader label="Finding duplicates…" />;
   if (groups.length === 0) {
     return <p className="muted">No duplicates — no track is indexed at more than one path within the same release.</p>;

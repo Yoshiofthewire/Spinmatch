@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import EqualizerLoader from '../components/EqualizerLoader.jsx';
+import ErrorBanner from '../components/ErrorBanner.jsx';
 import Breadcrumbs from '../components/Breadcrumbs.jsx';
 import OverviewTab from '../components/library/OverviewTab.jsx';
 import ArtistsTab from '../components/library/ArtistsTab.jsx';
@@ -174,7 +175,7 @@ export default function LibraryPage() {
     <div className={`library-page${playing ? ' library-page-playing' : ''}`}>
       <h1>Your Library</h1>
 
-      {error && <p className="banner banner-error">{error}</p>}
+      {error && <ErrorBanner message={error} onRetry={state === 'error' ? () => load() : undefined} />}
       {state === 'loading' && <EqualizerLoader label="Loading your library…" />}
 
       {state === 'ready' && (

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import EqualizerLoader from '../EqualizerLoader.jsx';
+import ErrorBanner from '../ErrorBanner.jsx';
 import AddTracksPanel from './AddTracksPanel.jsx';
 import { useConfig } from '../../ConfigContext.jsx';
 import { formatBytes, formatDuration } from '../../lib/format.js';
@@ -211,7 +212,7 @@ export default function PlaylistDetail({ id, onPlay, onDeleted }) {
   }
 
   if (state === 'loading') return <EqualizerLoader label="Loading playlist…" />;
-  if (state === 'error') return <p className="banner banner-error">{error}</p>;
+  if (state === 'error') return <ErrorBanner message={error} onRetry={load} />;
   if (!playlist) return null;
 
   const gapCount = playlist.items.filter((i) => !i.track).length;
