@@ -184,11 +184,30 @@ async function rejectedLogin(setup, expected = '/?sso_error=failed') {
 const now = () => Math.floor(Date.now() / 1000);
 const tamper = (fn) => () => { idp.mutate = fn; };
 
+// The IdP advertising HS256/none must not widen what is accepted: RS256 is pinned.
+const laxIdp = () => {
+  idp.metadata = { id_token_signing_alg_values_supported: ['RS256', 'HS256', 'none'] };
+  configure();
+};
 test('rejects HS256 signed with the client secret', () => rejectedLogin(() => {
+  laxIdp();
   idp.mutate = (h) => { h.alg = 'HS256'; };
   idp.signWith = { secret: CLIENT_SECRET };
 }));
+// An RS384 key with no alg in the JWKS: only the RS256 pin refuses it.
+function rs384Key() {
+  const pair = rsaKey();
+  idp.keys = [...idp.keys.filter((k) => k.kid !== 'rs384'), { ...jwk(pair, 'rs384'), alg: undefined }];
+  idp.metadata = { id_token_signing_alg_values_supported: ['RS256', 'RS384'] };
+  configure();
+  return pair.privateKey;
+}
+test('rejects RS384 even when the IdP advertises it', () => rejectedLogin(() => {
+  idp.signWith = { key: rs384Key() };
+  idp.mutate = (h) => { h.alg = 'RS384'; h.kid = 'rs384'; };
+}));
 test('rejects alg none', () => rejectedLogin(() => {
+  laxIdp();
   idp.mutate = (h) => { h.alg = 'none'; };
   idp.signWith = {};
 }));
@@ -297,7 +316,7 @@ test('discovery must return exactly OIDC_ISSUER', async () => {
 });
 
 test('discovery refuses plain-http endpoints off loopback', async () => {
-  idp.metadata = { token_endpoint: 'http://idp.example/token' };
+  idp.metadata = { authorization_endpoint: 'http://idp.example/authorize' };
   assert.equal((await roundTrip()).location, '/?sso_error=failed');
 });
 
@@ -426,6 +445,13 @@ for (const [name, mutate] of Object.entries(badLogout)) {
   });
 }
 
+test('back-channel logout rejects RS384', async () => {
+  const key = rs384Key();
+  await link();
+  const token = idp.logoutToken((h) => { h.alg = 'RS384'; h.kid = 'rs384'; }, { key });
+  assert.equal((await postLogout(token)).status, 400);
+});
+
 test('back-channel logout rejects a 1024-bit RSA key', async () => {
   const weak = rsaKey(1024);
   idp.keys = [...idp.keys.filter((k) => k.kid !== 'weak'), jwk(weak, 'weak')];
@@ -436,7 +462,10 @@ test('back-channel logout rejects a 1024-bit RSA key', async () => {
 });
 
 test('back-channel logout rejects when no identity is linked, or no token is sent', async () => {
-  assert.equal((await postLogout(idp.logoutToken())).status, 400);
+  const sidOnly = (h, c) => { delete c.sub; };
+  assert.equal((await postLogout(idp.logoutToken(sidOnly))).status, 400);
+  db.prepare("UPDATE app_auth SET oidc_issuer = 'https://other.example', oidc_sub = 'user-1'").run();
+  assert.equal((await postLogout(idp.logoutToken(sidOnly))).status, 400);
   await link();
   assert.equal((await postLogout(undefined)).status, 400);
   const oversized = await postLogout('x'.repeat(20_000));

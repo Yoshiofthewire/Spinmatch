@@ -15,12 +15,12 @@ export function jwk(pair, kid) {
   return { ...pair.publicKey.export({ format: 'jwk' }), kid, alg: 'RS256', use: 'sig' };
 }
 
-// Signs by header.alg: RS256 with `key`, HS256 with `secret`, none unsigned.
+// Signs by header.alg: RS* with `key`, HS256 with `secret`, none unsigned.
 export function mint(header, claims, { key, secret } = {}) {
   const data = `${b64u(header)}.${b64u(claims)}`;
   if (header.alg === 'none') return `${data}.`;
   if (header.alg === 'HS256') return `${data}.${createHmac('sha256', secret).update(data).digest('base64url')}`;
-  return `${data}.${sign('sha256', Buffer.from(data), key).toString('base64url')}`;
+  return `${data}.${sign(`sha${header.alg.slice(2)}`, Buffer.from(data), key).toString('base64url')}`;
 }
 
 function readBody(req) {
