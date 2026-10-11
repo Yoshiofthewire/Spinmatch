@@ -5,7 +5,8 @@ export function getHistory() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed : [];
+    // 'sent' (MeTube) entries from older versions aren't verifications; don't relabel them.
+    return Array.isArray(parsed) ? parsed.filter((e) => e?.action !== 'sent') : [];
   } catch {
     return [];
   }
