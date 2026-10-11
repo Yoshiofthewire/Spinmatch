@@ -74,9 +74,13 @@ runs in a worker thread. The tag reads and database writes for each file therefo
 main event loop. The app stays responsive during a scan of a large collection of 100k tracks or
 more.
 
+The Library page header shows the scan status: a live file count while a scan runs, and otherwise
+when the last scan finished, when the next one is due, and whether the watcher is on. A failed
+scan shows a short error there; the server log has the details.
+
 ![The Library overview tab: 16,041 tracks, 2,266 albums, 995 artists, 41 days of playtime, 113 GB on disk](docs/screenshots/library-overview.png)
 
-The Library page has nine tabs:
+The Library page has ten tabs:
 
 - **Overview** — the track, album, and artist counts, the total playtime, the total size on disk,
   and a format breakdown. It also has shortcuts into the reports below.
@@ -170,10 +174,14 @@ The Library page has nine tabs:
 
   Spinmatch refuses to move aside the last copy of a track, so a group can never be emptied by
   accident. An **Undo** appears next to a copy you have just moved and puts it straight back. Undo
-  is there while the page is open; after that, moving the file back by hand is easy, because the
-  trash mirrors your library.
+  is there while the page is open; after that, use the **Trash** tab.
 - **Changes** — every tag write Spinmatch has made to your library, newest first, each with an
   **Undo**. See [Undoing a tag change](#undoing-a-tag-change).
+- **Trash** — everything in `.spinmatch-trash`, with each file's original path, size, and date, and
+  the total space the trash holds. **Restore** moves a file back to its original path and indexes
+  it again, even months later. If something now sits at that path, Spinmatch leaves the file in the
+  trash and says so. Spinmatch never empties the trash: to free the space, delete files from
+  `.spinmatch-trash` yourself, outside Spinmatch.
 - **Discover** — the one view that looks outward. It shows artists and records connected to the ones
   that you own the most of. See [Discovery](#discovery).
 
