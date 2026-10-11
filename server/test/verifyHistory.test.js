@@ -68,7 +68,8 @@ test('importHistory maps legacy entries and skips invalid ones', () => {
   const result = importHistory([
     entry(),
     entry({ track: 'Ingested', action: 'ingested', artist: undefined, album: undefined }),
-    entry({ action: 'deleted' }),
+    // Old MeTube 'sent' entries are not verifications.
+    entry({ action: 'sent' }),
     entry({ track: '' }),
     entry({ track: 42 }),
     entry({ artist: ['x'] }),
