@@ -1,6 +1,6 @@
 # Spinmatch Playlists
 
-> **Status:** Designed, not started.
+> **Status:** Built.
 
 ## Motivation
 

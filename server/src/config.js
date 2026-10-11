@@ -53,8 +53,6 @@ export const config = {
     appName: process.env.MB_APP_NAME || 'Spinmatch',
     appVersion: process.env.MB_APP_VERSION || '0.1.0',
   },
-  // Optional: enables the "Send to MeTube" button. Unset means the feature is hidden.
-  metubeUrl: (process.env.METUBE_URL || '').replace(/\/+$/, '') || null,
   // Optional: enables the local library ingest feature. All three must be set.
   ingest: {
     musicDir: realDir(process.env.MUSIC_DIR),

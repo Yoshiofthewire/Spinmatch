@@ -5,66 +5,26 @@ process.env.MB_CONTACT_EMAIL = 'test@example.com';
 
 let server;
 let baseUrl;
-let cookie;
-let issueSetupToken;
 
 test.before(async () => {
-  process.env.METUBE_URL = 'https://metube.example.com/';
   const { openDb, setDbForTest } = await import('../../src/lib/db.js');
-  ({ issueSetupToken } = await import('../../src/services/auth.js'));
   const { createApp } = await import('../../src/app.js');
   setDbForTest(openDb(':memory:'));
   server = createApp().listen(0);
   await new Promise((resolve) => server.once('listening', resolve));
   baseUrl = `http://localhost:${server.address().port}`;
-
-  // An admin, so the authenticated half of this route can be exercised.
-  const res = await fetch(`${baseUrl}/api/auth/setup`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Sec-Fetch-Site': 'same-origin' },
-    body: JSON.stringify({ username: 'yoshi', password: 'hunter2hunter2', setupToken: issueSetupToken() }),
-  });
-  cookie = res.headers.get('set-cookie').split(';')[0];
 });
 
 test.after(() => {
-  delete process.env.METUBE_URL;
   server.close();
 });
 
-// metubeUrl is typically an internal hostname, and this route is public because
-// the client needs the feature flags before it can render the login screen. So
-// the URL is the one field that waits for a session.
-test('GET /api/config withholds metubeUrl from an unauthenticated caller', async () => {
+test('GET /api/config is public and returns only the feature flags', async () => {
   const res = await fetch(`${baseUrl}/api/config`);
   assert.equal(res.status, 200);
-  const body = await res.json();
-  assert.equal(body.metubeUrl, null);
-  // The flags are still public — the client needs them to decide what to render.
-  assert.equal(body.libraryEnabled, false);
-});
-
-test('GET /api/config returns the configured metubeUrl to a session, trailing slash stripped', async () => {
-  const res = await fetch(`${baseUrl}/api/config`, { headers: { Cookie: cookie } });
-  assert.equal(res.status, 200);
-  const body = await res.json();
-  assert.equal(body.metubeUrl, 'https://metube.example.com');
-});
-
-test('GET /api/config withholds metubeUrl from a forged cookie', async () => {
-  const res = await fetch(`${baseUrl}/api/config`, {
-    headers: { Cookie: 'spinmatch_session=not.a.real.token' },
-  });
-  assert.equal((await res.json()).metubeUrl, null);
-});
-
-test('config.js normalizes an unset METUBE_URL to null', async () => {
-  const originalUrl = process.env.METUBE_URL;
-  delete process.env.METUBE_URL;
-  // Force a fresh module instance so config.js re-reads process.env now.
-  const { config } = await import('../../src/config.js?variant=metube-unset');
-  assert.equal(config.metubeUrl, null);
-  process.env.METUBE_URL = originalUrl;
+  assert.deepEqual(Object.keys(await res.json()).sort(), [
+    'acoustidConfigured', 'ingestEnabled', 'libraryEnabled', 'playlistExportEnabled',
+  ]);
 });
 
 test('GET /api/config reports ingestEnabled: false when MUSIC_DIR/INGEST_DIR are unset', async () => {

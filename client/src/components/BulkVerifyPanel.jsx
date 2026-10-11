@@ -169,7 +169,7 @@ export default function BulkVerifyPanel({
               label="Copy all links to clipboard"
             />
           </div>
-          <VerifyResultsTable results={results} artist={artist} album={album} />
+          <VerifyResultsTable results={results} />
         </>
       )}
     </div>

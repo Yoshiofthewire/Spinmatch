@@ -1,6 +1,6 @@
 # Spinmatch Collection Manager
 
-> **Status:** Designed, not started. To be implemented after a token/session refresh.
+> **Status:** Built.
 
 ## Motivation
 
@@ -32,9 +32,7 @@ and playlist reconstruction all follow naturally as contextual features on top o
 - Playlist reconstruction (match against library + surface gaps).
 
 **Out of scope (this design):**
-- **MeTube integration is dropped.** The existing `SendToMeTubeButton` / `METUBE_URL` wiring is
-  not part of the collection-manager feature set and should not be extended. (Removal of existing
-  MeTube code is a separate decision, not required by this design.)
+- MeTube integration was removed entirely (2026-10-11).
 - Downloading/ripping audio — Spinmatch continues to only find and verify links.
 
 **Future consideration:**
@@ -92,7 +90,8 @@ between scheduled refreshes.
 
 **Status: built.** Routes `GET /library/similar-artists`, `GET /library/recommendations` and
 `POST /library/reconstruct-playlist` (POST, not GET — a pasted playlist is a body, not a query
-string), with `components/library/DiscoveryPanel.jsx` and `PlaylistPanel.jsx` under a Discover tab.
+string), with `components/library/DiscoveryPanel.jsx` under a Discover tab. Playlist reconstruction has
+since moved to the Playlists page (`components/playlist/PastePanel.jsx`).
 Item 4 below was re-derived from the collection itself, since `verified_tracks` was dropped in
 schema v3 as never read or written.
 

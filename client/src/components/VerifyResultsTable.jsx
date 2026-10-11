@@ -1,5 +1,4 @@
 import { formatDuration } from '../lib/format.js';
-import SendToMeTubeButton from './SendToMeTubeButton.jsx';
 import CopyButton from './CopyButton.jsx';
 import Pagination from './Pagination.jsx';
 import { usePagination } from '../lib/usePagination.js';
@@ -13,7 +12,7 @@ function statusLabel(status) {
   return 'No results';
 }
 
-export default function VerifyResultsTable({ results, artist, album }) {
+export default function VerifyResultsTable({ results }) {
   const { page, setPage, pageCount, pageItems } = usePagination(results, 20);
 
   return (
@@ -28,7 +27,6 @@ export default function VerifyResultsTable({ results, artist, album }) {
               <th>YouTube Duration</th>
               <th>Δ</th>
               <th>Status</th>
-              <th>Download with MeTube</th>
             </tr>
           </thead>
           <tbody>
@@ -51,7 +49,6 @@ export default function VerifyResultsTable({ results, artist, album }) {
                 <td>{r.video ? formatDuration(r.video.durationMs) : '—'}</td>
                 <td>{r.deltaSeconds != null ? `${r.deltaSeconds}s` : '—'}</td>
                 <td>{statusLabel(r.status)}</td>
-                <td>{r.video ? <SendToMeTubeButton url={r.video.url} artist={artist} title={r.title} album={album} /> : '—'}</td>
               </tr>
             ))}
           </tbody>
