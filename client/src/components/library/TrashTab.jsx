@@ -29,7 +29,10 @@ export default function TrashTab({ onRestored }) {
   if (!list.data) return <EqualizerLoader label="Loading the trash…" />;
   if (list.total === 0) return <p className="muted">Nothing has been moved aside.</p>;
 
-  const { count, bytes } = list.data.totals;
+  // Restored rows stay listed (marked Restored) but no longer count as trash.
+  const restored = list.data.entries.filter((e) => results[e.relPath] === 'restored');
+  const count = list.data.totals.count - restored.length;
+  const bytes = list.data.totals.bytes - restored.reduce((sum, e) => sum + e.size, 0);
   return (
     <>
       <p className="muted">

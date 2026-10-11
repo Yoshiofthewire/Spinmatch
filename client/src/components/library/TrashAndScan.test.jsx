@@ -62,6 +62,7 @@ describe('TrashTab', () => {
     await user.click(first);
     expect(await screen.findByText('Restored')).toBeInTheDocument();
     expect(onRestored).toHaveBeenCalledTimes(1);
+    expect(screen.getByText(/^1 file \(2\.0 MB\) moved aside/)).toBeInTheDocument();
 
     await user.click(second);
     expect(await screen.findByText(/so the copy has been left in the trash/)).toBeInTheDocument();

@@ -448,3 +448,17 @@ test('the trash routes list and restore, and reject traversal with 400', async (
     server.close();
   }
 });
+
+test('restoreFromTrash creates no folders outside MUSIC_DIR through a symlinked library folder', async () => {
+  freshDb();
+  const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'spinmatch-outside-'));
+  await fs.symlink(outside, path.join(musicDir, 'Linked'));
+  try {
+    await putInTrash('Linked/Deep/Er/x.flac', 'x');
+    await assert.rejects(restoreFromTrash({ relPath: 'Linked/Deep/Er/x.flac' }), (err) => err.status >= 400 && err.status < 500);
+    assert.deepEqual(await fs.readdir(outside), [], 'nothing created through the link');
+  } finally {
+    await fs.rm(path.join(musicDir, 'Linked'), { force: true });
+    await fs.rm(outside, { recursive: true, force: true });
+  }
+});

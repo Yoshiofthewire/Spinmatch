@@ -192,8 +192,12 @@ export async function restoreFromTrash({ relPath }) {
   const original = assertInsideMusicDir(path.join(path.resolve(config.ingest.musicDir), relPath));
 
   try {
+    // Check the deepest folder that exists before creating any: a symlinked
+    // library folder must not get folders, or the file, made outside MUSIC_DIR.
+    let existing = path.dirname(original);
+    while (!(await fs.lstat(existing).catch(() => null))) existing = path.dirname(existing);
+    await assertReadableInsideMusicDir(existing);
     await fs.mkdir(path.dirname(original), { recursive: true });
-    // A symlinked folder in the library must not carry the file outside it.
     await assertReadableInsideMusicDir(path.dirname(original));
 
     // Claimed exactly: suffixing would manufacture a new duplicate.
