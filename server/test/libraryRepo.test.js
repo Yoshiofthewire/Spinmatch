@@ -57,6 +57,21 @@ test('hasRecording matches artist+title case-insensitively, ignoring removed row
   db.close();
 });
 
+test('NFD and NFC spellings of "Sigur Rós – Hoppípolla" produce identical keys', () => {
+  const db = openDb(':memory:');
+  const artist = 'Sigur Rós';
+  const title = 'Hoppípolla';
+  repo.upsertLocalTrack(db, { path: '/m/nfc.flac', artist, album: 'Takk', title, durationMs: 1, changeKey: '1:1' });
+  repo.upsertLocalTrack(db, {
+    path: '/m/nfd.flac', artist: artist.normalize('NFD'), album: 'Takk', title: title.normalize('NFD'), durationMs: 1, changeKey: '2:1',
+  });
+  const [a, b] = db.prepare('SELECT dup_key d, match_key m, title_key t FROM local_tracks ORDER BY path').all();
+  assert.deepEqual(a, b);
+  assert.equal(a.m, 'sigur rós\u001fhoppípolla');
+  assert.equal(repo.findDuplicateGroups(db).length, 1, 'grouped as duplicates');
+  db.close();
+});
+
 test('upsert stores the normalized match and title keys', () => {
   const db = openDb(':memory:');
   repo.upsertLocalTrack(db, {

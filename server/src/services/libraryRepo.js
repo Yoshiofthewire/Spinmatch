@@ -3,7 +3,7 @@
 // importing it would close a cycle — true of the scanner, which imports this
 // file, but not of a constants-only leaf module that imports nothing itself.
 import { MAX_TRACK_NUMBER } from '../lib/tagLimits.js';
-import { makeMatchKey, makeTitleKey } from '../lib/normalize.js';
+import { makeDupKey, makeMatchKey, makeTitleKey } from '../lib/normalize.js';
 
 export function upsertLocalTrack(db, {
   path, artist, album, title, durationMs, changeKey,
@@ -15,7 +15,7 @@ export function upsertLocalTrack(db, {
   // Computed here rather than by the caller so it can never drift from the
   // columns it folds, and so every writer (scanner, targeted rescan, tests) gets
   // it without having to remember.
-  const dupKey = artist != null && title != null ? foldKey(artist, album, title) : null;
+  const dupKey = makeDupKey(artist, album, title);
   // Computed here for the same reason dupKey is: so every writer gets them and
   // none can drift from the columns they fold.
   const matchKey = makeMatchKey(artist, title);
@@ -157,14 +157,6 @@ function orderBy(map, sort, fallbackKey) {
 // same reason, as client/src/lib/albumKey.js and recomputeStats' char(31).
 const UNIT_SEPARATOR = String.fromCharCode(31);
 
-// Case-insensitive grouping key. SQLite's built-in LOWER() folds ASCII only, so
-// anything that groups rows must not mix it with JavaScript's toLowerCase() —
-// the two disagree the moment an artist is called "Ärzte", and a group keyed one
-// way then queried the other comes back empty. Folding happens here, in JS, once.
-
-function foldKey(...parts) {
-  return parts.map((p) => String(p ?? '').toLowerCase()).join(UNIT_SEPARATOR);
-}
 
 const ARTIST_SORTS = {
   name: 'artist COLLATE NOCASE',
