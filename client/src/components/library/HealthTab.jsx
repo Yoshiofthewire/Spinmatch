@@ -241,6 +241,7 @@ export default function HealthTab({
             key={key}
             type="button"
             className={`stat-tile stat-tile-button${issue === key ? ' stat-tile-active' : ''}`}
+            aria-pressed={issue === key}
             onClick={() => setIssue(issue === key ? null : key)}
             disabled={health[key] === 0}
           >

@@ -47,5 +47,6 @@ describe('App', () => {
 
     expect(await screen.findByRole('heading', { name: 'Page not found' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Back to search' })).toHaveAttribute('href', '/');
+    expect(document.title).toBe('Not found · Spinmatch');
   });
 });

@@ -1,3 +1,4 @@
+import { useTitle } from '../lib/useTitle.js';
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { get } from '../api/client.js';
@@ -14,6 +15,7 @@ export default function ArtistPage() {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [attempt, setAttempt] = useState(0);
+  useTitle(data?.artist.name || 'Artist');
 
   useEffect(() => {
     let cancelled = false;

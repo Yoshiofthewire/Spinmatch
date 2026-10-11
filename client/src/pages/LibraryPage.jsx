@@ -1,3 +1,4 @@
+import { useTitle } from '../lib/useTitle.js';
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import EqualizerLoader from '../components/EqualizerLoader.jsx';
@@ -29,6 +30,7 @@ const TABS = [
 ];
 
 export default function LibraryPage() {
+  useTitle('Library');
   // Which tab is open and how far the user has drilled into it lives in the
   // query string, not in component state: that is what makes the browser Back
   // button step back through the library instead of leaving the app entirely.
@@ -182,16 +184,20 @@ export default function LibraryPage() {
         <>
           <div className="library-header">
             <nav className="library-tabs">
-              {TABS.map(([key, label]) => (
-                <button
-                  key={key}
-                  type="button"
-                  className={`library-tab${tab === key && !selectedArtist ? ' library-tab-active' : ''}`}
-                  onClick={() => switchTab(key)}
-                >
-                  {label}
-                </button>
-              ))}
+              {TABS.map(([key, label]) => {
+                const active = tab === key && !selectedArtist;
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    className={`library-tab${active ? ' library-tab-active' : ''}`}
+                    aria-current={active ? 'page' : undefined}
+                    onClick={() => switchTab(key)}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
             </nav>
             <div className="library-scan">
               {stats.lastScanAt > 0 && (

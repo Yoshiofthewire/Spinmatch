@@ -1090,7 +1090,8 @@ a:hover {
 }
 
 .playlist-input:focus {
-  outline: none;
+  outline: 2px solid var(--lock);
+  outline-offset: 2px;
   border-color: var(--lock);
 }
 

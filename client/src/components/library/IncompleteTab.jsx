@@ -31,6 +31,7 @@ export default function IncompleteTab({ albums, onSelect }) {
               key={key}
               type="button"
               className={`chip-button${reason === key ? ' chip-button-active' : ''}`}
+              aria-pressed={reason === key}
               onClick={() => setReason(key)}
             >
               {label} ({count.toLocaleString()})

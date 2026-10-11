@@ -22,7 +22,7 @@ export default function SearchBox({ onSearch, loading, initialValue = '' }) {
         placeholder="Search for an artist, album, or song…"
         aria-label="Search"
       />
-      <button type="submit" disabled={loading}>
+      <button type="submit" disabled={loading} aria-label={loading ? 'Searching…' : undefined}>
         {loading ? <EqualizerLoader /> : 'Search'}
       </button>
     </form>

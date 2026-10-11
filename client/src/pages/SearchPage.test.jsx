@@ -36,6 +36,7 @@ describe('SearchPage', () => {
     );
 
     await waitFor(() => expect(searches()).toEqual(['first']));
+    expect(document.title).toBe('Search · Spinmatch');
 
     const input = screen.getByRole('textbox', { name: 'Search' });
     await user.clear(input);

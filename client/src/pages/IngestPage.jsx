@@ -1,6 +1,8 @@
+import { useTitle } from '../lib/useTitle.js';
 import IngestPanel from '../components/IngestPanel.jsx';
 
 export default function IngestPage() {
+  useTitle('Ingest');
   return (
     <div className="ingest-page">
       <h1>Ingest</h1>
