@@ -105,7 +105,7 @@ export default function BulkFixPanel({ artist, album, onApplied }) {
         </>
       )}
 
-      {state === 'done' && result && <WriteResultBanner result={result} verb="Repaired" />}
+      {state === 'done' && result && <WriteResultBanner result={result} verb="Repaired" onUndone={onApplied} />}
 
       {(state === 'ready' || state === 'applying' || state === 'done') && preview && (
         preview.unresolved ? (

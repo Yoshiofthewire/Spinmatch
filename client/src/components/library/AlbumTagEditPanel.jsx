@@ -87,7 +87,8 @@ export default function AlbumTagEditPanel({ artist, album, tracks, onSaved, onCa
         perTrack,
         trackIds: chosen.map((t) => t.id),
       });
-      setResult(applied);
+      // Undoing a rename has to send the page back to the old name.
+      setResult({ ...applied, renamedFrom: applied.renamed ? { artist, album } : null });
       setStage('done');
       onSaved?.(applied);
     } catch (err) {
@@ -106,7 +107,10 @@ export default function AlbumTagEditPanel({ artist, album, tracks, onSaved, onCa
       {stage === 'saving' && <EqualizerLoader label="Writing tags…" />}
       {stage === 'done' && result && (
         <>
-          <WriteResultBanner result={result} />
+          <WriteResultBanner
+            result={result}
+            onUndone={() => onSaved?.({ renamed: result.renamedFrom })}
+          />
           <button type="button" onClick={onCancel}>Close</button>
         </>
       )}

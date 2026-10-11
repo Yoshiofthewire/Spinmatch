@@ -43,6 +43,7 @@ export default function TagEditPanel({ track, onSaved, onCancel, onPlay }) {
       const result = await editTrackTags({
         trackId: track.id,
         fields: patchFrom(values, current, TAG_FIELDS.map((f) => f.key)),
+        expectedMtimeMs: track.mtimeMs ?? undefined,
       });
       onSaved(result);
     } catch (err) {

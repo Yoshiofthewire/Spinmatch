@@ -11,6 +11,7 @@ import TracksTab from '../components/library/TracksTab.jsx';
 import IncompleteTab from '../components/library/IncompleteTab.jsx';
 import HealthTab from '../components/library/HealthTab.jsx';
 import DuplicatesTab from '../components/library/DuplicatesTab.jsx';
+import ChangesTab from '../components/library/ChangesTab.jsx';
 import DiscoveryPanel from '../components/library/DiscoveryPanel.jsx';
 import ArtistDetail from '../components/library/ArtistDetail.jsx';
 import AlbumDetail from '../components/library/AlbumDetail.jsx';
@@ -26,6 +27,7 @@ const TABS = [
   ['incomplete', 'Incomplete'],
   ['health', 'Health'],
   ['duplicates', 'Duplicates'],
+  ['changes', 'Changes'],
   ['discover', 'Discover'],
 ];
 
@@ -269,6 +271,7 @@ export default function LibraryPage() {
               {tab === 'duplicates' && (
                 <DuplicatesTab onPlay={(track, queue) => setPlaying({ track, queue })} />
               )}
+              {tab === 'changes' && <ChangesTab onUndone={refresh} />}
               {/* Opt-in: walks the rate-limited MusicBrainz queue. */}
               {tab === 'discover' && <DiscoveryPanel />}
             </>
