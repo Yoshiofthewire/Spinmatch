@@ -53,7 +53,7 @@ async function positionOnRelease(releaseGroupMbid, recordingMbid) {
 }
 
 // Fills only empty tags by default, then re-indexes. `overwrite` (UI: fingerprint
-// candidates, explicit opt-in; irreversible) and `replaceCoverArt` are separate opt-ins.
+// candidates, explicit opt-in) and `replaceCoverArt` are separate opt-ins. Journaled for undo.
 export async function applyFix({ trackId, recordingMbid, overwrite = false, replaceCoverArt = false }) {
   assertMbid(recordingMbid, 'recordingMbid');
   const { track, real } = await trackOrThrow(trackId);

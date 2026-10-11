@@ -118,7 +118,7 @@ export default function FixTrackPanel({ track, onFixed, onCancel, onPlay }) {
       {fpCandidates && fpCandidates.length > 0 && (
         <>
           <h4 className="fix-section-title">AcoustID matches</h4>
-          {/* Above the list: they change what "Use this" does. Off by default; irreversible. */}
+          {/* Above the list: they change what "Use this" does. Off by default. */}
           <label className="fix-overwrite">
             <input
               type="checkbox"
