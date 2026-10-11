@@ -83,6 +83,7 @@ test('every /api route requires a session except the documented public ones', as
     '/api/ingest/file/candidates?path=x',
     '/api/history',
     '/api/tokens',
+    '/api/backup/download',
   ];
   for (const url of PROTECTED) {
     const res = await fetch(baseUrl + url, { redirect: 'manual' });
