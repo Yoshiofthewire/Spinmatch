@@ -18,8 +18,10 @@ export default function SearchPage() {
   const { libraryEnabled } = useConfig();
   // A link elsewhere in the app (a playlist gap row's "Find this track") can
   // land here with the search already decided.
-  const [searchParams] = useSearchParams();
-  const initialQuery = searchParams.get('q') ?? '';
+  // The query lives in the URL so Back/Forward restore a search.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const query = searchParams.get('q') ?? '';
+  const [attempt, setAttempt] = useState(0);
 
   // The library knows instantly whether a result is already on disk, so say so
   // rather than making the user go and check.
@@ -33,34 +35,40 @@ export default function SearchPage() {
     })),
   });
 
-  async function handleSearch(query) {
-    setLoading(true);
-    setError(null);
-    try {
-      const data = await get(`/search?q=${encodeURIComponent(query)}`);
-      setResults(data);
-    } catch (err) {
-      setError(err);
-      setResults(null);
-    } finally {
-      setLoading(false);
-    }
+  // Submitting only writes the URL; the effect below does the fetch. Re-submitting
+  // the same query doesn't change the URL, so it bumps `attempt` instead.
+  function handleSearch(next) {
+    if (next === query) setAttempt((n) => n + 1);
+    else setSearchParams({ q: next });
   }
 
-  // Runs the search once for a query arriving in the URL. Keyed on the param's
-  // *value*, not on `searchParams` itself (a new object every render) or on
-  // `handleSearch` (a new function every render) — either of those would fire
-  // this on every render and hammer /search in a loop. Keying on the string
-  // means it runs once on mount when `?q=` is present, and again only if the
-  // value in the URL genuinely changes, never on an unrelated re-render.
+  // Keyed on the param's string value, not `searchParams` (a new object every
+  // render), so it fetches once per distinct query. `cancelled` drops a slow
+  // response that lands after a newer search.
   useEffect(() => {
-    if (initialQuery) handleSearch(initialQuery);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- deliberately keyed on the value, not on handleSearch's identity
-  }, [initialQuery]);
+    if (!query) {
+      setResults(null);
+      setError(null);
+      setLoading(false);
+      return undefined;
+    }
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    get(`/search?q=${encodeURIComponent(query)}`)
+      .then((data) => { if (!cancelled) setResults(data); })
+      .catch((err) => {
+        if (cancelled) return;
+        setError(err);
+        setResults(null);
+      })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [query, attempt]);
 
   return (
     <div className="search-page">
-      <SearchBox onSearch={handleSearch} loading={loading} initialValue={initialQuery} />
+      <SearchBox onSearch={handleSearch} loading={loading} initialValue={query} />
 
       {error && <p className="banner banner-error">{error.message}</p>}
 
