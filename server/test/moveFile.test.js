@@ -75,6 +75,38 @@ test('moveOnto falls back to copy+unlink on a cross-device rename', async (t) =>
   });
 });
 
+test('a cross-device moveOnto syncs the copy and the directory before deleting the source', async (t) => {
+  await withTmpDir(async (dir) => {
+    const src = path.join(dir, 'source.mp3');
+    await fs.writeFile(src, 'audio-bytes');
+    const dest = await claim(path.join(dir, 'dest.mp3'));
+
+    const log = [];
+    const { rename, open, unlink } = fs;
+    let renames = 0;
+    t.mock.method(fs, 'rename', async (from, to) => {
+      if (++renames === 1) throw Object.assign(new Error('xdev'), { code: 'EXDEV' });
+      log.push(`rename ${path.basename(from)}`);
+      return rename(from, to);
+    });
+    t.mock.method(fs, 'open', async (p, flags) => {
+      const fh = await open(p, flags);
+      const sync = fh.sync.bind(fh);
+      fh.sync = async () => { log.push(`sync ${path.basename(p)}`); return sync(); };
+      return fh;
+    });
+    t.mock.method(fs, 'unlink', async (p) => { log.push(`unlink ${path.basename(p)}`); return unlink(p); });
+
+    await moveOnto(src, dest);
+    assert.deepEqual(log, [
+      'sync dest.mp3.partial',
+      'rename dest.mp3.partial',
+      `sync ${path.basename(dir)}`,
+      'unlink source.mp3',
+    ]);
+  });
+});
+
 test('a failed moveOnto leaves no placeholder and no .partial behind', async () => {
   await withTmpDir(async (dir) => {
     // A source that does not exist is the cheapest way to fail the rename.

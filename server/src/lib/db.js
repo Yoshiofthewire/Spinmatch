@@ -2,11 +2,11 @@ import { DatabaseSync } from 'node:sqlite';
 import fs from 'node:fs';
 import path from 'node:path';
 import { config } from '../config.js';
-import { makeMatchKey, makeTitleKey } from './normalize.js';
+import { makeDupKey, makeMatchKey, makeTitleKey } from './normalize.js';
 
 // Bumped when local_tracks gains columns that existing rows need backfilled or
 // re-read from disk. migrate() below is what actually reacts to the change.
-const SCHEMA_VERSION = 7;
+const SCHEMA_VERSION = 8;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS meta (
@@ -338,6 +338,24 @@ export function migrate(db) {
     }
   }
 
+  if (current < 8) {
+    // Keys now fold NFC first. Pure functions of stored columns, so no rescan.
+    const tracks = db.prepare('SELECT id, artist, album, title FROM local_tracks').all();
+    const updateTrack = db.prepare(
+      'UPDATE local_tracks SET dup_key = ?, match_key = ?, title_key = ? WHERE id = ?'
+    );
+    for (const r of tracks) {
+      updateTrack.run(
+        makeDupKey(r.artist, r.album, r.title), makeMatchKey(r.artist, r.title), makeTitleKey(r.title), r.id,
+      );
+    }
+    const items = db.prepare('SELECT id, artist, title FROM playlist_items').all();
+    const updateItem = db.prepare('UPDATE playlist_items SET match_key = ?, title_key = ? WHERE id = ?');
+    for (const r of items) {
+      updateItem.run(makeMatchKey(r.artist, r.title), makeTitleKey(r.title), r.id);
+    }
+  }
+
   db.prepare(
     "INSERT INTO meta (key, value) VALUES ('schema_version', ?) " +
     'ON CONFLICT(key) DO UPDATE SET value = excluded.value'
@@ -367,15 +385,17 @@ export function openDb(dbPath) {
   db.exec(SCHEMA);
   // A fresh DB gets every column from SCHEMA, so migrate() finds nothing to
   // alter and just stamps the version. Only an upgraded install does real work.
-  withTransaction(db, () => migrate(db));
+  // IMMEDIATE takes the write lock before reading schema_version, so a second
+  // connection waits (busy_timeout) and then sees the finished migration.
+  withTransaction(db, () => migrate(db), 'IMMEDIATE');
   db.exec(INDEXES);
   return db;
 }
 
 // Runs fn inside a single transaction, rolling back on error. node:sqlite has
 // no db.transaction() helper, so this is the manual BEGIN/COMMIT/ROLLBACK.
-export function withTransaction(db, fn) {
-  db.exec('BEGIN');
+export function withTransaction(db, fn, mode = 'DEFERRED') {
+  db.exec(`BEGIN ${mode}`);
   try {
     const result = fn();
     db.exec('COMMIT');

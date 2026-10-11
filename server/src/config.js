@@ -1,3 +1,6 @@
+import fs from 'node:fs';
+import path from 'node:path';
+
 // Express's `trust proxy` setting, parsed out of an environment variable.
 //
 // The parse is the whole point: env values are always strings, and Express only
@@ -22,6 +25,17 @@ export function parseTrustProxy(raw) {
   return value;
 }
 
+// Resolved once, so scanner paths and the realpath'd paths the write side
+// reindexes are the same strings. Lexical if it doesn't exist yet.
+function realDir(dir) {
+  if (!dir) return null;
+  try {
+    return fs.realpathSync(dir);
+  } catch {
+    return path.resolve(dir);
+  }
+}
+
 export const config = {
   port: process.env.PORT || 3000,
   // Express's `trust proxy` setting. Unset means X-Forwarded-* headers are
@@ -43,7 +57,7 @@ export const config = {
   metubeUrl: (process.env.METUBE_URL || '').replace(/\/+$/, '') || null,
   // Optional: enables the local library ingest feature. All three must be set.
   ingest: {
-    musicDir: process.env.MUSIC_DIR || null,
+    musicDir: realDir(process.env.MUSIC_DIR),
     ingestDir: process.env.INGEST_DIR || null,
   },
   // Confidence thresholds for automatic identification. Exposed as config rather

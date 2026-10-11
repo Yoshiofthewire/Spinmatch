@@ -3,7 +3,7 @@ import { getDb } from '../lib/db.js';
 import {
   hashPassword, verifyPassword, dummyHash, issueToken, getSigningSecret, sessionFromToken,
   adminExists, getAdmin, createAdmin, updatePassword, revokeSessions, foldUsername,
-  MIN_PASSWORD_LENGTH,
+  checkSetupToken, clearSetupToken, needsRehash, rehashPassword, MIN_PASSWORD_LENGTH,
 } from '../services/auth.js';
 import { SESSION_COOKIE, requireAuth } from '../middleware/requireAuth.js';
 import { serializeCookie, parseCookies } from '../lib/cookies.js';
@@ -103,12 +103,19 @@ authRouter.post('/setup', rateLimitSetup, async (req, res, next) => {
     if (adminExists(getDb())) {
       throw new BadRequestError('Admin account is already configured');
     }
-    const { username, password } = req.body || {};
+    const { username, password, setupToken } = req.body || {};
+    // Without this, whoever reaches a fresh install first owns it.
+    if (!checkSetupToken(setupToken)) {
+      throw new BadRequestError(
+        'Invalid setup token. Copy it from the server log (docker logs spinmatch); restart the server to print a new one.',
+      );
+    }
     const cleanUsername = validateCredentials(username, password);
     const passwordHash = await hashPassword(password);
     if (!createAdmin(getDb(), cleanUsername, passwordHash)) {
       throw new BadRequestError('Admin account is already configured');
     }
+    clearSetupToken();
     setSession(req, res, cleanUsername, getAdmin(getDb()).tokenEpoch);
     res.json({ ok: true, username: cleanUsername });
   } catch (err) {
@@ -122,7 +129,7 @@ authRouter.post('/login', rateLimitLogin, async (req, res, next) => {
     const admin = getAdmin(getDb());
     // Verify a password on every attempt, even when there is no admin or the
     // username is wrong. Short-circuiting on the username meant a wrong name
-    // returned in microseconds while a right one paid scrypt's ~100ms, which is
+    // returned in microseconds while a right one paid the hash's ~100ms, which is
     // a username oracle with a 1000x separation — the response body says nothing
     // but the clock says everything. dummyHash() gives the miss path the same
     // cost as the hit path.
@@ -138,6 +145,9 @@ authRouter.post('/login', rateLimitLogin, async (req, res, next) => {
     // Single generic error for any failure so we never reveal which half
     // (username vs. password) was wrong.
     if (!usernameOk || !passwordOk) throw new BadRequestError('Invalid username or password');
+    if (needsRehash(admin.passwordHash)) {
+      rehashPassword(getDb(), admin.passwordHash, await hashPassword(password));
+    }
     setSession(req, res, admin.username, admin.tokenEpoch);
     res.json({ ok: true, username: admin.username });
   } catch (err) {

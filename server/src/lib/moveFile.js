@@ -12,6 +12,16 @@ import path from 'node:path';
 // contains thousands of collisions is a fault to report, not to grind through.
 export const MAX_COLLISION_SUFFIX = 999;
 
+// fsync a file or directory by path.
+export async function fsyncPath(p) {
+  const fh = await fs.open(p, 'r');
+  try {
+    await fh.sync();
+  } finally {
+    await fh.close();
+  }
+}
+
 export function withSuffix(destPath, n) {
   const ext = path.extname(destPath);
   const base = destPath.slice(0, ext.length ? -ext.length : undefined);
@@ -39,7 +49,10 @@ export async function moveOnto(src, claimedDest) {
     const partial = `${claimedDest}.partial`;
     try {
       await fs.copyFile(src, partial);
+      // Durable before the source goes, or a power cut can lose both.
+      await fsyncPath(partial);
       await fs.rename(partial, claimedDest);
+      await fsyncPath(path.dirname(claimedDest));
       await fs.unlink(src);
     } catch (copyErr) {
       await fs.unlink(partial).catch(() => {});

@@ -176,11 +176,11 @@ export default function PlaylistDetail({ id, onPlay, onDeleted }) {
     // means "confirm before replacing" — that one isn't a failure).
     let terminal = null;
     try {
-      await streamEvents(dropoffUrl(id, { replace }), {
+      await streamEvents(dropoffUrl(id), {
         progress: (data) => setDropoffProgress(data),
         done: (data) => { terminal = { ok: true, data }; },
         error: (data) => { terminal = { failure: data }; },
-      }, { signal: controller.signal });
+      }, { signal: controller.signal, body: { replace } });
 
       if (terminal?.ok) {
         setDropoffResult(terminal.data);
@@ -196,7 +196,7 @@ export default function PlaylistDetail({ id, onPlay, onDeleted }) {
       if (controller.signal.aborted) return; // unmounted mid-run
       // The 409 pre-check: the folder already exists. This is the
       // confirmation gate, not a failure — show what's there and let the
-      // user decide, rather than auto-retrying with replace=1.
+      // user decide, rather than auto-retrying with replace: true.
       if (err.code === 'DROPOFF_EXISTS') {
         setDropoffConfirm(err.details?.existing ?? null);
         setDropoffState('confirm');

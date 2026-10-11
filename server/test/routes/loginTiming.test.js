@@ -3,7 +3,7 @@
 // The route carried a comment promising a "single generic error ... so we never
 // reveal which half (username vs. password) was wrong", and then short-circuited
 // on the username with `&&`. A wrong username returned in microseconds; a
-// correct one paid scrypt's deliberate ~100ms. The response body said nothing
+// correct one paid the hash's deliberate ~100ms. The response body said nothing
 // and the clock said everything, at roughly a 1000x separation.
 //
 // Its own file because the login rate limiter is process-wide and holds ten
@@ -17,6 +17,7 @@ process.env.MB_CONTACT_EMAIL = 'test@example.com';
 
 const { openDb, setDbForTest } = await import('../../src/lib/db.js');
 const { createApp } = await import('../../src/app.js');
+const { issueSetupToken } = await import('../../src/services/auth.js');
 
 const asJson = { 'Content-Type': 'application/json', 'Sec-Fetch-Site': 'same-origin' };
 
@@ -32,7 +33,7 @@ test.before(async () => {
   const res = await fetch(`${baseUrl}/api/auth/setup`, {
     method: 'POST',
     headers: asJson,
-    body: JSON.stringify({ username: 'yoshi', password: 'hunter2hunter2' }),
+    body: JSON.stringify({ username: 'yoshi', password: 'hunter2hunter2', setupToken: issueSetupToken() }),
   });
   assert.equal(res.status, 200, await res.text());
 });
@@ -68,7 +69,7 @@ test('a wrong username costs the same order of time as a wrong password', async 
 
   // Timing assertions are noisy, so this is a shape check, not a tight bound:
   // before the fix the ratio was ~1000x because the username miss did no key
-  // derivation at all. Under 5x means both paths are paying scrypt.
+  // derivation at all. Under 5x means both paths are paying the hash.
   const ratio = Math.max(userAvg, passAvg) / Math.max(Math.min(userAvg, passAvg), 0.001);
   assert.ok(
     ratio < 5,

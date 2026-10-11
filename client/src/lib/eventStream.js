@@ -67,10 +67,18 @@ async function openFailed(res) {
   ), { code, status: res.status, details });
 }
 
-export async function streamEvents(url, handlers, { signal } = {}) {
+// `body`, when given, is sent as a JSON POST; otherwise the stream is a GET.
+export async function streamEvents(url, handlers, { signal, body } = {}) {
   let res;
   try {
-    res = await fetch(url, { headers: { Accept: 'text/event-stream' }, signal });
+    res = await fetch(url, body === undefined
+      ? { headers: { Accept: 'text/event-stream' }, signal }
+      : {
+        method: 'POST',
+        headers: { Accept: 'text/event-stream', 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal,
+      });
   } catch (err) {
     if (signal?.aborted) throw err;
     // A bare "Failed to fetch" (or "NetworkError…", depending on the browser) in

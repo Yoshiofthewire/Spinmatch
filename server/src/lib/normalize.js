@@ -5,6 +5,7 @@
 // (file's title tag vs a MusicBrainz search hit).
 export function normalizeTitle(title) {
   return String(title || '')
+    .normalize('NFC') // a decomposed accent's combining mark isn't \p{L}
     .toLowerCase()
     .replace(/\([^)]*\)/g, ' ')
     .replace(/\[[^\]]*\]/g, ' ')
@@ -30,6 +31,16 @@ export const KEY_SEPARATOR = '\u001f';
 // through normalizeTitle instead.
 export function makeMatchKey(artist, title) {
   return `${normalizeTitle(artist)}${KEY_SEPARATOR}${normalizeTitle(title)}`;
+}
+
+// The duplicate-grouping key: a plain fold, no normalizeTitle stripping.
+// SQLite's LOWER() folds ASCII only, so this is folded in JS, once; NFC first so
+// composed and decomposed accents fold alike. Null when artist or title is.
+export function makeDupKey(artist, album, title) {
+  if (artist == null || title == null) return null;
+  return [artist, album, title]
+    .map((p) => String(p ?? '').normalize('NFC').toLowerCase())
+    .join(KEY_SEPARATOR);
 }
 
 export function makeTitleKey(title) {

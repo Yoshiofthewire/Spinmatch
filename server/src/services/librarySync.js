@@ -22,21 +22,25 @@ export function startLibrarySync({ scan = scanLibrary, watch = true } = {}) {
   let debounce = null;
   let stopped = false;
   let scanning = false;
+  let dirty = false;
 
+  // Never two scans at once. A trigger that lands mid-scan may describe a
+  // change the walk already passed, so it buys exactly one more scan after.
   const runScan = async () => {
-    // Coalesce overlapping scans: the interval timer and the watch debounce
-    // can both fire runScan around the same time. Since scanLibrary() builds
-    // its own `seen` set across async yields, two overlapping runs can race
-    // and cause a file created during run A to be wrongly markRemoved by run
-    // B. Skip a second scan entirely while one is already in flight rather
-    // than queue it -- the next scheduled/debounced scan will pick up
-    // whatever changed in the meantime.
-    if (scanning) return;
+    if (scanning) {
+      dirty = true;
+      return;
+    }
     scanning = true;
     try {
-      await scan();
-    } catch (err) {
-      console.warn(`librarySync: scan failed: ${err.message}`);
+      do {
+        dirty = false;
+        try {
+          await scan();
+        } catch (err) {
+          console.warn(`librarySync: scan failed: ${err.message}`);
+        }
+      } while (dirty && !stopped);
     } finally {
       scanning = false;
     }

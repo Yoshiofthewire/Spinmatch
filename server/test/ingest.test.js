@@ -1161,6 +1161,56 @@ test('resolveLooseFileOverride rejects a symlink inside INGEST_DIR that targets 
   });
 });
 
+test('a file swapped for an escaping symlink after the scan is neither tagged nor moved', async (t) => {
+  await withIngestDir(async (dir) => {
+    const file = path.join(dir, 'track.mp3');
+    await fs.writeFile(file, 'fake-audio');
+    const outside = path.join(__dirname, '.tmp-outside-swapped.mp3');
+    await fs.writeFile(outside, 'secret');
+    t.after(() => fs.rm(outside, { force: true }));
+
+    t.mock.module('../src/services/fpcalc.js', {
+      exports: { fingerprint: async () => ({ durationSeconds: 200, fingerprint: 'AQAB...' }) },
+    });
+    t.mock.module('../src/services/acoustid.js', {
+      exports: { lookup: async () => [{ recordingMbid: '77777777-7777-4777-8777-777777777777', score: 0.9 }] },
+    });
+    t.mock.module('../src/services/musicbrainz.js', {
+      exports: {
+        resolvePrimaryReleaseForGroup: async () => null,
+        getReleaseWithTracks: async () => ({ release: {}, tracks: [] }),
+        // The swap lands during the network lookup, after the scan saw a file.
+        getRecording: async () => {
+          await fs.rm(file);
+          await fs.symlink(outside, file);
+          return {
+            mbid: '77777777-7777-4777-8777-777777777777', title: 'T', lengthMs: 200000, artist: 'A',
+            releaseGroups: [], date: null,
+          };
+        },
+      },
+    });
+    const written = [];
+    const moved = [];
+    t.mock.module('../src/services/tags.js', {
+      exports: {
+        readTags: async () => ({ artist: null, title: null, album: null, hasCoverArt: false }),
+        writeTags: async (p) => { written.push(p); return { filledFields: [] }; },
+      },
+    });
+    t.mock.module('../src/services/coverArt.js', { exports: { getFrontCoverImage: async () => null } });
+    t.mock.module('../src/services/organize.js', {
+      exports: { moveIntoLibrary: async (p) => { moved.push(p); return { movedTo: '/x', duplicate: false }; } },
+    });
+
+    const result = await (await freshProcessIngest())();
+    assert.deepEqual(written, []);
+    assert.deepEqual(moved, []);
+    assert.equal(result.matched.length, 0);
+    assert.equal(result.needsReview.length, 1);
+  });
+});
+
 test('scanIngestDir ignores a symlinked audio file', async (t) => {
   await withIngestDir(async (dir) => {
     const outside = path.join(__dirname, '.tmp-outside-audio.mp3');

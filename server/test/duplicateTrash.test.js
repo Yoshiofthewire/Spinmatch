@@ -117,6 +117,19 @@ test('refuses the last live copy and leaves the file where it is', async () => {
   assert.ok(fsSync.existsSync(second.path), 'the only remaining copy is untouched');
 });
 
+test('refuses when the only other indexed copy is gone from disk', async () => {
+  const db = freshDb();
+  const [first, second] = await seedTwoCopies(db);
+  await fs.unlink(second.path); // deleted outside the app; the index hasn't noticed
+
+  await assert.rejects(
+    trashDuplicate({ trackId: first.id, db }),
+    (err) => err.status === 409 && /on disk/.test(err.message),
+  );
+  assert.ok(fsSync.existsSync(first.path), 'the real last copy is untouched');
+  assert.ok(repo.getTrackById(db, first.id));
+});
+
 test('refuses a track whose path is outside MUSIC_DIR', async () => {
   const db = freshDb();
   await seedTwoCopies(db);

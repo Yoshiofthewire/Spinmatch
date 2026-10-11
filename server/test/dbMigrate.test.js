@@ -108,7 +108,7 @@ test('a fresh database is created at the current version with no migration work'
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'spinmatch-fresh-'));
   const db = openDb(path.join(dir, 'library.db'));
   const version = db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get();
-  assert.equal(version.value, '7');
+  assert.equal(version.value, '8');
   db.close();
   fs.rmSync(dir, { recursive: true, force: true });
 });
@@ -142,7 +142,7 @@ test('a forced re-tag happens once per version that needs one, not on every upgr
     assert.equal(second.prepare('SELECT change_key FROM local_tracks').get().change_key, '');
     assert.equal(
       second.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value,
-      '7',
+      '8',
     );
     second.prepare("UPDATE local_tracks SET change_key = '20:2'").run();
     second.close();
@@ -291,12 +291,39 @@ test('v7 backfills match_key and title_key without re-reading files', () => {
   db.prepare(`INSERT INTO local_tracks (path, artist, album, title, change_key, updated_at)
               VALUES ('/m/a.mp3', 'Portishead', 'Dummy', 'Roads [Live]', 'k', 1)`).run();
 
-  assert.equal(migrate(db), 7);
+  assert.equal(migrate(db), 8);
 
   const row = db.prepare("SELECT match_key AS m, title_key AS t, change_key AS c FROM local_tracks WHERE path = '/m/a.mp3'").get();
   assert.equal(row.m, 'portishead\u001froads');
   assert.equal(row.t, 'roads');
   // The keys derive from columns already in the table, so no rescan is forced.
   assert.equal(row.c, 'k', 'change_key must not be cleared — this backfill reads no files');
+  db.close();
+});
+
+test('v8 refolds keys so NFD and NFC spellings of one track agree', () => {
+  const nfc = 'Sigur Rós';
+  const nfd = nfc.normalize('NFD');
+  const titleNfd = 'Hoppípolla'.normalize('NFD');
+  assert.notEqual(nfc, nfd);
+  const db = openDb(':memory:');
+  // A v7 install's rows: keys as v7 computed them, from NFD text.
+  db.prepare("INSERT INTO meta (key, value) VALUES ('schema_version', '7') "
+    + 'ON CONFLICT(key) DO UPDATE SET value = excluded.value').run();
+  db.prepare(`INSERT INTO local_tracks (path, artist, album, title, dup_key, match_key, title_key, change_key, updated_at)
+              VALUES ('/m/a.flac', ?, 'Takk', ?, 'stale', 'stale', 'stale', 'k', 1)`).run(nfd, titleNfd);
+  db.prepare("INSERT INTO playlists (id, name, name_key, created_at, updated_at) VALUES (1, 'P', 'p', 1, 1)").run();
+  db.prepare(`INSERT INTO playlist_items (playlist_id, position, artist, title, match_key, title_key, source, added_at)
+              VALUES (1, 0, ?, 'Hoppípolla', 'stale', 'stale', 'manual', 1)`).run(nfc);
+
+  assert.equal(migrate(db), 8);
+
+  const track = db.prepare('SELECT dup_key d, match_key m, title_key t, change_key c FROM local_tracks').get();
+  const item = db.prepare('SELECT match_key m, title_key t FROM playlist_items').get();
+  assert.equal(track.m, 'sigur rós\u001fhoppípolla');
+  assert.equal(item.m, track.m, 'the NFC playlist item resolves to the NFD file');
+  assert.equal(item.t, track.t);
+  assert.equal(track.d, 'sigur rós\u001ftakk\u001fhoppípolla');
+  assert.equal(track.c, 'k', 'no rescan forced');
   db.close();
 });

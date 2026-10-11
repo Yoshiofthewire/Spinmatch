@@ -11,6 +11,7 @@ const {
   getReleaseWithTracks,
   getRecording,
   creditString,
+  retryAfterMs,
 } = await import('../src/services/musicbrainz.js');
 const { UpstreamUnavailableError } = await import('../src/lib/httpErrors.js');
 
@@ -78,11 +79,71 @@ test('searchAll returns empty arrays (not an error) when nothing matches', async
 
 test('a non-2xx MusicBrainz response throws UpstreamUnavailableError', async () => {
   const pool = mockMusicBrainz();
-  pool.intercept({ path: /\/ws\/2\/artist\?.*query=error-case-query.*/ }).reply(503, {});
-  pool.intercept({ path: /\/ws\/2\/release-group\?.*query=error-case-query.*/ }).reply(503, {});
-  pool.intercept({ path: /\/ws\/2\/recording\?.*query=error-case-query.*/ }).reply(503, {});
+  pool.intercept({ path: /\/ws\/2\/artist\?.*query=error-case-query.*/ }).reply(500, {});
+  pool.intercept({ path: /\/ws\/2\/release-group\?.*query=error-case-query.*/ }).reply(500, {});
+  pool.intercept({ path: /\/ws\/2\/recording\?.*query=error-case-query.*/ }).reply(500, {});
 
   await assert.rejects(searchAll('error-case-query'), UpstreamUnavailableError);
+});
+
+const recordingPath = (id) => `/ws/2/recording/${id}?inc=artists%2Breleases%2Brelease-groups&fmt=json`;
+const recordingBody = (id) => ({ id, title: 'T', 'artist-credit': [{ name: 'A' }], releases: [] });
+
+// Each reply records when the request arrived.
+function stamped(stamps, statusCode, id, headers = {}) {
+  return () => {
+    stamps.push(Date.now());
+    return { statusCode, data: statusCode === 200 ? recordingBody(id) : {}, responseOptions: { headers } };
+  };
+}
+
+test('requests are spaced at least 1100ms apart', async () => {
+  const pool = mockMusicBrainz();
+  const stamps = [];
+  pool.intercept({ path: recordingPath('space-1') }).reply(stamped(stamps, 200, 'space-1'));
+  pool.intercept({ path: recordingPath('space-2') }).reply(stamped(stamps, 200, 'space-2'));
+
+  await Promise.all([getRecording('space-1'), getRecording('space-2')]);
+  assert.equal(stamps.length, 2);
+  assert.ok(stamps[1] - stamps[0] >= 1095, `gap was ${stamps[1] - stamps[0]}ms`);
+});
+
+test('a 503 is retried once after its Retry-After', async () => {
+  const pool = mockMusicBrainz();
+  const stamps = [];
+  pool.intercept({ path: recordingPath('busy-1') }).reply(stamped(stamps, 503, 'busy-1', { 'retry-after': '1' }));
+  pool.intercept({ path: recordingPath('busy-1') }).reply(stamped(stamps, 200, 'busy-1'));
+
+  assert.equal((await getRecording('busy-1')).mbid, 'busy-1');
+  assert.ok(stamps[1] - stamps[0] >= 995, `waited ${stamps[1] - stamps[0]}ms`);
+});
+
+test('a 503 without Retry-After waits the 2s default', async () => {
+  const pool = mockMusicBrainz();
+  const stamps = [];
+  pool.intercept({ path: recordingPath('busy-2') }).reply(stamped(stamps, 503, 'busy-2'));
+  pool.intercept({ path: recordingPath('busy-2') }).reply(stamped(stamps, 200, 'busy-2'));
+
+  assert.equal((await getRecording('busy-2')).mbid, 'busy-2');
+  assert.ok(stamps[1] - stamps[0] >= 1995, `waited ${stamps[1] - stamps[0]}ms`);
+});
+
+test('a second 503 is not retried again', async () => {
+  const pool = mockMusicBrainz();
+  const stamps = [];
+  pool.intercept({ path: recordingPath('busy-3') }).reply(stamped(stamps, 503, 'busy-3', { 'retry-after': '0' }));
+  pool.intercept({ path: recordingPath('busy-3') }).reply(stamped(stamps, 503, 'busy-3', { 'retry-after': '0' }));
+  pool.intercept({ path: recordingPath('busy-3') }).reply(stamped(stamps, 200, 'busy-3'));
+
+  await assert.rejects(getRecording('busy-3'), UpstreamUnavailableError);
+  assert.equal(stamps.length, 2);
+});
+
+test('Retry-After is capped at 10s and falls back to 2s when unparseable', () => {
+  assert.equal(retryAfterMs('3600'), 10_000);
+  assert.equal(retryAfterMs('3'), 3_000);
+  assert.equal(retryAfterMs(null), 2_000);
+  assert.equal(retryAfterMs('Wed, 21 Oct 2015 07:28:00 GMT'), 2_000);
 });
 
 test('browseReleaseGroupsByArtist filters to studio albums (Album primary type, no secondary type)', async () => {

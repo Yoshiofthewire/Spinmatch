@@ -5,12 +5,18 @@ process.env.MB_CONTACT_EMAIL = 'test@example.com';
 
 const { openDb, setDbForTest } = await import('../../src/lib/db.js');
 const { createApp } = await import('../../src/app.js');
+const { issueSetupToken, clearSetupToken, checkSetupToken } = await import('../../src/services/auth.js');
+const { randomBytes, scryptSync } = await import('node:crypto');
 
 let server;
 let baseUrl;
+let setupToken;
+let db;
 
 test.before(async () => {
-  setDbForTest(openDb(':memory:'));
+  db = openDb(':memory:');
+  setDbForTest(db);
+  setupToken = issueSetupToken();
   server = createApp().listen(0);
   await new Promise((resolve) => server.once('listening', resolve));
   baseUrl = `http://localhost:${server.address().port}`;
@@ -42,17 +48,41 @@ test('setup rejects a too-short password', async () => {
   const res = await fetch(`${baseUrl}/api/auth/setup`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Sec-Fetch-Site': 'same-origin' },
-    body: JSON.stringify({ username: 'yoshi', password: 'short' }),
+    body: JSON.stringify({ username: 'yoshi', password: 'short', setupToken }),
   });
   assert.equal(res.status, 400);
 });
 
-test('setup creates the admin and issues a session cookie', async () => {
-  const res = await fetch(`${baseUrl}/api/auth/setup`, {
+function postSetup(body) {
+  return fetch(`${baseUrl}/api/auth/setup`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Sec-Fetch-Site': 'same-origin' },
-    body: JSON.stringify({ username: 'yoshi', password: 'hunter2hunter2' }),
+    body: JSON.stringify(body),
   });
+}
+
+test('setup refuses a missing or wrong setup token', async () => {
+  for (const bad of [undefined, '', 'x', setupToken.slice(1), `${setupToken}x`, 42]) {
+    const res = await postSetup({ username: 'mallory', password: 'hunter2hunter2', setupToken: bad });
+    assert.equal(res.status, 400);
+    assert.match((await res.json()).error.message, /setup token/i);
+  }
+  const status = await (await fetch(`${baseUrl}/api/auth/status`)).json();
+  assert.equal(status.setupRequired, true, 'no admin was created');
+});
+
+test('setup refuses when no token has been issued', async () => {
+  clearSetupToken();
+  try {
+    const res = await postSetup({ username: 'mallory', password: 'hunter2hunter2', setupToken });
+    assert.equal(res.status, 400);
+  } finally {
+    setupToken = issueSetupToken();
+  }
+});
+
+test('setup creates the admin and issues a session cookie', async () => {
+  const res = await postSetup({ username: 'yoshi', password: 'hunter2hunter2', setupToken });
   assert.equal(res.status, 200);
   assert.equal((await res.json()).username, 'yoshi');
   const setCookie = res.headers.get('set-cookie');
@@ -70,12 +100,9 @@ test('status reports authenticated when the cookie is presented', async () => {
   assert.equal(body.username, 'yoshi');
 });
 
-test('setup is refused once an admin exists', async () => {
-  const res = await fetch(`${baseUrl}/api/auth/setup`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Sec-Fetch-Site': 'same-origin' },
-    body: JSON.stringify({ username: 'other', password: 'hunter2hunter2' }),
-  });
+test('setup is refused once an admin exists, and the token is spent', async () => {
+  assert.equal(checkSetupToken(setupToken), false);
+  const res = await postSetup({ username: 'other', password: 'hunter2hunter2', setupToken });
   assert.equal(res.status, 400);
 });
 
@@ -151,6 +178,25 @@ test('logging in with different case keeps the stored spelling', async () => {
   const body = await status.json();
   assert.equal(body.authenticated, true, 'the session issued under a folded name must verify');
   assert.equal(body.username, 'yoshi');
+});
+
+test('login upgrades a legacy scrypt hash to Argon2id without revoking sessions', async () => {
+  const salt = randomBytes(16);
+  const legacy = `scrypt$${salt.toString('hex')}$${scryptSync('hunter2hunter2', salt, 64).toString('hex')}`;
+  db.prepare('UPDATE app_auth SET password_hash = ? WHERE id = 1').run(legacy);
+  const { token_epoch: epoch } = db.prepare('SELECT token_epoch FROM app_auth').get();
+
+  const res = await fetch(`${baseUrl}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Sec-Fetch-Site': 'same-origin' },
+    body: JSON.stringify({ username: 'yoshi', password: 'hunter2hunter2' }),
+  });
+  assert.equal(res.status, 200);
+  const row = db.prepare('SELECT password_hash, token_epoch FROM app_auth').get();
+  assert.match(row.password_hash, /^\$argon2id\$v=19\$m=65536,t=3,p=4\$/);
+  assert.equal(row.token_epoch, epoch);
+  const status = await (await fetch(`${baseUrl}/api/auth/status`, { headers: { Cookie: cookie } })).json();
+  assert.equal(status.authenticated, true, 'the earlier session survives the rehash');
 });
 
 test('logout clears the session cookie', async () => {

@@ -1,29 +1,79 @@
-import { scrypt as _scrypt, randomBytes, createHmac, timingSafeEqual } from 'node:crypto';
+import {
+  argon2 as _argon2, scrypt as _scrypt, randomBytes, createHash, createHmac, timingSafeEqual,
+} from 'node:crypto';
 import { promisify } from 'node:util';
 
+const argon2 = promisify(_argon2);
 const scrypt = promisify(_scrypt);
-const KEYLEN = 64;
 const SALT_BYTES = 16;
 const TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
 export const MIN_PASSWORD_LENGTH = 8;
 
-// ---- Password hashing (scrypt, salted, constant-time verify) ----
+// ---- Password hashing (Argon2id PHC string; legacy scrypt still verifies) ----
+
+const ARGON2 = { m: 65536, t: 3, p: 4, tagLength: 32 };
+// Bounds on stored params, so a tampered row can't turn login into a DoS.
+const ARGON2_MAX = { m: 262144, t: 10, p: 16 };
+const PHC = /^\$argon2id\$v=19\$m=(\d+),t=(\d+),p=(\d+)\$([A-Za-z0-9+/]+)\$([A-Za-z0-9+/]+)$/;
+
+function argon2id(password, salt, { m, t, p }, tagLength) {
+  return argon2('argon2id', {
+    message: String(password), nonce: salt, memory: m, passes: t, parallelism: p, tagLength,
+  });
+}
+
+const b64 = (buf) => buf.toString('base64').replace(/=+$/, '');
 
 export async function hashPassword(password) {
   const salt = randomBytes(SALT_BYTES);
-  const hash = await scrypt(String(password), salt, KEYLEN);
-  return `scrypt$${salt.toString('hex')}$${hash.toString('hex')}`;
+  const hash = await argon2id(password, salt, ARGON2, ARGON2.tagLength);
+  return `$argon2id$v=19$m=${ARGON2.m},t=${ARGON2.t},p=${ARGON2.p}$${b64(salt)}$${b64(hash)}`;
 }
 
-// A real scrypt hash of nothing in particular, used to give the "no such user"
+function parseArgon2(stored) {
+  const match = PHC.exec(stored);
+  if (!match) return null;
+  const [m, t, p] = match.slice(1, 4).map(Number);
+  if (p < 1 || p > ARGON2_MAX.p || t < 1 || t > ARGON2_MAX.t || m < 8 * p || m > ARGON2_MAX.m) return null;
+  const salt = Buffer.from(match[4], 'base64');
+  const hash = Buffer.from(match[5], 'base64');
+  if (salt.length < 8 || hash.length < 4) return null;
+  return { m, t, p, salt, hash };
+}
+
+async function verifyScrypt(password, stored) {
+  const [, saltHex, hashHex] = stored.split('$');
+  const expected = Buffer.from(hashHex || '', 'hex');
+  if (!saltHex || expected.length === 0) return false;
+  const actual = await scrypt(String(password), Buffer.from(saltHex, 'hex'), expected.length);
+  return timingSafeEqual(actual, expected);
+}
+
+export async function verifyPassword(password, stored) {
+  stored = String(stored || '');
+  if (stored.startsWith('scrypt$')) return verifyScrypt(password, stored);
+  const parsed = parseArgon2(stored);
+  if (!parsed) return false;
+  const actual = await argon2id(password, parsed.salt, parsed, parsed.hash.length);
+  return timingSafeEqual(actual, parsed.hash);
+}
+
+// True for a legacy scheme or params that differ from the current ones.
+export function needsRehash(stored) {
+  const parsed = parseArgon2(String(stored || ''));
+  return !parsed || parsed.m !== ARGON2.m || parsed.t !== ARGON2.t || parsed.p !== ARGON2.p
+    || parsed.hash.length !== ARGON2.tagLength || parsed.salt.length !== SALT_BYTES;
+}
+
+// A real hash of nothing in particular, used to give the "no such user"
 // path the same cost as the "wrong password" path. Computed once and reused:
 // it is not a secret (verifying against it always fails), and re-deriving it per
 // request would double the CPU cost of a login flood rather than hide anything.
 let dummyHashPromise = null;
 
 export function dummyHash() {
-  // A rejection must not be what gets memoized. scrypt can fail transiently
+  // A rejection must not be what gets memoized. Hashing can fail transiently
   // (it allocates, and this runs under exactly the memory pressure a login flood
   // creates), and caching the rejected promise made every subsequent failed
   // login throw a 500 instead of returning "Invalid username or password" —
@@ -34,6 +84,25 @@ export function dummyHash() {
     throw err;
   });
   return dummyHashPromise;
+}
+
+// ---- First-run setup token (memory only, printed to the server log) ----
+
+let setupToken = null;
+
+export function issueSetupToken() {
+  setupToken = randomBytes(24).toString('base64url');
+  return setupToken;
+}
+
+export function clearSetupToken() {
+  setupToken = null;
+}
+
+export function checkSetupToken(candidate) {
+  if (!setupToken || typeof candidate !== 'string') return false;
+  const sha = (v) => createHash('sha256').update(v).digest();
+  return timingSafeEqual(sha(candidate), sha(setupToken));
 }
 
 // ---- Username matching ----
@@ -54,15 +123,6 @@ export function dummyHash() {
 // what RFC 8265's UsernameCaseMapped profile does, and for the same reason.
 export function foldUsername(username) {
   return String(username ?? '').trim().normalize('NFC').toLowerCase();
-}
-
-export async function verifyPassword(password, stored) {
-  const [scheme, saltHex, hashHex] = String(stored || '').split('$');
-  if (scheme !== 'scrypt' || !saltHex || !hashHex) return false;
-  const expected = Buffer.from(hashHex, 'hex');
-  if (expected.length === 0) return false;
-  const actual = await scrypt(String(password), Buffer.from(saltHex, 'hex'), expected.length);
-  return actual.length === expected.length && timingSafeEqual(actual, expected);
 }
 
 // ---- Session tokens (stateless: base64url(payload).HMAC-SHA256) ----
@@ -148,6 +208,13 @@ export function updatePassword(db, passwordHash) {
   db.prepare(
     'UPDATE app_auth SET password_hash = ?, token_epoch = token_epoch + 1 WHERE id = 1'
   ).run(passwordHash);
+}
+
+// Upgrades the hash of an unchanged password; sessions stay valid. A no-op if
+// the password changed since `oldHash` was read.
+export function rehashPassword(db, oldHash, newHash) {
+  db.prepare('UPDATE app_auth SET password_hash = ? WHERE id = 1 AND password_hash = ?')
+    .run(newHash, oldHash);
 }
 
 // Invalidates every outstanding token without touching the password. What makes

@@ -152,13 +152,7 @@ test('reports an existing drop-off folder instead of overwriting it', async () =
   await fs.mkdir(path.join(dropoffDir, 'Drop'), { recursive: true });
   await fs.writeFile(path.join(dropoffDir, 'Drop', 'stale.mp3'), 'x');
 
-  // sameOriginOnly fails closed on a request carrying none of Sec-Fetch-Site,
-  // Origin or Referer (see security.test.js) — an EventSource sends
-  // Sec-Fetch-Site on a trustworthy origin, so that's what a real caller of
-  // this GET provides.
-  const res = await fetch(`${baseUrl}/api/playlists/${created.id}/export/dropoff`, {
-    headers: { 'Sec-Fetch-Site': 'same-origin' },
-  });
+  const res = await postJson(`${baseUrl}/api/playlists/${created.id}/export/dropoff`, {});
   assert.equal(res.status, 409);
   const body = await res.json();
   assert.equal(body.error.existing.fileCount, 1);
@@ -168,6 +162,46 @@ test('reports an existing drop-off folder instead of overwriting it', async () =
   assert.deepEqual(await fs.readdir(path.join(dropoffDir, 'Drop')), ['stale.mp3']);
 });
 
+// A GET is reachable by pasting the URL into a logged-in browser's address bar.
+test('the drop-off export is POST-only', async () => {
+  const created = await (await postJson(`${baseUrl}/api/playlists`, { name: 'NoGet' })).json();
+  const res = await fetch(`${baseUrl}/api/playlists/${created.id}/export/dropoff`, {
+    headers: { 'Sec-Fetch-Site': 'none' },
+  });
+  assert.equal(res.status, 404);
+  assert.deepEqual(await fs.readdir(dropoffDir).then((d) => d.includes('NoGet')), false);
+});
+
+test('an export the client abandons part-way is not recorded as the last export', async (t) => {
+  const created = await (await postJson(`${baseUrl}/api/playlists`, { name: 'Abandoned' })).json();
+  await postJson(`${baseUrl}/api/playlists/${created.id}/items`, {
+    items: [1, 2, 3].map(() => ({ artist: 'A', title: 'One', source: 'manual' })),
+  });
+  const { copyFile } = fs;
+  t.mock.method(fs, 'copyFile', async (...args) => {
+    await new Promise((r) => setTimeout(r, 100));
+    return copyFile(...args);
+  });
+
+  const ac = new AbortController();
+  const res = await fetch(`${baseUrl}/api/playlists/${created.id}/export/dropoff`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Origin: baseUrl },
+    body: JSON.stringify({}),
+    signal: ac.signal,
+  });
+  const reader = res.body.getReader();
+  let text = '';
+  while (!text.includes('event: progress')) text += new TextDecoder().decode((await reader.read()).value);
+  ac.abort();
+
+  // Let the server notice the hang-up and finish the copy in flight.
+  await new Promise((r) => setTimeout(r, 400));
+  const body = await (await fetch(`${baseUrl}/api/playlists/${created.id}`)).json();
+  assert.equal(body.lastExportedAt, null);
+  assert.ok((await fs.readdir(path.join(dropoffDir, 'Abandoned'))).length < 3, 'the export really was cut short');
+});
+
 test('refuses to export over the folder another playlist last exported to', async () => {
   // "Mix: 2024" and "Mix 2024" are two playlists — name_key only lowercases —
   // but sanitizeSegment strips the colon, so both land in DROPOFF_DIR/Mix 2024.
@@ -175,20 +209,16 @@ test('refuses to export over the folder another playlist last exported to', asyn
   await postJson(`${baseUrl}/api/playlists/${first.id}/items`, {
     items: [{ artist: 'A', title: 'One', source: 'manual' }],
   });
-  const exported = await fetch(`${baseUrl}/api/playlists/${first.id}/export/dropoff`, {
-    headers: { 'Sec-Fetch-Site': 'same-origin' },
-  });
+  const exported = await postJson(`${baseUrl}/api/playlists/${first.id}/export/dropoff`, {});
   assert.match(await exported.text(), /event: done/);
 
   const second = await (await postJson(`${baseUrl}/api/playlists`, { name: 'Mix: 2024' })).json();
   await postJson(`${baseUrl}/api/playlists/${second.id}/items`, {
     items: [{ artist: 'A', title: 'One', source: 'manual' }],
   });
-  // ?replace=1 is the dangerous click: the one that used to delete the other
+  // replace: true is the dangerous click: the one that used to delete the other
   // playlist's export after a confirmation that called it this playlist's.
-  const res = await fetch(`${baseUrl}/api/playlists/${second.id}/export/dropoff?replace=1`, {
-    headers: { 'Sec-Fetch-Site': 'same-origin' },
-  });
+  const res = await postJson(`${baseUrl}/api/playlists/${second.id}/export/dropoff`, { replace: true });
   assert.equal(res.status, 400);
   assert.match((await res.json()).error.message, /Mix 2024/);
   assert.deepEqual(await fs.readdir(path.join(dropoffDir, 'Mix 2024')), ['1 - A - One.mp3']);
@@ -207,9 +237,7 @@ test('a 409 on drop-off touches no byte of what is already there', async () => {
   const staleContent = 'not touched by a refused export';
   await fs.writeFile(path.join(dropoffDir, 'DropContent', 'stale.mp3'), staleContent);
 
-  const res = await fetch(`${baseUrl}/api/playlists/${created.id}/export/dropoff`, {
-    headers: { 'Sec-Fetch-Site': 'same-origin' },
-  });
+  const res = await postJson(`${baseUrl}/api/playlists/${created.id}/export/dropoff`, {});
   assert.equal(res.status, 409);
   assert.equal(
     await fs.readFile(path.join(dropoffDir, 'DropContent', 'stale.mp3'), 'utf8'),

@@ -16,6 +16,33 @@ function seeded() {
   return db;
 }
 
+// Every sort ties on everything but the group key / id: the same title, year,
+// duration and added_at, and artist names that differ only in case (distinct
+// groups that are equal under NOCASE).
+test('paging through tied sort values never repeats or skips a row', () => {
+  const db = openDb(':memory:');
+  const names = Array.from({ length: 32 }, (_, i) => [...'abcde']
+    .map((c, bit) => ((i >> bit) & 1 ? c.toUpperCase() : c)).join(''));
+  for (const [i, name] of names.entries()) {
+    repo.upsertLocalTrack(db, { path: `/m/${i}.mp3`, artist: name, album: name, title: 'Same', durationMs: 1000, changeKey: `${i}:1` });
+  }
+  db.exec('UPDATE local_tracks SET added_at = 1, year = 2000, disc = 1, track_number = 1');
+
+  const pageAll = (list, key, sorts) => {
+    for (const sort of sorts) {
+      const seen = [];
+      for (let offset = 0; offset < names.length; offset += 5) {
+        seen.push(...list({ sort, limit: 5, offset }).map(key));
+      }
+      assert.equal(new Set(seen).size, names.length, `sort=${sort}: ${seen.length} rows seen`);
+    }
+  };
+  pageAll((o) => repo.listTracks(db, o).tracks, (t) => t.id, ['title', 'artist', 'album', 'duration', 'year', 'added']);
+  pageAll((o) => repo.listArtists(db, o).artists, (a) => a.artist, ['name', 'tracks', 'albums', 'duration']);
+  pageAll((o) => repo.listAlbums(db, o).albums, (a) => `${a.artist}/${a.album}`, ['artist', 'album', 'year', 'tracks', 'added']);
+  db.close();
+});
+
 test('stats reflect distinct artists and albums', () => {
   const db = seeded();
   const stats = repo.getStats(db);
@@ -38,9 +65,9 @@ test('upsert on the same path updates rather than duplicates', () => {
   db.close();
 });
 
-test('markRemoved drops rows absent from the keep set and stats update', () => {
+test('markRemoved drops the given rows and stats update', () => {
   const db = seeded();
-  repo.markRemoved(db, new Set(['/m/A/Album/01.mp3', '/m/A/Album/02.mp3']));
+  repo.markRemoved(db, ['/m/B/Other/01.mp3']);
   repo.recomputeStats(db);
   const stats = repo.getStats(db);
   assert.equal(stats.totalTracks, 2);
@@ -52,8 +79,23 @@ test('hasRecording matches artist+title case-insensitively, ignoring removed row
   const db = seeded();
   assert.equal(repo.hasRecording(db, { artist: 'a', title: 'one' }), true);
   assert.equal(repo.hasRecording(db, { artist: 'A', title: 'Nope' }), false);
-  repo.markRemoved(db, new Set(['/m/A/Album/01.mp3', '/m/B/Other/01.mp3']));
+  repo.markRemoved(db, ['/m/A/Album/02.mp3']);
   assert.equal(repo.hasRecording(db, { artist: 'A', title: 'Two' }), false);
+  db.close();
+});
+
+test('NFD and NFC spellings of "Sigur Rós – Hoppípolla" produce identical keys', () => {
+  const db = openDb(':memory:');
+  const artist = 'Sigur Rós';
+  const title = 'Hoppípolla';
+  repo.upsertLocalTrack(db, { path: '/m/nfc.flac', artist, album: 'Takk', title, durationMs: 1, changeKey: '1:1' });
+  repo.upsertLocalTrack(db, {
+    path: '/m/nfd.flac', artist: artist.normalize('NFD'), album: 'Takk', title: title.normalize('NFD'), durationMs: 1, changeKey: '2:1',
+  });
+  const [a, b] = db.prepare('SELECT dup_key d, match_key m, title_key t FROM local_tracks ORDER BY path').all();
+  assert.deepEqual(a, b);
+  assert.equal(a.m, 'sigur rós\u001fhoppípolla');
+  assert.equal(repo.findDuplicateGroups(db).length, 1, 'grouped as duplicates');
   db.close();
 });
 
@@ -317,7 +359,7 @@ test('a search for a literal % is not treated as a wildcard', () => {
 
 test('getChangeKeys returns path->key for live rows only', () => {
   const db = seeded();
-  repo.markRemoved(db, new Set(['/m/A/Album/01.mp3']));
+  repo.markRemoved(db, ['/m/A/Album/02.mp3', '/m/B/Other/01.mp3']);
   const keys = repo.getChangeKeys(db);
   assert.equal(keys.get('/m/A/Album/01.mp3'), '10:1');
   assert.equal(keys.has('/m/B/Other/01.mp3'), false);
@@ -372,7 +414,7 @@ test('purgeRemoved deletes only long-gone tombstones', () => {
   const db = openDb(':memory:');
   repo.upsertLocalTrack(db, { path: '/m/gone.mp3', artist: 'A', album: 'Al', title: 'Gone', durationMs: 1, changeKey: '1:1' });
   repo.upsertLocalTrack(db, { path: '/m/here.mp3', artist: 'A', album: 'Al', title: 'Here', durationMs: 1, changeKey: '2:1' });
-  repo.markRemoved(db, new Set(['/m/here.mp3']));
+  repo.markRemoved(db, ['/m/gone.mp3']);
 
   // Just removed: still a tombstone, still protected.
   assert.equal(repo.purgeRemoved(db), 0);
@@ -463,43 +505,44 @@ test('getAlbumTracks finds an album whose files carry no artist tag', () => {
 });
 
 // The last-copy guard and Undo both need to ask questions the rest of the app
-// never asks: how many live copies share this key, and where did a row that has
+// never asks: which other live copies share this key, and where did a row that has
 // been marked removed used to live.
-test('liveCopyCountForTrack counts every live copy sharing the key, itself included', () => {
+test('otherLiveCopyPaths lists every other live copy sharing the key', () => {
   const db = openDb(':memory:');
   repo.upsertLocalTrack(db, { path: '/m/a.flac', artist: 'A', album: 'Al', title: 'One', durationMs: 1000, changeKey: '1:1' });
   repo.upsertLocalTrack(db, { path: '/m/b.mp3', artist: 'A', album: 'Al', title: 'One', durationMs: 1000, changeKey: '2:1' });
   const [a, b] = db.prepare('SELECT id FROM local_tracks ORDER BY path').all();
 
-  assert.equal(repo.liveCopyCountForTrack(db, a.id), 2);
-  assert.equal(repo.liveCopyCountForTrack(db, b.id), 2);
+  assert.deepEqual(repo.otherLiveCopyPaths(db, a.id), ['/m/b.mp3']);
+  assert.deepEqual(repo.otherLiveCopyPaths(db, b.id), ['/m/a.flac']);
 });
 
-test('liveCopyCountForTrack stops counting a copy once it is marked removed', () => {
+test('otherLiveCopyPaths drops a copy once it is marked removed', () => {
   const db = openDb(':memory:');
   repo.upsertLocalTrack(db, { path: '/m/a.flac', artist: 'A', album: 'Al', title: 'One', durationMs: 1000, changeKey: '1:1' });
   repo.upsertLocalTrack(db, { path: '/m/b.mp3', artist: 'A', album: 'Al', title: 'One', durationMs: 1000, changeKey: '2:1' });
   const [a] = db.prepare('SELECT id FROM local_tracks ORDER BY path').all();
 
   repo.markRemovedByPath(db, '/m/b.mp3');
-  assert.equal(repo.liveCopyCountForTrack(db, a.id), 1);
+  assert.deepEqual(repo.otherLiveCopyPaths(db, a.id), []);
 });
 
-test('liveCopyCountForTrack returns 0 for an unknown id', () => {
+test('otherLiveCopyPaths is empty for an unknown id', () => {
   const db = openDb(':memory:');
-  assert.equal(repo.liveCopyCountForTrack(db, 999), 0);
+  assert.deepEqual(repo.otherLiveCopyPaths(db, 999), []);
 });
 
 // A row with no artist or title has no dup_key (it is NULL), and null dup_key
-// must count as 0 to the last-copy guard. A future edit swapping the IS NOT NULL
+// must group with nothing for the last-copy guard. A future edit swapping the IS NOT NULL
 // check for a COALESCE pattern would treat two NULLs as equal and break the guard
 // for every untagged track — this test ensures that regression is caught.
-test('liveCopyCountForTrack returns 0 for a row whose dup_key is null', () => {
+test('otherLiveCopyPaths is empty for a row whose dup_key is null', () => {
   const db = openDb(':memory:');
   repo.upsertLocalTrack(db, { path: '/m/untagged.mp3', artist: null, album: null, title: null, durationMs: 1000, changeKey: '1:1' });
-  const { id } = db.prepare('SELECT id FROM local_tracks').get();
+  repo.upsertLocalTrack(db, { path: '/m/untagged2.mp3', artist: null, album: null, title: null, durationMs: 1000, changeKey: '2:1' });
+  const { id } = db.prepare('SELECT id FROM local_tracks ORDER BY path').get();
 
-  assert.equal(repo.liveCopyCountForTrack(db, id), 0);
+  assert.deepEqual(repo.otherLiveCopyPaths(db, id), []);
 });
 
 // getDupKeyForTrack is the group key the duplicate-trash flow locks on, so a
@@ -534,4 +577,17 @@ test('getRemovedTrackById finds a row the rest of the app is right to hide', () 
   repo.markRemovedByPath(db, '/m/a.flac');
   assert.equal(repo.getTrackById(db, id), null, 'and the live lookup no longer finds it');
   assert.equal(repo.getRemovedTrackById(db, id).path, '/m/a.flac');
+});
+
+test('rebaseTrackPaths moves rows to the resolved root, keeping id and added_at', () => {
+  const db = seeded();
+  repo.upsertLocalTrack(db, { path: '/mnt/m2/X/1.mp3', artist: 'X', album: 'Y', title: 'Z', durationMs: 1, changeKey: '1:1' });
+  const before = db.prepare("SELECT id, added_at FROM local_tracks WHERE path = '/m/A/Album/01.mp3'").get();
+
+  assert.equal(repo.rebaseTrackPaths(db, '/m', '/mnt/m'), 3);
+  const after = db.prepare("SELECT id, added_at FROM local_tracks WHERE path = '/mnt/m/A/Album/01.mp3'").get();
+  assert.deepEqual({ ...after }, { ...before });
+  // A sibling root that only shares a prefix is left alone.
+  assert.ok(db.prepare("SELECT 1 FROM local_tracks WHERE path = '/mnt/m2/X/1.mp3'").get());
+  assert.equal(repo.rebaseTrackPaths(db, '/m', '/mnt/m'), 0, 'idempotent');
 });

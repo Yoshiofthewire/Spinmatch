@@ -4,8 +4,8 @@ export function getAuthStatus() {
   return get('/auth/status');
 }
 
-export function setupAdmin({ username, password }) {
-  return post('/auth/setup', { username, password });
+export function setupAdmin({ username, password, setupToken }) {
+  return post('/auth/setup', { username, password, setupToken });
 }
 
 export function login({ username, password }) {

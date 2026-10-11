@@ -3,7 +3,7 @@ import path from 'node:path';
 import { config } from '../config.js';
 import { getDb } from '../lib/db.js';
 import {
-  getTrackById, getRemovedTrackById, getDupKeyForTrack, liveCopyCountForTrack,
+  getTrackById, getRemovedTrackById, getDupKeyForTrack, otherLiveCopyPaths,
 } from './libraryRepo.js';
 import { reindexFile } from './libraryScanner.js';
 import { assertInsideMusicDir, assertReadableInsideMusicDir } from '../lib/paths.js';
@@ -122,9 +122,15 @@ async function trashLockedCopy({ trackId, db }) {
   // close. Still decided from the index alone, before anything touches disk —
   // a page left open since yesterday is precisely the case where the client's
   // idea of how many copies exist is the thing that is out of date.
-  const copies = liveCopyCountForTrack(db, trackId);
-  if (copies < 2) {
+  const others = otherLiveCopyPaths(db, trackId);
+  if (!others.length) {
     throw new ConflictError('This is the only copy of this track, so it cannot be moved aside.');
+  }
+  // The index can be stale (a copy deleted outside the app since the last
+  // scan), so at least one other copy has to actually be on disk.
+  const present = await Promise.all(others.map((p) => fs.stat(p).then(() => true, () => false)));
+  if (!present.includes(true)) {
+    throw new ConflictError('No other copy of this track is on disk any more, so this one cannot be moved aside.');
   }
 
   // The path comes from our own index and is still re-validated before the file

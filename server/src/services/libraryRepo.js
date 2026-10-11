@@ -1,9 +1,6 @@
-// The one import this module has. It is deliberately SQL-only otherwise, and the
-// bound below used to be redeclared here rather than shared, on the grounds that
-// importing it would close a cycle — true of the scanner, which imports this
-// file, but not of a constants-only leaf module that imports nothing itself.
+import path from 'node:path';
 import { MAX_TRACK_NUMBER } from '../lib/tagLimits.js';
-import { makeMatchKey, makeTitleKey } from '../lib/normalize.js';
+import { makeDupKey, makeMatchKey, makeTitleKey } from '../lib/normalize.js';
 
 export function upsertLocalTrack(db, {
   path, artist, album, title, durationMs, changeKey,
@@ -15,7 +12,7 @@ export function upsertLocalTrack(db, {
   // Computed here rather than by the caller so it can never drift from the
   // columns it folds, and so every writer (scanner, targeted rescan, tests) gets
   // it without having to remember.
-  const dupKey = artist != null && title != null ? foldKey(artist, album, title) : null;
+  const dupKey = makeDupKey(artist, album, title);
   // Computed here for the same reason dupKey is: so every writer gets them and
   // none can drift from the columns they fold.
   const matchKey = makeMatchKey(artist, title);
@@ -64,13 +61,10 @@ export function getChangeKeys(db) {
   return new Map(rows.map((r) => [r.path, r.change_key]));
 }
 
-export function markRemoved(db, keepPaths) {
-  const rows = db.prepare('SELECT id, path FROM local_tracks WHERE removed = 0').all();
-  const stmt = db.prepare('UPDATE local_tracks SET removed = 1, updated_at = ? WHERE id = ?');
+export function markRemoved(db, paths) {
+  const stmt = db.prepare('UPDATE local_tracks SET removed = 1, updated_at = ? WHERE path = ? AND removed = 0');
   const now = Date.now();
-  for (const row of rows) {
-    if (!keepPaths.has(row.path)) stmt.run(now, row.id);
-  }
+  for (const p of paths) stmt.run(now, p);
 }
 
 // Single-path counterpart to markRemoved, for the targeted rescan: that one
@@ -78,6 +72,17 @@ export function markRemoved(db, keepPaths) {
 export function markRemovedByPath(db, filePath) {
   db.prepare('UPDATE local_tracks SET removed = 1, updated_at = ? WHERE path = ?')
     .run(Date.now(), filePath);
+}
+
+// Moves stored paths from one root spelling to another (a symlinked or relative
+// MUSIC_DIR, now resolved), so rows keep their ids and added_at instead of being
+// swept and re-added. OR IGNORE: a row already at the new path wins.
+export function rebaseTrackPaths(db, fromRoot, toRoot) {
+  if (!fromRoot || !toRoot || fromRoot === toRoot) return 0;
+  const from = fromRoot + path.sep;
+  return db.prepare(
+    'UPDATE OR IGNORE local_tracks SET path = ? || substr(path, ?) WHERE substr(path, 1, ?) = ?'
+  ).run(toRoot + path.sep, from.length + 1, from.length, from).changes;
 }
 
 // One aggregate query rather than four separate ones. This runs after every
@@ -160,20 +165,12 @@ function orderBy(map, sort, fallbackKey) {
 // same reason, as client/src/lib/albumKey.js and recomputeStats' char(31).
 const UNIT_SEPARATOR = String.fromCharCode(31);
 
-// Case-insensitive grouping key. SQLite's built-in LOWER() folds ASCII only, so
-// anything that groups rows must not mix it with JavaScript's toLowerCase() —
-// the two disagree the moment an artist is called "Ärzte", and a group keyed one
-// way then queried the other comes back empty. Folding happens here, in JS, once.
-
-function foldKey(...parts) {
-  return parts.map((p) => String(p ?? '').toLowerCase()).join(UNIT_SEPARATOR);
-}
 
 const ARTIST_SORTS = {
-  name: 'artist COLLATE NOCASE',
-  tracks: 'trackCount DESC, artist COLLATE NOCASE',
-  albums: 'albumCount DESC, artist COLLATE NOCASE',
-  duration: 'totalDurationMs DESC, artist COLLATE NOCASE',
+  name: 'artist COLLATE NOCASE, artist',
+  tracks: 'trackCount DESC, artist COLLATE NOCASE, artist',
+  albums: 'albumCount DESC, artist COLLATE NOCASE, artist',
+  duration: 'totalDurationMs DESC, artist COLLATE NOCASE, artist',
 };
 
 // Paged, for the reason listTracks is paged: a serious collection has thousands
@@ -214,11 +211,11 @@ export function listArtistNames(db) {
 }
 
 const ALBUM_SORTS = {
-  artist: 'artist COLLATE NOCASE, year, album COLLATE NOCASE',
-  album: 'album COLLATE NOCASE, artist COLLATE NOCASE',
-  year: 'year IS NULL, year DESC, artist COLLATE NOCASE',
-  tracks: 'trackCount DESC, artist COLLATE NOCASE',
-  added: 'addedAt DESC, artist COLLATE NOCASE',
+  artist: 'artist COLLATE NOCASE, year, album COLLATE NOCASE, artist, album',
+  album: 'album COLLATE NOCASE, artist COLLATE NOCASE, artist, album',
+  year: 'year IS NULL, year DESC, artist COLLATE NOCASE, artist, album',
+  tracks: 'trackCount DESC, artist COLLATE NOCASE, artist, album',
+  added: 'addedAt DESC, artist COLLATE NOCASE, artist, album',
 };
 
 export function listAlbums(db, { artist, sort = 'artist', q, limit = 500, offset = 0 } = {}) {
@@ -260,12 +257,12 @@ function likeFor(q) {
 }
 
 const TRACK_SORTS = {
-  title: 'title COLLATE NOCASE',
-  artist: 'artist COLLATE NOCASE, album COLLATE NOCASE, disc, track_number',
-  album: 'album COLLATE NOCASE, disc, track_number, title COLLATE NOCASE',
-  duration: 'duration_ms IS NULL, duration_ms DESC',
-  year: 'year IS NULL, year DESC, artist COLLATE NOCASE',
-  added: 'added_at DESC',
+  title: 'title COLLATE NOCASE, id',
+  artist: 'artist COLLATE NOCASE, album COLLATE NOCASE, disc, track_number, id',
+  album: 'album COLLATE NOCASE, disc, track_number, title COLLATE NOCASE, id',
+  duration: 'duration_ms IS NULL, duration_ms DESC, id',
+  year: 'year IS NULL, year DESC, artist COLLATE NOCASE, id',
+  added: 'added_at DESC, id',
 };
 
 // The absolute path is deliberately not in here.
@@ -386,18 +383,17 @@ export function getRemovedTrackById(db, id) {
   ).get(id) ?? null;
 }
 
-// How many live copies share this track's dup_key, counting the track itself.
+// Paths of the other live copies sharing this track's dup_key.
 //
-// Counted over the same dup_key findDuplicateGroups groups by, so the last-copy
-// guard and the list the user is looking at can never disagree about what a
-// group contains. A row with no dup_key (no artist, or no title) counts 0 rather
-// than 1: it is not part of any group, and the guard reads that as "refuse".
-export function liveCopyCountForTrack(db, id) {
+// Same dup_key findDuplicateGroups groups by, so the last-copy guard and the
+// list the user is looking at can never disagree about what a group contains.
+// A row with no dup_key is in no group and gets [], which the guard refuses.
+export function otherLiveCopyPaths(db, id) {
   return db.prepare(`
-    SELECT COUNT(*) c FROM local_tracks
-    WHERE removed = 0 AND dup_key IS NOT NULL
+    SELECT path FROM local_tracks
+    WHERE removed = 0 AND dup_key IS NOT NULL AND id != ?
       AND dup_key = (SELECT dup_key FROM local_tracks WHERE id = ?)
-  `).get(id).c;
+  `).all(id, id).map((r) => r.path);
 }
 
 // The group a live track's last-copy guard has to serialize on. A dedicated
@@ -405,7 +401,7 @@ export function liveCopyCountForTrack(db, id) {
 // every track payload the app sends out for the sake of the one caller (the
 // duplicate-trash flow) that needs it to lock a group of copies against a
 // concurrent move-aside of a sibling. Null for an unknown id and for a row
-// with no dup_key, same as liveCopyCountForTrack.
+// with no dup_key, same as otherLiveCopyPaths.
 export function getDupKeyForTrack(db, id) {
   return db.prepare(
     'SELECT dup_key FROM local_tracks WHERE id = ? AND removed = 0'
