@@ -16,6 +16,33 @@ function seeded() {
   return db;
 }
 
+// Every sort ties on everything but the group key / id: the same title, year,
+// duration and added_at, and artist names that differ only in case (distinct
+// groups that are equal under NOCASE).
+test('paging through tied sort values never repeats or skips a row', () => {
+  const db = openDb(':memory:');
+  const names = Array.from({ length: 32 }, (_, i) => [...'abcde']
+    .map((c, bit) => ((i >> bit) & 1 ? c.toUpperCase() : c)).join(''));
+  for (const [i, name] of names.entries()) {
+    repo.upsertLocalTrack(db, { path: `/m/${i}.mp3`, artist: name, album: name, title: 'Same', durationMs: 1000, changeKey: `${i}:1` });
+  }
+  db.exec('UPDATE local_tracks SET added_at = 1, year = 2000, disc = 1, track_number = 1');
+
+  const pageAll = (list, key, sorts) => {
+    for (const sort of sorts) {
+      const seen = [];
+      for (let offset = 0; offset < names.length; offset += 5) {
+        seen.push(...list({ sort, limit: 5, offset }).map(key));
+      }
+      assert.equal(new Set(seen).size, names.length, `sort=${sort}: ${seen.length} rows seen`);
+    }
+  };
+  pageAll((o) => repo.listTracks(db, o).tracks, (t) => t.id, ['title', 'artist', 'album', 'duration', 'year', 'added']);
+  pageAll((o) => repo.listArtists(db, o).artists, (a) => a.artist, ['name', 'tracks', 'albums', 'duration']);
+  pageAll((o) => repo.listAlbums(db, o).albums, (a) => `${a.artist}/${a.album}`, ['artist', 'album', 'year', 'tracks', 'added']);
+  db.close();
+});
+
 test('stats reflect distinct artists and albums', () => {
   const db = seeded();
   const stats = repo.getStats(db);

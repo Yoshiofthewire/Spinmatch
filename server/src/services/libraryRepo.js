@@ -159,10 +159,10 @@ const UNIT_SEPARATOR = String.fromCharCode(31);
 
 
 const ARTIST_SORTS = {
-  name: 'artist COLLATE NOCASE',
-  tracks: 'trackCount DESC, artist COLLATE NOCASE',
-  albums: 'albumCount DESC, artist COLLATE NOCASE',
-  duration: 'totalDurationMs DESC, artist COLLATE NOCASE',
+  name: 'artist COLLATE NOCASE, artist',
+  tracks: 'trackCount DESC, artist COLLATE NOCASE, artist',
+  albums: 'albumCount DESC, artist COLLATE NOCASE, artist',
+  duration: 'totalDurationMs DESC, artist COLLATE NOCASE, artist',
 };
 
 // Paged, for the reason listTracks is paged: a serious collection has thousands
@@ -203,11 +203,11 @@ export function listArtistNames(db) {
 }
 
 const ALBUM_SORTS = {
-  artist: 'artist COLLATE NOCASE, year, album COLLATE NOCASE',
-  album: 'album COLLATE NOCASE, artist COLLATE NOCASE',
-  year: 'year IS NULL, year DESC, artist COLLATE NOCASE',
-  tracks: 'trackCount DESC, artist COLLATE NOCASE',
-  added: 'addedAt DESC, artist COLLATE NOCASE',
+  artist: 'artist COLLATE NOCASE, year, album COLLATE NOCASE, artist, album',
+  album: 'album COLLATE NOCASE, artist COLLATE NOCASE, artist, album',
+  year: 'year IS NULL, year DESC, artist COLLATE NOCASE, artist, album',
+  tracks: 'trackCount DESC, artist COLLATE NOCASE, artist, album',
+  added: 'addedAt DESC, artist COLLATE NOCASE, artist, album',
 };
 
 export function listAlbums(db, { artist, sort = 'artist', q, limit = 500, offset = 0 } = {}) {
@@ -249,12 +249,12 @@ function likeFor(q) {
 }
 
 const TRACK_SORTS = {
-  title: 'title COLLATE NOCASE',
-  artist: 'artist COLLATE NOCASE, album COLLATE NOCASE, disc, track_number',
-  album: 'album COLLATE NOCASE, disc, track_number, title COLLATE NOCASE',
-  duration: 'duration_ms IS NULL, duration_ms DESC',
-  year: 'year IS NULL, year DESC, artist COLLATE NOCASE',
-  added: 'added_at DESC',
+  title: 'title COLLATE NOCASE, id',
+  artist: 'artist COLLATE NOCASE, album COLLATE NOCASE, disc, track_number, id',
+  album: 'album COLLATE NOCASE, disc, track_number, title COLLATE NOCASE, id',
+  duration: 'duration_ms IS NULL, duration_ms DESC, id',
+  year: 'year IS NULL, year DESC, artist COLLATE NOCASE, id',
+  added: 'added_at DESC, id',
 };
 
 // The absolute path is deliberately not in here.
