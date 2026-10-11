@@ -184,7 +184,10 @@ async function applyOrPreviewTags(filePath, current, desired, coverImage, dryRun
     // write racing a library repair on the same file. Nothing prevented that —
     // a file can be under INGEST_DIR and, via a bind mount or a symlinked
     // layout, be the same inode a fix-tags apply is writing.
-    return withFileLock(filePath, () => tags.writeTags(filePath, desired, { coverImage }));
+    // Re-resolved here: the path was captured at scan time, and the lookups
+    // since then leave seconds for a symlink to be swapped in.
+    const real = await resolveInsideIngestDir(filePath);
+    return withFileLock(real, () => tags.writeTags(real, desired, { coverImage }));
   }
   const filledFields = tags.plannedFills(current, desired);
   if (coverImage && !current.hasCoverArt) filledFields.push('coverArt');
@@ -198,7 +201,7 @@ async function moveFileSafely(filePath, name, moveMeta) {
   const ext = path.extname(filePath).toLowerCase();
   let result;
   try {
-    result = await organize.moveIntoLibrary(filePath, moveMeta, ext);
+    result = await organize.moveIntoLibrary(await resolveInsideIngestDir(filePath), moveMeta, ext);
   } catch (err) {
     return {
       needsReview: {

@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { config } from '../config.js';
 import { sanitizeSegment } from './organize.js';
-import { assertInsideMusicDir, assertInsideDropoffDir } from '../lib/paths.js';
+import { assertInsideMusicDir, assertInsideDropoffDir, assertReadableInsideMusicDir } from '../lib/paths.js';
 import { noteWrite } from '../lib/recentWrites.js';
 import { withFileLock } from '../lib/fileLock.js';
 import { BadRequestError } from '../lib/httpErrors.js';
@@ -159,9 +159,10 @@ async function freeBytes(dir) {
 // the column is populated it is preferred, so the number checked here is the
 // same one the playlist list and the size budget were computed from.
 async function checkedBytes(track) {
-  await fs.access(track.path, fs.constants.R_OK);
+  const real = await assertReadableInsideMusicDir(track.path);
+  await fs.access(real, fs.constants.R_OK);
   if (track.sizeBytes != null) return track.sizeBytes;
-  const stat = await fs.stat(track.path);
+  const stat = await fs.stat(real);
   return stat.size;
 }
 
@@ -240,7 +241,9 @@ export async function exportToDropoff({ name, items, onProgress, signal }) {
       if (signal?.aborted) break;
       const dest = path.join(dir, fileNameFor(item, i + 1, playable.length));
       await assertInsideDropoffDir(dest);
-      await fs.copyFile(item.track.path, dest);
+      // Resolved again at copy time: a symlink swapped in since the pre-flight
+      // must not copy a file from outside the library onto the device.
+      await fs.copyFile(await assertReadableInsideMusicDir(item.track.path), dest);
       copied += 1;
       bytes += sizes[i];
       onProgress?.({ index: i + 1, total: playable.length, title: item.track.title, bytes });

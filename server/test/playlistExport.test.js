@@ -308,6 +308,23 @@ test('an unreadable source fails before the wipe, so a dropped mount cannot empt
   );
 });
 
+test('a source that is a symlink out of the music folder is refused before anything is copied', async () => {
+  const secret = path.join(dropoffDir, '..', `spinmatch-secret-${process.pid}`);
+  await fs.writeFile(secret, 'not music');
+  const link = path.join(musicDir, 'A', 'B', 'escape.mp3');
+  await fs.mkdir(path.dirname(link), { recursive: true });
+  await fs.symlink(secret, link);
+  try {
+    await assert.rejects(
+      () => exportToDropoff({ name: 'Escape', items: [item('A', 'Escape', link)] }),
+      /no longer readable/i,
+    );
+    await assert.rejects(fs.readdir(path.join(dropoffDir, 'Escape')), { code: 'ENOENT' });
+  } finally {
+    await fs.rm(secret, { force: true });
+  }
+});
+
 test('a playlist with nothing behind it is refused rather than exported as an empty folder', async () => {
   const a = await seedFile('A/B/allgaps.mp3');
   await exportToDropoff({ name: 'AllGaps', items: [item('A', 'Real', a)] });
