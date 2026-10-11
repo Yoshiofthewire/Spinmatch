@@ -29,8 +29,10 @@ export function preferBest(candidates, album) {
 
 // Attaches a local track (or null) to each item. Misses fall back to title alone,
 // so "The Beatles" vs "Beatles" still resolves.
-export function resolveItems(db, items) {
-  if (!items.length) return items.map((item) => ({ ...item, track: null }));
+export function resolveItems(db, allItems) {
+  // Unmatchable items (display text only) are always gaps.
+  const items = allItems.filter((i) => i.matchable !== 0);
+  if (!items.length) return allItems.map((item) => ({ ...item, track: null }));
 
   const matchKeys = [...new Set(items.map((i) => i.matchKey))];
   const byMatch = new Map();
@@ -56,7 +58,8 @@ export function resolveItems(db, items) {
     }
   }
 
-  return items.map((item) => {
+  return allItems.map((item) => {
+    if (item.matchable === 0) return { ...item, track: null };
     const candidates = byMatch.get(item.matchKey) ?? byTitle.get(item.titleKey) ?? [];
     return { ...item, track: candidates.length ? preferBest(candidates, item.album) : null };
   });
@@ -73,7 +76,7 @@ export function createPlaylist(db = getDb(), { name }) {
 const ITEM_COLUMNS = `
   id, position, artist, title, album,
   match_key AS matchKey, title_key AS titleKey,
-  source, seed_artist AS seedArtist
+  source, seed_artist AS seedArtist, matchable
 `;
 
 export function getPlaylist(db, id) {
@@ -138,15 +141,15 @@ export function addItems(db, playlistId, items) {
 
   const insert = db.prepare(`
     INSERT INTO playlist_items
-      (playlist_id, position, artist, title, album, match_key, title_key, source, seed_artist, added_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (playlist_id, position, artist, title, album, match_key, title_key, source, seed_artist, added_at, matchable)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   withTransaction(db, () => {
     items.forEach((item, i) => {
       insert.run(
         playlistId, next + i, item.artist ?? null, item.title, item.album ?? null,
         makeMatchKey(item.artist, item.title), makeTitleKey(item.title),
-        item.source, item.seedArtist ?? null, now,
+        item.source, item.seedArtist ?? null, now, item.matchable === false ? 0 : 1,
       );
     });
     db.prepare('UPDATE playlists SET updated_at = ? WHERE id = ?').run(now, playlistId);

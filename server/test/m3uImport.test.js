@@ -46,7 +46,7 @@ test('entries past the cap are dropped and reported', () => {
   assert.equal(parseM3u(lines, ROOT, 5001).truncated, false);
 });
 
-test('items: path hit uses its tags, else #EXTINF, else the file name', () => {
+test('items: path hit uses its tags, else #EXTINF, else the file name (display only)', () => {
   const db = openDb(':memory:');
   upsertLocalTrack(db, {
     path: '/music/A/one.mp3', artist: 'Tagged', album: 'Al', title: 'One', durationMs: 1000, changeKey: '1',
@@ -56,8 +56,8 @@ test('items: path hit uses its tags, else #EXTINF, else the file name', () => {
     ROOT, 10,
   );
   assert.deepEqual(m3uItems(db, entries), [
-    { artist: 'Tagged', title: 'One', album: 'Al' },
-    { artist: 'Band', title: 'Song', album: null },
-    { artist: 'Artist', title: 'Stem', album: null },
+    { artist: 'Tagged', title: 'One', album: 'Al', matchable: true },
+    { artist: 'Band', title: 'Song', album: null, matchable: true },
+    { artist: 'Artist', title: 'Stem', album: null, matchable: false },
   ]);
 });

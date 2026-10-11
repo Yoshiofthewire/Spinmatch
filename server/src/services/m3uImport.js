@@ -38,8 +38,9 @@ function libraryPath(line, musicDir) {
   return resolved.startsWith(`${musicDir}/`) ? resolved : null;
 }
 
-// Playlist items store text, so a path hit contributes its tags; a miss falls back to
-// #EXTINF, then the file name, and resolves (or stays a gap) like a pasted line.
+// A library path contributes its tags. Otherwise #EXTINF text is matched like a pasted
+// line (a path outside MUSIC_DIR is never looked up, but its #EXTINF still counts).
+// A bare file name is display text only: title-only matching would give false hits.
 export function m3uItems(db, entries) {
   const byPath = db.prepare('SELECT artist, album, title FROM local_tracks WHERE removed = 0 AND path = ?');
   return entries.map(({ line, path: p, display }) => {
@@ -50,6 +51,7 @@ export function m3uItems(db, entries) {
       artist: artist?.slice(0, MAX_TEXT) ?? null,
       title: (title || stem(p ?? line)).slice(0, MAX_TEXT),
       album: album?.slice(0, MAX_TEXT) ?? null,
+      matchable: Boolean(track) || display != null,
     };
   });
 }

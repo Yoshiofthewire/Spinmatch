@@ -163,7 +163,9 @@ CREATE TABLE IF NOT EXISTS playlist_items (
   -- manual | popular | random | paste | import. 'random' is what the UI labels "Chance".
   source      TEXT NOT NULL,
   seed_artist TEXT,
-  added_at    INTEGER NOT NULL
+  added_at    INTEGER NOT NULL,
+  -- 0: display text only (an m3u file name), never matched to a track.
+  matchable   INTEGER NOT NULL DEFAULT 1
 );
 
 -- Undo journal: one batch per user action (kind: edit | album-edit | fix | bulk-fix).
@@ -366,7 +368,10 @@ export function migrate(db) {
 
   // v9: tag_batches/tag_writes, new tables only, created by SCHEMA.
   // v10: verify_history, new table only, created by SCHEMA.
-  // v11: api_tokens, new table only, created by SCHEMA.
+  // v11: api_tokens (new table, created by SCHEMA) and playlist_items.matchable.
+  if (current < 11) {
+    addMissingColumns(db, 'playlist_items', [['matchable', 'INTEGER NOT NULL DEFAULT 1']]);
+  }
 
   db.prepare(
     "INSERT INTO meta (key, value) VALUES ('schema_version', ?) " +

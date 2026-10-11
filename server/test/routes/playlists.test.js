@@ -356,3 +356,21 @@ test('import: a failure adding items leaves no empty playlist behind', async () 
     db.exec('DROP TRIGGER IF EXISTS temp.fail_items');
   }
 });
+
+test('import: a bare file name never matches; #EXTINF does, even beside an outside path', async () => {
+  const text = [
+    '#EXTM3U',
+    // Outside MUSIC_DIR: never looked up, but its #EXTINF text is.
+    '#EXTINF:200,A - One',
+    '../../elsewhere/whatever.mp3',
+    // No #EXTINF and not in the library: the file name "One" must stay display text.
+    'Somewhere/One.mp3',
+  ].join('\n');
+  const res = await postJson(`${baseUrl}/api/playlists/import`, { name: 'Names only', text });
+  const body = await res.json();
+  assert.equal(res.status, 200, JSON.stringify(body));
+  assert.equal(body.gaps, 1);
+
+  const saved = await (await fetch(`${baseUrl}/api/playlists/${body.playlist.id}`)).json();
+  assert.deepEqual(saved.items.map((i) => [i.title, Boolean(i.track)]), [['One', true], ['One', false]]);
+});

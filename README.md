@@ -404,8 +404,10 @@ There are three ways to add tracks to a playlist:
 **Import .m3u** on the Playlists page creates a new playlist from an `.m3u` or `.m3u8` file (UTF-8,
 up to 5000 entries). Each entry is matched by its path first: an absolute path inside `MUSIC_DIR`, a
 path relative to `MUSIC_DIR`, or a `file://` URL. Windows backslashes are accepted. An entry that
-points outside `MUSIC_DIR` is never looked up. Otherwise the `#EXTINF` line's `Artist - Title` is
-matched the way a pasted line is, and anything still unmatched becomes a gap.
+points outside `MUSIC_DIR` is never looked up as a path. Otherwise the `#EXTINF` line's
+`Artist - Title` is matched the way a pasted line is, so a playlist exported on another computer
+still finds your copies. An entry with no `#EXTINF` and no library path keeps its file name as a
+label only and stays a gap; matching on a bare file name would pick up the wrong track.
 
 ### Choosing tracks
 
