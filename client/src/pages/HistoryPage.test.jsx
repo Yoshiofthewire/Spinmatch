@@ -26,4 +26,17 @@ describe('HistoryPage', () => {
     expect(getHistory()).toHaveLength(0);
     expect(screen.getByText('No history yet.')).toBeInTheDocument();
   });
+
+  it('drops legacy MeTube "sent" entries instead of labelling them Verified', () => {
+    localStorage.setItem('spinmatch:history', JSON.stringify([
+      { track: 'Sent one', artist: 'A', action: 'sent', timestamp: 3 },
+      { track: 'Checked', artist: 'A', action: 'verified', timestamp: 2 },
+      { track: 'Moved in', artist: 'A', action: 'ingested', timestamp: 1 },
+    ]));
+    render(<HistoryPage />);
+
+    expect(screen.queryByText('Sent one')).not.toBeInTheDocument();
+    expect(screen.getByText('Checked').closest('tr')).toHaveTextContent('Verified');
+    expect(screen.getByText('Moved in').closest('tr')).toHaveTextContent('Ingested');
+  });
 });
