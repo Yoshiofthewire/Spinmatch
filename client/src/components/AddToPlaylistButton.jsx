@@ -22,6 +22,7 @@ export default function AddToPlaylistButton({ artist, title, album }) {
   const [newName, setNewName] = useState('');
   const [creating, setCreating] = useState(false);
   const [listError, setListError] = useState(null);
+  const [pos, setPos] = useState(null);
   const boxRef = useRef(null);
   const triggerRef = useRef(null);
 
@@ -37,11 +38,19 @@ export default function AddToPlaylistButton({ artist, title, album }) {
       setOpen(false);
       triggerRef.current?.focus();
     }
+    // The menu is fixed to where the button was, so a page scroll would strand it.
+    function onScroll(e) {
+      if (!boxRef.current?.contains(e.target)) setOpen(false);
+    }
     document.addEventListener('mousedown', onOutside);
     document.addEventListener('keydown', onKey);
+    window.addEventListener('scroll', onScroll, true);
+    window.addEventListener('resize', onScroll);
     return () => {
       document.removeEventListener('mousedown', onOutside);
       document.removeEventListener('keydown', onKey);
+      window.removeEventListener('scroll', onScroll, true);
+      window.removeEventListener('resize', onScroll);
     };
   }, [open]);
 
@@ -56,6 +65,7 @@ export default function AddToPlaylistButton({ artist, title, album }) {
     setError(null);
     setAddedId(null);
     if (!open && playlists === null) loadPlaylists();
+    if (!open) setPos(menuPosition(triggerRef.current));
     setOpen(!open);
   }
 
@@ -98,7 +108,7 @@ export default function AddToPlaylistButton({ artist, title, album }) {
         + Playlist
       </button>
       {open && (
-        <div className="add-to-playlist-menu">
+        <div className="add-to-playlist-menu" style={pos}>
           {error && <p className="banner banner-error" role="alert">{error}</p>}
           {playlists === null ? (
             listError
@@ -139,4 +149,16 @@ export default function AddToPlaylistButton({ artist, title, album }) {
       )}
     </span>
   );
+}
+
+// position: fixed escapes the table's overflow wrapper, which clipped an absolute menu.
+// Opens upward when there isn't room below the button.
+const MENU_ROOM = 320;
+function menuPosition(trigger) {
+  if (!trigger) return null;
+  const r = trigger.getBoundingClientRect();
+  const right = window.innerWidth - r.right;
+  return r.bottom + MENU_ROOM > window.innerHeight && r.top > MENU_ROOM
+    ? { position: 'fixed', right, top: 'auto', bottom: window.innerHeight - r.top + 6 }
+    : { position: 'fixed', right, top: r.bottom + 6 };
 }

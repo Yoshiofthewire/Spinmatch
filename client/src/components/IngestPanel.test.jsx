@@ -43,6 +43,23 @@ describe('IngestPanel', () => {
     expect(run.body).toEqual({ dryRun: false });
   });
 
+  it('starting a preview dismisses a pending confirm, so it cannot start a second run', async () => {
+    const calls = installFetchMock([
+      { test: (url) => url === '/api/ingest/scan', respond: () => jsonResponse({ items }) },
+      // The preview never finishes: the panel stays busy.
+      { method: 'POST', test: (url) => url === '/api/ingest/process', respond: () => new Promise(() => {}) },
+    ]);
+    const user = userEvent.setup();
+    render(<IngestPanel />);
+
+    await user.click(screen.getByRole('button', { name: 'Scan ingest folder' }));
+    await user.click(await screen.findByRole('button', { name: 'Process 2 items' }));
+    await user.click(screen.getByRole('button', { name: 'Preview 2 items' }));
+
+    expect(screen.queryByRole('button', { name: 'Confirm' })).not.toBeInTheDocument();
+    expect(calls.filter((c) => c.url === '/api/ingest/process')).toHaveLength(1);
+  });
+
   it('shows a busy state while scanning', async () => {
     let release;
     installFetchMock([{
