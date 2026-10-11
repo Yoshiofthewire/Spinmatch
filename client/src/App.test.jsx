@@ -8,7 +8,10 @@ import { installFetchMock, jsonResponse } from './test/fetchMock.js';
 
 vi.mock('./AuthContext.jsx', () => ({ useAuth: () => ({ username: 'me', logout: () => {} }) }));
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  localStorage.clear();
+});
 
 const isConfig = (url) => url === '/api/config';
 
@@ -39,6 +42,40 @@ describe('App', () => {
     expect(await screen.findByRole('link', { name: 'Library' })).toBeInTheDocument();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     expect(calls.filter((c) => isConfig(c.url))).toHaveLength(2);
+  });
+
+  it('imports legacy browser history once and removes it only after the server has it', async () => {
+    const legacy = [{ track: 'Roygbiv', artist: 'Boards of Canada', action: 'verified', timestamp: 1000 }];
+    localStorage.setItem('spinmatch:history', JSON.stringify(legacy));
+    const removeItem = vi.spyOn(Storage.prototype, 'removeItem');
+    const isImport = (url) => url === '/api/history/import';
+    const calls = installFetchMock([
+      { test: isConfig, respond: () => jsonResponse({}), once: false },
+      { method: 'POST', test: isImport, respond: () => jsonResponse({ error: { message: 'down' } }, { status: 500 }) },
+      { method: 'POST', test: isImport, respond: () => jsonResponse({ imported: 1, skipped: 0 }) },
+    ]);
+
+    // Failure: the browser copy is kept for the next load.
+    const first = renderAt('/about');
+    await vi.waitFor(() => expect(calls.filter((c) => isImport(c.url))).toHaveLength(1));
+    await screen.findByRole('heading', { name: /about/i });
+    expect(localStorage.getItem('spinmatch:history')).not.toBeNull();
+    first.unmount();
+
+    renderAt('/about');
+    await vi.waitFor(() => expect(localStorage.getItem('spinmatch:history')).toBeNull());
+    const imports = calls.filter((c) => isImport(c.url));
+    expect(imports).toHaveLength(2);
+    expect(imports[1].body).toEqual({ entries: legacy });
+    cleanup();
+
+    // Nothing left to import: a later load posts nothing.
+    renderAt('/about');
+    await screen.findByRole('heading', { name: /about/i });
+    expect(calls.filter((c) => isImport(c.url))).toHaveLength(2);
+    // Removed once, after the success; the failed attempt left it alone.
+    expect(removeItem).toHaveBeenCalledTimes(1);
+    removeItem.mockRestore();
   });
 
   it('renders NotFound for an unknown route', async () => {

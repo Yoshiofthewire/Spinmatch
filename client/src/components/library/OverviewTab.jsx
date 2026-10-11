@@ -1,4 +1,9 @@
+import { Link } from 'react-router-dom';
 import { formatLongDuration, formatBytes } from '../../lib/format.js';
+import { useServerList } from '../../lib/useServerList.js';
+import { getHistory } from '../../api/history.js';
+import ErrorBanner from '../ErrorBanner.jsx';
+import { HistoryStatus, YouTubeLink } from '../HistoryEntry.jsx';
 
 function Tile({ label, value, hint }) {
   return (
@@ -7,6 +12,28 @@ function Tile({ label, value, hint }) {
       <span className="stat-label">{label}</span>
       {hint && <span className="muted stat-hint">{hint}</span>}
     </div>
+  );
+}
+
+function RecentVerifications() {
+  const list = useServerList({ fetcher: getHistory, pageSize: 5 });
+  return (
+    <section className="recent-verifications">
+      <h2>Recent verifications</h2>
+      {list.state === 'error' && <ErrorBanner message={list.error} onRetry={list.reload} />}
+      {list.data && (list.total === 0 ? <p className="muted">Nothing verified yet.</p> : (
+        <ul>
+          {list.data.entries.map((e) => (
+            <li key={e.id}>
+              {e.title}{e.artist && <span className="muted"> — {e.artist}</span>}{' '}
+              {e.action === 'ingested' ? <span className="muted">Ingested</span> : <HistoryStatus status={e.status} />}{' '}
+              <YouTubeLink videoId={e.videoId} />
+            </li>
+          ))}
+        </ul>
+      ))}
+      <Link to="/history">All history</Link>
+    </section>
   );
 }
 
@@ -52,6 +79,8 @@ export default function OverviewTab({ stats, incompleteCount, health, onGoTo }) 
           </button>
         )}
       </div>
+
+      <RecentVerifications />
     </div>
   );
 }

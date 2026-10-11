@@ -2,14 +2,11 @@ import { useEffect, useRef, useState } from 'react';
 import VerifyResultsTable from './VerifyResultsTable.jsx';
 import EqualizerLoader from './EqualizerLoader.jsx';
 import CopyButton from './CopyButton.jsx';
-import { addEntry } from '../lib/history.js';
 import { streamEvents } from '../lib/eventStream.js';
 
 // Streams YouTube matching for a track list. Endpoints are props: callers share
 // one event protocol over different track sets.
 export default function BulkVerifyPanel({
-  artist,
-  album,
   releaseGroupMbid,
   trackCount,
   streamUrl = `/api/verify/album/${releaseGroupMbid}/stream`,
@@ -27,13 +24,6 @@ export default function BulkVerifyPanel({
 
   // Abort on unmount; the server stops via its req 'close' handler.
   useEffect(() => () => abortRef.current?.abort(), []);
-
-  function logVerified(list) {
-    // Artist-sweep results carry their own album; others fall back to the prop.
-    list.filter((r) => r.video).forEach((r) => addEntry({
-      track: r.title, artist, album: r.album ?? album, action: 'verified',
-    }));
-  }
 
   function handleClick() {
     setState('running');
@@ -69,7 +59,6 @@ export default function BulkVerifyPanel({
     }, { signal: controller.signal }).then(() => {
       if (terminal?.ok) {
         setState('done');
-        logVerified(acc);
         return;
       }
       // No terminal event: cut off. Results already shown still stand.

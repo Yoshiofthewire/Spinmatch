@@ -993,6 +993,14 @@ a:hover {
   gap: 0.75rem;
 }
 
+.recent-verifications {
+  margin-top: 1.5rem;
+}
+
+.recent-verifications li {
+  margin-bottom: 0.35rem;
+}
+
 .chip-button {
   padding: 0.45rem 0.9rem;
   border-radius: 999px;

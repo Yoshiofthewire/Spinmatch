@@ -42,8 +42,6 @@ export default function AlbumPage() {
       <p className="muted">{data.release.artist}</p>
 
       <BulkVerifyPanel
-        artist={data.release.artist}
-        album={data.release.title}
         releaseGroupMbid={mbid}
         trackCount={data.tracks.length}
       />

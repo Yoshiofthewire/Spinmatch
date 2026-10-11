@@ -1,15 +1,7 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { get, post } from '../api/client.js';
-import { addEntry } from '../lib/history.js';
 import EqualizerLoader from './EqualizerLoader.jsx';
 import IngestMatchPicker from './IngestMatchPicker.jsx';
-
-// Log only real ingests, never previews.
-function logIngested(matched) {
-  for (const m of matched) {
-    addEntry({ track: m.title, artist: m.artist, album: m.album, action: 'ingested' });
-  }
-}
 
 export default function IngestPanel() {
   const [items, setItems] = useState(null);
@@ -27,14 +19,6 @@ export default function IngestPanel() {
   useEffect(() => () => esRef.current?.close(), []);
 
   function handleResolved(oldItem, resolution) {
-    if (resolution.matched) {
-      addEntry({
-        track: resolution.matched.title,
-        artist: resolution.matched.artist,
-        album: resolution.matched.album,
-        action: 'ingested',
-      });
-    }
     setResult((prev) => {
       const needsReview = prev.needsReview.filter((r) => r.path !== oldItem.path);
       const matched = [...prev.matched];
@@ -71,7 +55,6 @@ export default function IngestPanel() {
       setResult(data);
       setState(data.error ? 'error' : 'done');
       if (data.error) setError(data.error);
-      else if (!dryRun) logIngested(data.matched);
     } catch (err) {
       setError(err);
       setState('error');
@@ -113,7 +96,6 @@ export default function IngestPanel() {
         return;
       }
       setState('done');
-      if (!dryRun) logIngested(acc.matched);
     });
     es.addEventListener('error', (e) => {
       if (doneRef.current) return; // normal stream close right after a done event

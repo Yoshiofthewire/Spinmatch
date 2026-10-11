@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { Routes, Route, NavLink, Link } from 'react-router-dom';
 import SearchPage from './pages/SearchPage.jsx';
 import ArtistPage from './pages/ArtistPage.jsx';
@@ -14,6 +15,7 @@ import EqualizerLoader from './components/EqualizerLoader.jsx';
 import ErrorBanner from './components/ErrorBanner.jsx';
 import { useConfig } from './ConfigContext.jsx';
 import { useAuth } from './AuthContext.jsx';
+import { importLegacyHistory } from './api/history.js';
 
 function navLinkClass({ isActive }) {
   return isActive ? 'nav-link nav-link-active' : 'nav-link';
@@ -22,6 +24,9 @@ function navLinkClass({ isActive }) {
 export default function App() {
   const { ingestEnabled, libraryEnabled, loading, error, retry } = useConfig();
   const { username, logout } = useAuth();
+
+  // Best-effort: on failure the browser copy stays and the next load retries.
+  useEffect(() => { importLegacyHistory().catch(() => {}); }, []);
 
   return (
     <div className="app">
