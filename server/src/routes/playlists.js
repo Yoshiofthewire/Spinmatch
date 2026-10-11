@@ -93,7 +93,13 @@ playlistsRouter.post('/import', express.json({ limit: '2mb' }), (req, res) => {
   const items = m3uItems(db, entries).map((item) => ({ ...item, source: 'import' }));
   const playlist = createOr409(res, name);
   if (!playlist) return;
-  addItems(db, playlist.id, items);
+  try {
+    addItems(db, playlist.id, items);
+  } catch (err) {
+    // A failed import leaves nothing behind, not an empty playlist under that name.
+    deletePlaylist(db, playlist.id);
+    throw err;
+  }
   const gaps = getPlaylist(db, playlist.id).items.filter((i) => !i.track).length;
   res.json({ playlist, added: items.length, gaps, truncated });
 });

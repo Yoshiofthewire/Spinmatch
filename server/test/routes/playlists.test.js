@@ -345,3 +345,14 @@ test('import accepts a 1 MB body; other routes still refuse it; import refuses 3
   });
   assert.equal(tooBig.status, 413);
 });
+
+test('import: a failure adding items leaves no empty playlist behind', async () => {
+  db.exec("CREATE TEMP TRIGGER fail_items BEFORE INSERT ON playlist_items BEGIN SELECT RAISE(ABORT, 'boom'); END");
+  try {
+    const res = await postJson(`${baseUrl}/api/playlists/import`, { name: 'Half made', text: 'A/Al/01.mp3' });
+    assert.equal(res.status, 500);
+    assert.equal(db.prepare("SELECT COUNT(*) AS n FROM playlists WHERE name = 'Half made'").get().n, 0);
+  } finally {
+    db.exec('DROP TRIGGER IF EXISTS temp.fail_items');
+  }
+});
