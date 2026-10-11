@@ -6,6 +6,9 @@ updates:
     schedule:
       interval: weekly
     groups:
+      # Must move together: a react/react-dom version split breaks rendering.
+      react:
+        patterns: ['react', 'react-dom']
       npm-minor-patch:
         update-types: [minor, patch]
 
