@@ -14,6 +14,7 @@ import { playlistsRouter } from './routes/playlists.js';
 import { historyRouter } from './routes/history.js';
 import { authRouter } from './routes/auth.js';
 import { tokensRouter } from './routes/tokens.js';
+import { backupRouter } from './routes/backup.js';
 import { oidcRouter, BACKCHANNEL_PATH } from './routes/oidc.js';
 import { requireAuth, sessionOnly } from './middleware/requireAuth.js';
 import { bearerAuth } from './middleware/bearerAuth.js';
@@ -71,6 +72,7 @@ export function createApp({ gate = requireAuth, clientDist = CLIENT_DIST } = {})
 
   // Everything else requires a session or an API token; credentials need a session.
   app.use('/api/tokens', sessionOnly, gate, tokensRouter);
+  app.use('/api/backup', sessionOnly, gate, backupRouter);
   app.use('/api/search', gate, searchRouter);
   app.use('/api/artists', gate, artistsRouter);
   app.use('/api/releases', gate, releasesRouter);

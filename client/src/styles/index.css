@@ -204,7 +204,10 @@ h1 {
 
 /* ---------- Buttons ---------- */
 
-button {
+button,
+a.button-link {
+  display: inline-block;
+  text-decoration: none;
   padding: 0.8rem 1.3rem;
   border-radius: 10px;
   border: 1px solid transparent;
@@ -216,7 +219,8 @@ button {
   transition: transform 0.1s ease, background 0.15s ease;
 }
 
-button:hover:not(:disabled) {
+button:hover:not(:disabled),
+a.button-link:hover {
   background: var(--signal-dim);
 }
 

@@ -32,6 +32,7 @@ Spinmatch **only finds and verifies YouTube links**. It does not download audio.
 - [Installing yt-dlp](#installing-yt-dlp)
 - [Configuration](#configuration)
 - [Running locally](#running-locally)
+- [Backing up](#backing-up)
 - [Running in production](#running-in-production)
 - [Running with Docker](#running-with-docker)
 - [Running on Unraid](#running-on-unraid)
@@ -769,6 +770,20 @@ npm run dev
 This runs the Express backend and the Vite dev server together. The backend uses
 `--env-file=../.env`, so it reads `.env` from the root of the repository. Open
 http://localhost:5173.
+
+## Backing up
+
+**Account → Download database backup** saves a copy of Spinmatch's database. It holds your playlists,
+history, tag-edit undo, MusicBrainz links, API tokens (hashed) and settings. Your music files are not
+in it; back those up as you already do.
+
+The copy also holds your password hash, so keep it private. It needs a signed-in session; API tokens
+can't download it. It leaves out the secret that signs session cookies, so a leaked backup can't be used
+to sign in; a restored copy makes a new one, and everyone signs in again.
+
+To restore, stop Spinmatch, replace `library.db` (in Docker, the file in your `/data/db` volume) with
+the downloaded file, delete any `library.db-wal` and `library.db-shm` beside it, and start Spinmatch
+again.
 
 ## Running in production
 
