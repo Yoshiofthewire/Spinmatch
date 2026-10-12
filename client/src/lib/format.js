@@ -31,3 +31,15 @@ export function formatBytes(bytes) {
   }
   return `${value < 10 && unit > 0 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`;
 }
+
+const RELATIVE_UNITS = [['day', 86_400_000], ['hour', 3_600_000], ['minute', 60_000]];
+
+// "5 minutes ago" / "in 2 hours".
+export function formatRelative(ms, now = Date.now()) {
+  const diff = ms - now;
+  const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
+  for (const [unit, size] of RELATIVE_UNITS) {
+    if (Math.abs(diff) >= size) return rtf.format(Math.round(diff / size), unit);
+  }
+  return rtf.format(Math.round(diff / 1000), 'second');
+}

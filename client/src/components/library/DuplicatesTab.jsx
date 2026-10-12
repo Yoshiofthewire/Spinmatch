@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import Pagination from '../Pagination.jsx';
 import EqualizerLoader from '../EqualizerLoader.jsx';
 import ErrorBanner from '../ErrorBanner.jsx';
@@ -76,6 +77,8 @@ export default function DuplicatesTab({ onPlay }) {
         counted as a duplicate. <strong>Spinmatch never deletes files;</strong> moving a copy aside
         puts it in <span className="mono">.spinmatch-trash</span> inside your music folder, where it
         keeps its artist and album layout. Delete that folder yourself when you want the space back.
+        Undo here lasts for this visit; the <Link to="?tab=trash">Trash</Link> tab can restore
+        anything moved aside.
       </p>
 
       {pageItems.map((group) => {

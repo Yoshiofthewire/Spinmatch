@@ -1,9 +1,10 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { config } from '../config.js';
-import { getDb } from '../lib/db.js';
+import { getDb, withTransaction } from '../lib/db.js';
 import {
   getTrackById, getRemovedTrackById, getDupKeyForTrack, otherLiveCopyPaths,
+  markRemovedByPath, recomputeStats,
 } from './libraryRepo.js';
 import { reindexFile } from './libraryScanner.js';
 import { assertInsideMusicDir, assertReadableInsideMusicDir } from '../lib/paths.js';
@@ -15,6 +16,10 @@ import { NotFoundError, BadRequestError, ConflictError } from '../lib/httpErrors
 // Spinmatch never deletes files: duplicates move into a mirrored trash, and emptying it is left to the user.
 // The dot prefix is load-bearing: walk() skips dot entries, which is what keeps trashed files out of the index.
 export const TRASH_DIR_NAME = '.spinmatch-trash';
+
+function trashRoot() {
+  return path.join(path.resolve(config.ingest.musicDir), TRASH_DIR_NAME);
+}
 
 // Pure, lexical. ".." must be rejected before the join: path.join would normalize it
 // back inside the root, and the file would land in the library instead of the trash.
@@ -97,8 +102,17 @@ async function trashLockedCopy({ trackId, db }) {
     noteWrite(real);
     noteWrite(dest);
 
-    // After the move, so a failed move leaves the index untouched. If this throws, the next scan heals it.
-    await reindexFile(real);
+    // After the move, so a failed move leaves the index untouched. The file is gone either way,
+    // so a failed reindex must not leave the row live.
+    try {
+      await reindexFile(real);
+    } catch (err) {
+      console.warn(`duplicateTrash: reindex after trashing ${real} failed: ${err.message}`);
+      withTransaction(db, () => {
+        markRemovedByPath(db, track.path);
+        recomputeStats(db);
+      });
+    }
 
     return { trackId, trashedPath: dest };
   } catch (err) {
@@ -107,19 +121,84 @@ async function trashLockedCopy({ trackId, db }) {
 }
 
 /**
- * Accepts any removed row, not only trashed ones; non-trashed rows fail as ENOENT only by accident.
+ * Only rows whose file is actually in the trash; anything else is a 404.
  * @returns {Promise<{trackId: number, restoredPath: string, track: object}>}
  */
 export async function restoreDuplicate({ trackId, db = getDb() }) {
   const track = getRemovedTrackById(db, trackId);
   if (!track) throw new NotFoundError('That track is not in the trash');
+  const relPath = path.relative(trashRoot(), trashPathFor(track.path));
+  const { restoredPath } = await restoreFromTrash({ relPath });
+  return { trackId, restoredPath, track: getTrackById(db, trackId) };
+}
 
-  // Lexical: the file is gone from this path, so there is nothing to realpath.
-  const original = assertInsideMusicDir(track.path);
-  const source = assertInsideMusicDir(trashPathFor(original));
+/** Every regular file in the trash, sorted by path. Symlinks are skipped, never followed. */
+export async function listTrash({ limit, offset }) {
+  const root = trashRoot();
+  const files = [];
+  const walk = async (dir) => {
+    let entries;
+    try {
+      entries = await fs.readdir(dir, { withFileTypes: true });
+    } catch (err) {
+      if (err.code !== 'ENOENT') console.warn(`duplicateTrash: could not list ${dir}: ${err.message}`);
+      return;
+    }
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      const stat = await fs.lstat(full).catch(() => null);
+      if (stat?.isDirectory()) await walk(full);
+      else if (stat?.isFile()) files.push({ relPath: path.relative(root, full), size: stat.size, mtimeMs: stat.mtimeMs });
+    }
+  };
+  // A symlinked trash root would list files from wherever it points.
+  if ((await fs.lstat(root).catch(() => null))?.isDirectory()) await walk(root);
+
+  files.sort((a, b) => (a.relPath < b.relPath ? -1 : a.relPath > b.relPath ? 1 : 0));
+  const musicRoot = path.resolve(config.ingest.musicDir);
+  const page = await Promise.all(files.slice(offset, offset + limit).map(async (f) => ({
+    ...f,
+    // The trash mirrors the library, so the original sits at the same relative path.
+    originalPath: f.relPath,
+    restorable: await fs.lstat(path.join(musicRoot, f.relPath)).then(() => false, (err) => err.code === 'ENOENT'),
+  })));
+  return {
+    entries: page,
+    total: files.length,
+    totals: { count: files.length, bytes: files.reduce((sum, f) => sum + f.size, 0) },
+  };
+}
+
+// Path-based, so it works after purgeRemoved has dropped the track's row.
+/** @returns {Promise<{relPath: string, restoredPath: string}>} */
+export async function restoreFromTrash({ relPath }) {
+  if (typeof relPath !== 'string' || !relPath || relPath.includes('\0')
+    || path.isAbsolute(relPath) || relPath.split(/[\\/]/).includes('..')) {
+    throw new BadRequestError('Not a path inside the trash');
+  }
+  const root = trashRoot();
+  const source = path.join(root, relPath);
+  let real;
+  try {
+    real = await fs.realpath(source);
+  } catch {
+    throw new NotFoundError('That file is not in the trash');
+  }
+  // No symlink anywhere on the way: the real path must be exactly the lexical one.
+  if (real !== source || !(await fs.lstat(real)).isFile()) {
+    console.warn(`duplicateTrash: refusing to restore ${source} (resolves to ${real})`);
+    throw new BadRequestError('Only regular files inside the trash can be restored');
+  }
+  const original = assertInsideMusicDir(path.join(path.resolve(config.ingest.musicDir), relPath));
 
   try {
+    // Check the deepest folder that exists before creating any: a symlinked
+    // library folder must not get folders, or the file, made outside MUSIC_DIR.
+    let existing = path.dirname(original);
+    while (!(await fs.lstat(existing).catch(() => null))) existing = path.dirname(existing);
+    await assertReadableInsideMusicDir(existing);
     await fs.mkdir(path.dirname(original), { recursive: true });
+    await assertReadableInsideMusicDir(path.dirname(original));
 
     // Claimed exactly: suffixing would manufacture a new duplicate.
     let handle;
@@ -138,7 +217,7 @@ export async function restoreDuplicate({ trackId, db = getDb() }) {
     noteWrite(source);
     await reindexFile(original);
 
-    return { trackId, restoredPath: original, track: getTrackById(db, trackId) };
+    return { relPath, restoredPath: original };
   } catch (err) {
     throw asMoveError(err, original);
   }

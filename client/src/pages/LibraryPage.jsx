@@ -12,6 +12,8 @@ import IncompleteTab from '../components/library/IncompleteTab.jsx';
 import HealthTab from '../components/library/HealthTab.jsx';
 import DuplicatesTab from '../components/library/DuplicatesTab.jsx';
 import ChangesTab from '../components/library/ChangesTab.jsx';
+import TrashTab from '../components/library/TrashTab.jsx';
+import ScanStatus from '../components/library/ScanStatus.jsx';
 import DiscoveryPanel from '../components/library/DiscoveryPanel.jsx';
 import ArtistDetail from '../components/library/ArtistDetail.jsx';
 import AlbumDetail from '../components/library/AlbumDetail.jsx';
@@ -28,6 +30,7 @@ const TABS = [
   ['health', 'Health'],
   ['duplicates', 'Duplicates'],
   ['changes', 'Changes'],
+  ['trash', 'Trash'],
   ['discover', 'Discover'],
 ];
 
@@ -188,11 +191,7 @@ export default function LibraryPage() {
               })}
             </nav>
             <div className="library-scan">
-              {stats.lastScanAt > 0 && (
-                <span className="muted">
-                  last scan {new Date(stats.lastScanAt).toLocaleString()}
-                </span>
-              )}
+              <ScanStatus busy={scanning} />
               <button type="button" onClick={rescan} disabled={scanning}>
                 {scanning ? 'Scanning…' : 'Rescan library'}
               </button>
@@ -272,6 +271,7 @@ export default function LibraryPage() {
                 <DuplicatesTab onPlay={(track, queue) => setPlaying({ track, queue })} />
               )}
               {tab === 'changes' && <ChangesTab onUndone={refresh} />}
+              {tab === 'trash' && <TrashTab onRestored={refresh} />}
               {/* Opt-in: walks the rate-limited MusicBrainz queue. */}
               {tab === 'discover' && <DiscoveryPanel />}
             </>

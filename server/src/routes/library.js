@@ -15,7 +15,9 @@ import { getFixCandidates, getFingerprintCandidates, applyFix } from '../service
 import { previewBulkFix, applyBulkFix, MAX_BULK_FIX } from '../services/libraryBulkFix.js';
 import { editTrackTags, editAlbumTags } from '../services/tagEdit.js';
 import { listChanges, undoBatch } from '../services/tagJournal.js';
-import { trashDuplicate, restoreDuplicate } from '../services/duplicateTrash.js';
+import {
+  trashDuplicate, restoreDuplicate, listTrash, restoreFromTrash,
+} from '../services/duplicateTrash.js';
 import {
   getSimilarArtists, getRecommendations, reconstructPlaylist,
 } from '../services/libraryDiscovery.js';
@@ -23,7 +25,8 @@ import { checkOwned } from '../services/libraryOwned.js';
 import { readCoverArt } from '../services/tags.js';
 import { readSidecarCover } from '../services/coverArt.js';
 import { assertReadableInsideMusicDir } from '../lib/paths.js';
-import { scanLibrary, rescanDirs } from '../services/libraryScanner.js';
+import { rescanDirs } from '../services/libraryScanner.js';
+import { trackedScan, getScanStatus } from '../services/librarySync.js';
 import { detectAlbumGaps } from '../services/libraryGaps.js';
 import { sweepArtistMissing } from '../services/libraryArtistGaps.js';
 import { sameOriginOnly } from '../middleware/sameOriginOnly.js';
@@ -187,11 +190,18 @@ libraryRouter.get('/stream/:trackId', async (req, res, next) => {
 
 libraryRouter.post('/scan', async (req, res, next) => {
   try {
-    const summary = await scanLibrary();
+    const summary = await trackedScan();
     res.json(summary);
   } catch (err) {
     next(err);
   }
+});
+
+libraryRouter.get('/scan/status', (req, res) => {
+  const status = getScanStatus();
+  // Before this process's first scan, fall back to the stored stamp.
+  status.lastScanAt ??= getStats(getDb()).lastScanAt || null;
+  res.json(status);
 });
 
 libraryRouter.get('/missing', sameOriginOnly, async (req, res, next) => {
@@ -415,6 +425,24 @@ libraryRouter.post('/track/:id/restore', async (req, res, next) => {
     const trackId = Number(req.params.id);
     if (!trackId) throw new BadRequestError('a track id is required');
     res.json(await restoreDuplicate({ trackId }));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Read-only view of the trash; emptying it is left to the user, outside Spinmatch.
+libraryRouter.get('/trash', async (req, res, next) => {
+  try {
+    const { limit, offset } = paging(req, 100);
+    res.json({ ...(await listTrash({ limit, offset })), limit, offset });
+  } catch (err) {
+    next(err);
+  }
+});
+
+libraryRouter.post('/trash/restore', async (req, res, next) => {
+  try {
+    res.json(await restoreFromTrash({ relPath: req.body?.relPath }));
   } catch (err) {
     next(err);
   }

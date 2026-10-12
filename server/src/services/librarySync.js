@@ -16,6 +16,45 @@ export function intervalForSize(trackCount) {
   return FOUR_HOURS;
 }
 
+const status = {
+  scanning: false,
+  startedAt: null,
+  scanned: 0,
+  lastScanAt: null,
+  lastSummary: null,
+  lastError: null,
+  nextScanAt: null,
+  watching: false,
+};
+// Callers coalesce onto one scan, so count them rather than flip a flag.
+let activeScans = 0;
+
+export function getScanStatus() {
+  return { ...status };
+}
+
+// Every full scan (timer, watcher, rerun, POST /scan) goes through here so the status sees it.
+export async function trackedScan(scan = scanLibrary) {
+  if (activeScans++ === 0) Object.assign(status, { scanning: true, startedAt: Date.now(), scanned: 0 });
+  try {
+    const summary = await scan({ onProgress: (n) => { status.scanned = n; } });
+    Object.assign(status, {
+      scanned: summary?.scanned ?? status.scanned,
+      lastScanAt: Date.now(),
+      lastSummary: summary,
+      lastError: summary?.skipped ? 'The music folder was unreadable, so the scan was skipped.' : null,
+    });
+    return summary;
+  } catch (err) {
+    // The detail can hold paths; it goes to the log, not the browser.
+    console.warn(`librarySync: scan failed: ${err.message}`);
+    status.lastError = 'The last scan failed. The server log has the details.';
+    throw err;
+  } finally {
+    if (--activeScans === 0) status.scanning = false;
+  }
+}
+
 export function startLibrarySync({ scan = scanLibrary, watch = true } = {}) {
   let timer = null;
   let watcher = null;
@@ -35,9 +74,9 @@ export function startLibrarySync({ scan = scanLibrary, watch = true } = {}) {
       do {
         dirty = false;
         try {
-          await scan();
-        } catch (err) {
-          console.warn(`librarySync: scan failed: ${err.message}`);
+          await trackedScan(scan);
+        } catch {
+          // Logged and recorded in the status by trackedScan.
         }
       } while (dirty && !stopped);
     } finally {
@@ -53,10 +92,13 @@ export function startLibrarySync({ scan = scanLibrary, watch = true } = {}) {
     } catch (err) {
       console.warn(`librarySync: could not read collection size, using the default interval: ${err.message}`);
     }
+    const delay = intervalForSize(count);
+    status.nextScanAt = Date.now() + delay;
     timer = setTimeout(async () => {
+      status.nextScanAt = null;
       await runScan();
       scheduleNext();
-    }, intervalForSize(count));
+    }, delay);
     timer.unref?.();
   };
 
@@ -71,6 +113,7 @@ export function startLibrarySync({ scan = scanLibrary, watch = true } = {}) {
         debounce = setTimeout(runScan, WATCH_DEBOUNCE_MS);
         debounce.unref?.();
       });
+      status.watching = true;
       // An unhandled 'error' (e.g. ENOSPC on inotify limits) would throw.
       watcher.on('error', (err) => {
         console.warn(`librarySync: watch on MUSIC_DIR failed, falling back to interval scans only: ${err.message}`);
@@ -79,6 +122,7 @@ export function startLibrarySync({ scan = scanLibrary, watch = true } = {}) {
         }
         try { watcher.close(); } catch { /* already gone */ }
         watcher = null;
+        status.watching = false;
       });
     } catch (err) {
       console.warn(`librarySync: could not watch MUSIC_DIR: ${err.message}`);
@@ -91,6 +135,7 @@ export function startLibrarySync({ scan = scanLibrary, watch = true } = {}) {
       if (timer) clearTimeout(timer);
       if (debounce) clearTimeout(debounce);
       if (watcher) watcher.close();
+      Object.assign(status, { watching: false, nextScanAt: null });
     },
     watching: () => watcher !== null,
     // Test seam.

@@ -33,6 +33,10 @@ export function scanLibrary() {
   return post('/library/scan', {});
 }
 
+export function getScanStatus() {
+  return get('/library/scan/status');
+}
+
 // verify=1 opts into the slow per-track YouTube lookup.
 export function getAlbumGaps(releaseGroupMbid, { verify = false } = {}) {
   return get(`/library/missing${qs({ releaseGroup: releaseGroupMbid, verify: verify ? '1' : '' })}`);
@@ -61,6 +65,14 @@ export function trashDuplicate(trackId) {
 
 export function restoreDuplicate(trackId) {
   return post(`/library/track/${trackId}/restore`, {});
+}
+
+export function listTrash({ limit, offset } = {}) {
+  return get(`/library/trash${qs({ limit, offset })}`);
+}
+
+export function restoreFromTrash(relPath) {
+  return post('/library/trash/restore', { relPath });
 }
 
 export function getFixCandidates(trackId) {
