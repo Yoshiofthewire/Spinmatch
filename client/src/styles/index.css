@@ -229,18 +229,6 @@ button:disabled {
   cursor: default;
 }
 
-.metube-button {
-  padding: 0.4rem 0.8rem;
-  font-size: 0.8rem;
-  background: transparent;
-  border: 1px solid var(--lock);
-  color: var(--lock);
-}
-
-.metube-button:hover:not(:disabled) {
-  background: rgba(47, 217, 196, 0.12);
-}
-
 .copy-button {
   padding: 0.4rem 0.8rem;
   font-size: 0.8rem;
@@ -355,9 +343,7 @@ button:disabled {
   padding: 0;
   background: none;
   border: none;
-  /* The global button rule sets near-black text for the signal-filled default
-     button; these cards drop that background, so they need the body colour back
-     or the album title renders almost invisibly against the dark surface. */
+  /* No signal background here, so restore body text colour or the title vanishes. */
   color: var(--text);
   text-align: left;
   transition: transform 0.15s ease;
@@ -379,6 +365,15 @@ button:disabled {
 .album-card:hover .cover-art {
   border-color: var(--signal);
   box-shadow: 0 8px 24px -8px rgba(255, 90, 70, 0.35);
+}
+
+/* Navigating rows/cards are links (new-tab support) but keep the card look. */
+a.result-row,
+a.album-card,
+a.result-row:hover,
+a.album-card:hover {
+  color: var(--text);
+  text-decoration: none;
 }
 
 .album-title {
@@ -403,6 +398,11 @@ table {
   width: 100%;
   border-collapse: collapse;
   margin-bottom: 2rem;
+}
+
+/* Wide tables scroll sideways on narrow screens instead of pushing the page wide. */
+.table-scroll {
+  overflow-x: auto;
 }
 
 th, td {
@@ -482,10 +482,7 @@ tbody tr:hover {
   font-weight: 600;
 }
 
-/* Context about how a result is shaped, not a report that something failed —
-   the ListenBrainz-popularity-unavailable line in SuggestPanel is the reason
-   this exists, and is also currently the normal state (the upstream endpoint
-   answers 500), so it deliberately reads calmer than banner-rate-limited. */
+/* Informational, not an error: ListenBrainz popularity is normally down (upstream 500s). */
 .banner-note {
   background: rgba(47, 217, 196, 0.08);
   border-color: rgba(47, 217, 196, 0.2);
@@ -625,8 +622,7 @@ a:hover {
   color: var(--muted);
 }
 
-/* The fingerprint half of the tag-repair panel: an opt-in button, and the
-   opt-in-again checkbox that lets its matches replace existing tags. */
+/* Tag-repair fingerprint opt-in, plus the checkbox letting matches overwrite tags. */
 .fix-fingerprint {
   display: flex;
   align-items: center;
@@ -893,8 +889,7 @@ a:hover {
 }
 
 .library-toolbar input[type="search"] {
-  /* Shrinkable, and no grow: the input taking all the slack pushed the result
-     count off the right edge. */
+  /* No grow, so the result count isn't pushed off the edge. */
   flex: 0 1 260px;
   min-width: 140px;
   padding: 0.55rem 0.85rem;
@@ -1067,9 +1062,7 @@ a:hover {
   );
 }
 
-/* A suggestion from listening data rather than the relationship graph. Distinct
-   from badge-confirmed so "sounds like" and "sounds like + member of band" don't
-   read as the same claim at a glance. */
+/* Listening-data suggestion; distinct from badge-confirmed (relationship graph). */
 .badge-similar {
   background: rgba(140, 130, 255, 0.15);
   color: #a99cff;
@@ -1090,7 +1083,8 @@ a:hover {
 }
 
 .playlist-input:focus {
-  outline: none;
+  outline: 2px solid var(--lock);
+  outline-offset: 2px;
   border-color: var(--lock);
 }
 
@@ -1156,9 +1150,11 @@ a:hover {
   margin-top: 0.75rem;
 }
 
-.playlist-delete-confirm {
+.playlist-delete-confirm,
+.inline-confirm {
   display: inline-flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 0.5rem;
 }
 
@@ -1179,14 +1175,13 @@ a:hover {
   white-space: nowrap;
 }
 
-/* A track's provenance within a playlist — how it got there, distinct from
-   the confirmed/unverified/none vocabulary badge-* otherwise carries. */
+/* How a track got into a playlist; separate from the badge-* verify vocabulary. */
 .badge-source {
   background: rgba(148, 143, 160, 0.15);
   color: var(--muted);
 }
 
-/* ---------- Add tracks to a playlist (Task 9b) ---------- */
+/* ---------- Add tracks to a playlist ---------- */
 
 .add-tracks-panel {
   margin-top: 1.5rem;
@@ -1216,8 +1211,6 @@ a:hover {
   max-width: 28rem;
 }
 
-/* Label to the left, control to the right — the same shape TagEditPanel's
-   .tag-edit-row already uses for a form field. */
 .suggest-field {
   display: flex;
   align-items: center;
@@ -1315,9 +1308,7 @@ a:hover {
   gap: 0.75rem;
 }
 
-/* A track row's own picker, e.g. the Tracks tab or a release tracklist. Needs
-   its own stacking context: the menu pops out over the table row beneath it,
-   not inside the cell's own layout flow. */
+/* Per-row picker; own stacking context so the menu overlays the row beneath. */
 .add-to-playlist {
   position: relative;
   display: inline-block;
@@ -1381,23 +1372,18 @@ a:hover {
   font-size: 0.85rem;
 }
 
-/* A value that would be written, as against one already on the file. The
-   distinction is the whole point of the preview, so it carries colour and weight
-   rather than relying on position in the row. */
+/* A value that would be written, vs. one already on the file. */
 .bulk-fix-fill {
   color: var(--lock);
   font-weight: 600;
 }
 
-/* A file the proposal wouldn't change. Still listed, so the table accounts for
-   the whole album rather than only its holes. */
+/* Unchanged file; still listed so the table covers the whole album. */
 .bulk-fix-unchanged td {
   opacity: 0.55;
 }
 
-/* The repair panel opens as a row of the table, directly under the track it
-   belongs to, so the connection between the button and what it opened is
-   visible without scrolling. */
+/* Repair panel opens as a table row directly under its track. */
 .track-row-panel > td {
   padding: 0;
   background: var(--surface);
@@ -1410,8 +1396,7 @@ a:hover {
   border-radius: 0;
 }
 
-/* A track that has just been repaired, held in place until the list refetches so
-   the fix is visibly attributed to the row it happened on. */
+/* Just-repaired track, held in place until the list refetches. */
 .track-row-fixed td {
   color: var(--muted);
   background: rgba(47, 217, 196, 0.06);
@@ -1550,12 +1535,33 @@ a:hover {
   .player-time { display: none; }
   .album-detail-header { flex-direction: column; }
   .album-detail-header .cover-art { width: 140px; height: 140px; }
+
+  .app { padding: 0 1rem 4rem; }
+  .app-header { padding: 1.75rem 0 1.25rem; }
+  .app-nav { flex-wrap: wrap; gap: 0.5rem 1rem; }
+
+  /* Header and form rows wrap rather than overflow. */
+  .bulk-verify-actions,
+  .search-box,
+  .playlist-create-form,
+  .playlist-rename-form,
+  .ingest-candidate-search,
+  .library-scan,
+  .library-back {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+  .search-box input,
+  .playlist-create-form input,
+  .playlist-rename-form input,
+  .ingest-candidate-search input {
+    min-width: 0;
+  }
 }
 
 /* ---------- Library: health drill-down, duplicates, rescan ---------- */
 
-/* The Health tiles double as filters, so they need the affordances a plain tile
-   doesn't: a pointer, a hover state, and a disabled look when the count is 0. */
+/* Health tiles double as filters. */
 .stat-tile-button {
   text-align: left;
   cursor: pointer;
@@ -1581,18 +1587,14 @@ a:hover {
   color: var(--signal);
 }
 
-/* A file with no title tag has nothing else to identify it, so the path is shown
-   instead — on its own line, since paths are long. */
+/* Untitled files show their path instead, on its own line. */
 .fix-path {
   display: block;
   font-size: 0.72rem;
   word-break: break-all;
 }
 
-/* Play button and path on one line in the repair panel. The path wraps at any
-   character (it can be long and has no spaces), so the button is kept from
-   being squashed by the wrap and stays aligned with the first line rather than
-   floating against the middle of a three-line path. */
+/* Path wraps anywhere; keep the play button unsquashed and top-aligned. */
 .fix-identify {
   display: flex;
   align-items: flex-start;
@@ -1625,19 +1627,14 @@ a:hover {
   flex-wrap: wrap;
 }
 
-/* Paths are the whole point of this table — allow them to wrap rather than
-   forcing the table wide enough to push the other columns off screen. */
+/* Let paths wrap so the other columns stay on screen. */
 .duplicate-path {
   font-size: 0.72rem;
   word-break: break-all;
   max-width: 28rem;
 }
 
-/* A copy that has been moved aside stays on screen rather than vanishing: a row
-   that disappears the instant it is clicked offers nothing to undo and no
-   confirmation of what happened. Dimmed rather than struck through — the path
-   in that row is the file's new home, not a dead link, and striking it out
-   would say the opposite of what happened. */
+/* Moved-aside copy stays visible, dimmed not struck: its path is the new home. */
 .duplicate-copy-trashed {
   opacity: 0.55;
 }
@@ -1655,8 +1652,7 @@ a:hover {
 
 /* ---------- Manual tag editing ---------- */
 
-/* Shares the panel shell with the repair pickers, so opening either from a track
-   row looks like the same kind of thing. */
+/* Shares the repair pickers' panel shell. */
 .tag-edit-panel {
   padding: 1rem;
 }
@@ -1674,9 +1670,7 @@ a:hover {
   margin-bottom: 0.85rem;
 }
 
-/* Label, input, then whatever the row currently means. The consequence text sits
-   on the same line as the field it describes — read as a column of warnings under
-   the form it would be attached to nothing. */
+/* Label, input, consequence — on one line so the warning stays with its field. */
 .tag-edit-row {
   display: flex;
   align-items: center;
@@ -1701,38 +1695,30 @@ a:hover {
   min-width: 5rem;
 }
 
-/* What this row will do if saved. Same colour as a bulk-fix proposal, because it
-   is the same kind of statement: this value is going to be written. */
+/* Value to be written; same colour as a bulk-fix proposal. */
 .tag-edit-change {
   color: var(--lock);
   font-weight: 600;
 }
 
-/* An overwrite of a value that was already there, and an album-wide field that
-   applies to every selected file. Both destroy something, so they don't get to
-   look like the benign case of filling a blank. */
+/* Overwrites and album-wide writes destroy data; don't style them as benign. */
 .tag-edit-destructive {
   color: var(--signal);
 }
 
-/* A field blanked out. Editing cannot remove a tag, so this says the value was
-   kept — stated on the row rather than left for the user to discover when the
-   value reappears after saving. */
+/* Blanked field: editing can't remove a tag, so say the value is kept. */
 .tag-edit-kept {
   color: var(--signal);
   font-style: italic;
 }
 
-/* An album-wide field whose tracks disagree, so there is no single current value
-   to show and the box starts empty. */
+/* Album-wide field whose tracks disagree: no single current value. */
 .tag-edit-varies {
   color: var(--muted);
   font-style: italic;
 }
 
-/* The last thing before the write. Nothing in this app can be undone, and this is
-   the one path whose values came from a keyboard rather than a lookup, so the
-   pending changes get read back in plain words. */
+/* Read-back before an irreversible write of hand-typed values. */
 .tag-edit-confirm {
   padding: 0.85rem 1rem;
   margin-bottom: 0.85rem;

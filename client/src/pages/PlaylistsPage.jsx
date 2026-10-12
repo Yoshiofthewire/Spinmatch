@@ -1,16 +1,16 @@
+import { useTitle } from '../lib/useTitle.js';
 import { useCallback, useEffect, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import EqualizerLoader from '../components/EqualizerLoader.jsx';
+import ErrorBanner from '../components/ErrorBanner.jsx';
 import PlaylistDetail from '../components/playlist/PlaylistDetail.jsx';
 import PlayerBar from '../components/library/PlayerBar.jsx';
 import { listPlaylists, createPlaylist } from '../api/playlists.js';
 import { formatBytes } from '../lib/format.js';
 
-// Which playlist is open lives in the query string, not component state —
-// the same reason LibraryPage keeps its tab/artist/album there: it's what
-// makes the browser Back button step out of a playlist instead of leaving
-// the page entirely.
+// Open playlist lives in the query string so Back steps out of it.
 export default function PlaylistsPage() {
+  useTitle('Playlists');
   const [params, setParams] = useSearchParams();
   const selectedId = params.get('id');
 
@@ -37,9 +37,7 @@ export default function PlaylistsPage() {
   }, []);
 
   useEffect(() => {
-    // Only the list view needs this data; skip it while a playlist is open so
-    // going back and forth doesn't refetch on every click into the detail
-    // view (PlaylistDetail loads its own copy).
+    // List view only; PlaylistDetail loads its own.
     if (!selectedId) load();
   }, [selectedId, load]);
 
@@ -102,7 +100,7 @@ export default function PlaylistsPage() {
           </form>
           {createError && <p className="banner banner-error">{createError}</p>}
 
-          {error && <p className="banner banner-error">{error}</p>}
+          {error && <ErrorBanner message={error} onRetry={load} />}
           {state === 'loading' && <EqualizerLoader label="Loading playlists…" />}
 
           {state === 'ready' && (playlists.length === 0 ? (
@@ -122,9 +120,9 @@ export default function PlaylistsPage() {
                 {playlists.map((p) => (
                   <tr key={p.id}>
                     <td>
-                      <button type="button" className="link-button" onClick={() => openPlaylist(p.id)}>
+                      <Link className="link-button" to={`?id=${p.id}`}>
                         {p.name}
-                      </button>
+                      </Link>
                     </td>
                     <td className="mono">{p.itemCount}</td>
                     <td className="mono">{p.gapCount > 0 ? p.gapCount : <span className="muted">0</span>}</td>

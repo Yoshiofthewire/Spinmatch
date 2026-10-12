@@ -1,22 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-// The SQLite index lives on a bind-mounted volume, and the container runs as an
-// unprivileged uid. A directory created by an older root-owned container is
-// owned by root, and the new uid cannot create the -wal/-shm files WAL mode
-// needs — so openDb() threw on the first request that touched the database, and
-// because getDb() is lazy that surfaced as every route answering "Internal
-// server error" with the real cause buried in the log. A login screen that
-// 500s tells the operator nothing about a volume's ownership.
-//
-// Checked at boot instead, and reported as one line naming the path, the uid
-// the process is actually running as, who owns the directory, and the command
-// that fixes it.
-//
-// Writability is tested by writing, not by fs.accessSync: access() answers for
-// the classic uid/gid bits and is wrong under ACLs, read-only mounts, and root
-// (for whom W_OK is always true even on a read-only filesystem). The only
-// reliable question is whether a file can actually be created.
+// Boot-time check that the DB volume is writable by our uid, with an actionable fix.
+// Probe by writing: access(W_OK) is wrong under ACLs, read-only mounts, and root.
 function canWriteInto(dir) {
   const probe = path.join(dir, `.spinmatch-write-test-${process.pid}`);
   try {
@@ -29,15 +15,11 @@ function canWriteInto(dir) {
 }
 
 function identity() {
-  // getuid is POSIX-only; on Windows there is no uid to report.
+  // getuid is POSIX-only.
   return process.getuid ? `uid ${process.getuid()}:gid ${process.getgid()}` : 'this user';
 }
 
-// Two different failures wear the same symptom, and they have opposite fixes.
-// Someone else owns it — the upgraded-from-root case — needs a chown. A
-// directory this uid already owns but cannot write is a mode problem, and
-// telling the operator to chown something they already own sends them round in
-// a circle. So the diagnosis names whichever one is actually true.
+// Owned by someone else -> chown; owned by us but unwritable -> chmod.
 function diagnose(target) {
   let owner = null;
   try {
@@ -61,18 +43,13 @@ function diagnose(target) {
   };
 }
 
-/**
- * @param {string} dbPath — the configured LIBRARY_DB path
- * @returns {string|null} a message to log and die on, or null when all is well
- */
+// Returns an error message to die on, or null.
 export function dbWritabilityError(dbPath) {
-  // ':memory:' is what the tests open, and it touches no filesystem at all.
   if (!dbPath || dbPath === ':memory:') return null;
 
   const dir = path.dirname(dbPath);
 
-  // openDb() does this same mkdir, so creating it here changes nothing about a
-  // healthy start — it just moves the failure into a message that explains it.
+  // Same mkdir openDb() does; here it fails with an explanation.
   try {
     fs.mkdirSync(dir, { recursive: true });
   } catch (err) {
@@ -88,8 +65,7 @@ export function dbWritabilityError(dbPath) {
       + `when the database file itself is readable.\n${fix}`;
   }
 
-  // The directory is writable (the probe above passed) but the database in it is
-  // not — a file left behind by a container that ran as a different uid.
+  // Writable dir, but the file may be left over from a different uid.
   if (fs.existsSync(dbPath)) {
     try {
       fs.closeSync(fs.openSync(dbPath, 'r+'));
@@ -102,7 +78,6 @@ export function dbWritabilityError(dbPath) {
   return null;
 }
 
-// Called from index.js at startup, alongside assertRequiredConfig.
 export function assertDbWritable(dbPath) {
   const message = dbWritabilityError(dbPath);
   if (message) {

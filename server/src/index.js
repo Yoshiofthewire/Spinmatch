@@ -10,9 +10,7 @@ import { rebaseTrackPaths } from './services/libraryRepo.js';
 import path from 'node:path';
 
 assertRequiredConfig();
-// Before anything opens a connection. getDb() is lazy, so without this a volume
-// the process cannot write turns into a 500 on every request instead of a
-// message saying which directory is wrong and who owns it.
+// Fail at boot with a clear message, not a 500 per request from the lazy getDb().
 assertDbWritable(config.library.dbPath);
 
 // Migrate on the main thread before the scan worker opens its own connection.
@@ -25,36 +23,15 @@ if (!adminExists(db)) {
   console.log(`First-run setup token: ${issueSetupToken()}`);
 }
 
-// Log and exit, not log and continue.
-//
-// This used to swallow uncaught exceptions on the reasoning that a self-hosted
-// server shouldn't die over a stray filesystem error. The problem is what
-// "continuing" means: an uncaught exception is a function that stopped
-// mid-execution, which for this app is a half-written tag, a transaction that
-// never committed, or a scan that will markRemoved half the library. Carrying on
-// from there does more damage than stopping.
-//
-// It was also actively hiding a bug. An FSWatcher emitting 'error' with no
-// listener throws, so inotify exhaustion on a large library landed here, printed
-// one line, and left the watcher permanently dead with the app reporting itself
-// healthy. That watcher now handles its own errors (librarySync.js) — but the
-// general lesson is that a global swallow turns every unhandled failure into a
-// silent one.
-//
-// Exiting non-zero is the correct signal: the container's HEALTHCHECK and its
-// restart policy exist precisely to bring the process back cleanly.
+// Uncaught exception: state may be half-written, so exit non-zero and let the
+// container restart policy recover. No graceful shutdown; just let the log flush.
 function fatal(label, err) {
   console.error(`${label}:`, err);
-  // Give the log a tick to flush, then go. Not a graceful shutdown — the process
-  // state is by definition untrustworthy at this point.
   setTimeout(() => process.exit(1), 100).unref();
 }
 
 process.on('uncaughtException', (err) => fatal('Uncaught exception', err));
-// A rejection with no handler is the same class of bug, but it has not
-// necessarily corrupted anything — the promise simply had no catch. Logged
-// loudly and survived, so a missing `.catch()` in one route doesn't take down a
-// server that is otherwise fine.
+// A missing .catch() hasn't necessarily corrupted anything: log and survive.
 process.on('unhandledRejection', (reason) => {
   console.error('Unhandled promise rejection (continuing):', reason);
 });
@@ -70,20 +47,8 @@ const server = app.listen(config.port, () => {
   }
 });
 
-// Graceful shutdown: stop the scan timer/watcher, terminate a scan worker that
-// may be blocked in a filesystem call, and drain in-flight HTTP.
-//
-// The grace period is not a promise that nothing is ever cut off. An ingest run
-// is minutes of rate-limited lookups and file moves, and no shutdown budget
-// covers that — the previous comment here claimed `docker stop` wouldn't "sever
-// a request mid-file-move" while the code exited after ten seconds flat, which
-// is a claim the code never kept.
-//
-// What it does instead: give an ingest a longer (still bounded) window to reach
-// a file boundary, say plainly in the log when it is being cut short, and leave
-// the rest at the short budget. Ingest is restartable — an interrupted run
-// leaves tagged-but-unmoved files that the next run picks up — so the honest
-// answer is to bound the wait and report it, not to pretend it can't happen.
+// Graceful shutdown: stop sync, terminate the scan worker, drain HTTP. Bounded:
+// an in-flight ingest gets longer but may still be cut off (the next run resumes it).
 const DRAIN_TIMEOUT_MS = 10_000;
 const INGEST_DRAIN_TIMEOUT_MS = 60_000;
 

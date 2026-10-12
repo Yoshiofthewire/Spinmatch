@@ -1,10 +1,5 @@
-// The outcome of a write across several files, for the two panels that do one:
-// BulkFixPanel (repair) and AlbumTagEditPanel (manual edit).
-//
-// The failed list is the part that matters and the part that is easy to leave
-// out. Neither run stops at the first unwritable file, so without it "Wrote 12
-// files" out of 14 selected reads as complete success. The messages come from
-// describeFailure on the server and carry no absolute paths.
+// Multi-file write outcome. Writes don't stop at a failure, so always list the
+// failed files (server messages carry no absolute paths).
 export default function WriteResultBanner({ result, verb = 'Wrote', nothingLabel }) {
   const applied = result.applied?.length ?? 0;
   const failed = result.failed ?? [];

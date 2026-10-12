@@ -172,7 +172,7 @@ The Library page has eight tabs:
   is there while the page is open; after that, moving the file back by hand is easy, because the
   trash mirrors your library.
 - **Discover** — the one view that looks outward. It shows artists and records connected to the ones
-  that you own the most of, and it rebuilds a playlist. See [Discovery](#discovery).
+  that you own the most of. See [Discovery](#discovery).
 
 Beside the **Rescan library** button, each artist page and album page has a **Rescan this
 artist/album** action. That action re-reads only those directories, which is useful directly after
@@ -366,10 +366,8 @@ There are three ways to add tracks to a playlist:
 - **From the library.** Every row on the Tracks tab, and every row of an album's tracklist, has an
   **Add to playlist** button. You already named the track, so there is nothing to review.
 - **From a pasted list.** The playlist's **Paste** tab takes one track per line, as `Artist - Title`
-  or as a title alone, and matches each line against the index. This is the same reconstruction that
-  used to live in the Discover tab, moved here because a match now lands directly in the playlist
-  you're building instead of a page with nowhere to put it. It works offline: it matches against your
-  files only and makes no MusicBrainz or ListenBrainz request. A line that matches nothing can still
+  or as a title alone, and matches each line against the index. It works offline: it matches against
+  your files only and makes no MusicBrainz or ListenBrainz request. A line that matches nothing can still
   be added — it becomes a gap. See below.
 - **From discovery.** The playlist's **Suggest** tab proposes tracks the way [Find similar
   artists](#discovery) does: pick one or more artists that you already own, and Spinmatch draws
@@ -408,8 +406,8 @@ decode the audio stream, so the file is damaged, not merely untagged.
 ### Gaps
 
 A playlist can hold a track that you do not own. A row with no local file behind it shows as a gap,
-with a **Find this track** link into a Search for it — a pasted line that matched nothing, and a
-discovery pick you added anyway, both take this shape.
+with a **Find this track** link into a Search for it. A pasted line that matched nothing takes this
+shape, and so does a track whose file has since left the library.
 
 A gap fills itself in once a matching file lands in your library, with nothing further to do. A
 playlist item stores its artist and title as text, not a reference to a specific file, and every read
@@ -773,10 +771,10 @@ they do, and for what happens when they are wrong.
 npm test
 ```
 
-This runs the backend test suite on the built-in test runner of Node. The `MockAgent` of `undici`
-mocks MusicBrainz, and the built-in method mocking of `node:test` replaces the `yt-dlp` calls. The
-suite makes no live network request. There are no automated frontend tests. To verify a change to
-the UI, run `npm run dev` and test it in a browser.
+This runs the server suite (Node's built-in test runner), then the client suite (Vitest with
+Testing Library in jsdom). Neither makes a live network request: `undici`'s `MockAgent` stands in for
+MusicBrainz, `yt-dlp` calls are mocked, and the client stubs `fetch`. Run one suite with
+`npm run test -w server` or `npm run test:run -w client`.
 
 ## License
 

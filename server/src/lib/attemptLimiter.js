@@ -1,7 +1,5 @@
-// Fixed-window, per-key attempt limiter for unauthenticated auth routes, so a
-// bad actor can't hammer /auth/login as a password-guessing (and hash-CPU)
-// oracle. In-memory is fine for a single-instance self-hosted app; expired
-// entries are pruned opportunistically so the map can't grow unbounded.
+// Fixed-window, per-key limiter for auth routes (password guessing, hash CPU).
+// In-memory: single instance. Expired entries pruned opportunistically.
 export function createAttemptLimiter({ max, windowMs, now = () => Date.now() }) {
   const hits = new Map();
 

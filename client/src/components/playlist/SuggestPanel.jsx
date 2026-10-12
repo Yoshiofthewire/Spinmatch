@@ -3,17 +3,11 @@ import { getLibraryArtists } from '../../api/library.js';
 import { suggestPlaylistTracks, addPlaylistItems } from '../../api/playlists.js';
 import { formatDuration, formatBytes } from '../../lib/format.js';
 
-// The sampler's own defaults (playlistFill.js MIN_DURATION_MS/MAX_DURATION_MS),
-// duplicated here rather than fetched: the server already applies them when a
-// request omits minMs/maxMs, so this only has to pre-fill the form with the
-// same numbers, converted to units a person would type.
+// Mirrors playlistFill.js MIN/MAX_DURATION_MS, only to pre-fill the form.
 const DEFAULT_MIN_MS = 60_000;
 const DEFAULT_MAX_MS = 720_000;
 
-// Plain language for the sampler's four stop conditions (playlistFill.js).
-// 'cap' and 'budget' are two different ways of saying "there was more to draw
-// from, but a limit was reached first" — spelling out *which* limit is the
-// whole value of this line, since either one reads as a bug from a bare count.
+// The sampler's stop conditions (playlistFill.js); name which limit was hit.
 function stopReasonText(result, target) {
   const n = result.picked.length;
   const of = target != null ? ` of ${target}` : '';
@@ -30,16 +24,13 @@ function stopReasonText(result, target) {
   }
 }
 
-// Search-as-you-type over owned artists, with the chosen seeds shown as
-// removable chips. Deliberately restricted to picking from the results rather
-// than accepting free text: a seed the sampler can't resolve to a library
-// artist just comes back with zero neighbours, which reads as a bug rather
-// than a typo.
+// Pick-only, no free text: an unresolvable seed silently yields zero neighbours.
 function SeedPicker({ seeds, onAdd, onRemove }) {
   const [query, setQuery] = useState('');
   const [debounced, setDebounced] = useState('');
   const [matches, setMatches] = useState([]);
   const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState(null);
 
   useEffect(() => {
     const timer = setTimeout(() => setDebounced(query.trim()), 250);
@@ -47,6 +38,7 @@ function SeedPicker({ seeds, onAdd, onRemove }) {
   }, [query]);
 
   useEffect(() => {
+    setSearchError(null);
     if (!debounced) {
       setMatches([]);
       return undefined;
@@ -58,7 +50,11 @@ function SeedPicker({ seeds, onAdd, onRemove }) {
         if (cancelled) return;
         setMatches(r.artists.filter((a) => !seeds.includes(a.artist)));
       })
-      .catch(() => { if (!cancelled) setMatches([]); })
+      .catch((err) => {
+        if (cancelled) return;
+        setMatches([]);
+        setSearchError(err.message);
+      })
       .finally(() => { if (!cancelled) setSearching(false); });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `seeds` only filters the already-fetched list; refetching on every pick would be wasted round trips
@@ -77,6 +73,7 @@ function SeedPicker({ seeds, onAdd, onRemove }) {
         />
       </label>
       {searching && <span className="muted">Searching…</span>}
+      {searchError && <p className="banner banner-error" role="alert">{searchError}</p>}
       {matches.length > 0 && (
         <ul className="suggest-seed-matches">
           {matches.map((a) => (
@@ -108,13 +105,7 @@ function SeedPicker({ seeds, onAdd, onRemove }) {
   );
 }
 
-// Discovery's proposal step: pick artists you own, draw tracks from the
-// artists connected to them that you also own (collectNeighbours, the same
-// signals the Discover tab uses), and review before anything is written.
-//
-// The suggest call itself writes nothing — POST /suggest is read-only by
-// contract — so everything below the form is a client-side draft. Nothing
-// reaches the playlist until "Add selected" runs.
+// POST /suggest is read-only; nothing is written until "Add selected".
 export default function SuggestPanel({ playlistId, onAdded }) {
   const [seeds, setSeeds] = useState([]);
   const [method, setMethod] = useState('popular'); // 'popular' | 'random'
@@ -127,10 +118,7 @@ export default function SuggestPanel({ playlistId, onAdded }) {
   const [state, setState] = useState('idle'); // idle | loading | ready | error
   const [result, setResult] = useState(null);
   const [submittedTarget, setSubmittedTarget] = useState(null);
-  // The method that actually produced `result` — kept separate from the live
-  // `method` radio so flipping Popular/Chance after a fetch, without
-  // resubmitting, can't relabel a result's provenance or its Reshuffle
-  // availability out from under it.
+  // Method that produced `result`; flipping the radio afterwards must not relabel it.
   const [submittedMethod, setSubmittedMethod] = useState(null);
   const [error, setError] = useState(null);
 
@@ -197,11 +185,7 @@ export default function SuggestPanel({ playlistId, onAdded }) {
         .filter((_, i) => selected.has(i))
         .map((p) => ({
           artist: p.artist, title: p.title, album: p.album,
-          // The method that produced a pick IS its source — 'popular' or
-          // 'random' — the same vocabulary PlaylistDetail's SOURCE_LABELS
-          // already renders as Popular/Chance. Read from submittedMethod, not
-          // the live radio, so flipping it after the fetch can't mislabel
-          // what's on screen.
+          // The producing method is the source (see PlaylistDetail SOURCE_LABELS).
           source: submittedMethod,
           seedArtist: p.seedArtist,
         }));
@@ -279,9 +263,7 @@ export default function SuggestPanel({ playlistId, onAdded }) {
           />
         </label>
 
-        {/* preferPopular only changes anything for Chance — for Popular the
-            fill is already strict popularity order (playlistFill.js orderFor),
-            so the toggle would be a no-op that still looked like a choice. */}
+        {/* Popular is already popularity-ordered; the toggle only affects Chance. */}
         {method === 'random' && (
           <label className="suggest-checkbox">
             <input
@@ -336,9 +318,7 @@ export default function SuggestPanel({ playlistId, onAdded }) {
           <p className="muted">{stopReasonText(result, submittedTarget)}</p>
           {cap != null && <p className="muted">At most {cap} per artist.</p>}
 
-          {/* This is the normal state right now — MetaBrainz's popularity
-              endpoint answers 500 — so it reads as a note about how the list
-              is ordered, not as a red "something broke" banner. */}
+          {/* Normal for now (upstream popularity endpoint 500s), so a note, not an error. */}
           {result.popularity === 'unavailable' && (
             <p className="banner banner-note">
               ListenBrainz popularity is unavailable, so these are ordered by release date instead.
@@ -396,8 +376,7 @@ export default function SuggestPanel({ playlistId, onAdded }) {
                 <button type="button" onClick={addSelected} disabled={selected.size === 0 || adding}>
                   {adding ? 'Adding…' : `Add selected (${selected.size})`}
                 </button>
-                {/* Popular's order is deterministic — re-posting would return the
-                    same list, so a reshuffle only means something for Chance. */}
+                {/* Popular is deterministic; reshuffle only for Chance. */}
                 {submittedMethod === 'random' && (
                   <button
                     type="button"

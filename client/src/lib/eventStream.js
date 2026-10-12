@@ -1,24 +1,9 @@
-// Reads a server-sent-events endpoint with `fetch` instead of `EventSource`.
-//
-// EventSource is the obvious tool and it hides the one thing you need when a
-// stream won't start: it reports a failed handshake as a bare `error` event with
-// no status, no body, and no way to ask. Every pre-stream failure therefore
-// looked identical in the UI — a 400 from the CSRF guard, a 401 from an expired
-// session, a 502 from a proxy — which is exactly how an install that answered
-// 400 to every stream on a plain-HTTP LAN address stayed a mystery instead of
-// reading "This endpoint requires a Sec-Fetch-Site, Origin, or Referer header".
-//
-// Two other EventSource behaviours are wrong for these streams and go away with
-// it: a server-sent event *named* `error` arrives on the same listener as a
-// transport error (so the two had to be told apart by whether `.data` existed),
-// and a stream cut off mid-run is silently reconnected — restarting a
-// multi-minute rate-limited run from the top rather than reporting it.
-//
-// Resolves when the server closes the stream. Rejects if it never opened, or if
-// the connection drops, or on abort.
+// Reads SSE with `fetch`, not `EventSource`: EventSource hides a failed handshake's
+// status and body, conflates a server event named `error` with transport errors,
+// and silently reconnects, restarting long rate-limited runs.
+// Resolves on server close; rejects if never opened, on drop, or on abort.
 
-// One SSE frame -> one handler call. Comment lines (the server's `: keep-alive`
-// heartbeat) carry no fields and fall out here.
+// One SSE frame -> one handler call. `: keep-alive` comment lines fall out.
 function dispatch(frame, handlers) {
   let event = 'message';
   const data = [];
@@ -37,15 +22,11 @@ function dispatch(frame, handlers) {
   handler(data.length ? JSON.parse(data.join('\n')) : undefined);
 }
 
-// The reason a stream never started, in words a user can act on. The server's
-// own JSON error message is preferred over anything invented here; the status is
-// kept because "which 400" is the operator's next question.
+// Why a stream never started; prefers the server's message, keeps the status.
 async function openFailed(res) {
   let message;
   let code;
-  // Whatever else the server's error object carries beyond message/code — e.g.
-  // the dropoff export's `existing: { fileCount, exportedAt }` on a 409 — so a
-  // caller that needs it doesn't have to re-read a body already consumed here.
+  // Extra error fields (e.g. a 409's `existing`); the body is consumed here.
   let details;
   try {
     ({ message, code, ...details } = (await res.json()).error ?? {});
@@ -81,8 +62,7 @@ export async function streamEvents(url, handlers, { signal, body } = {}) {
       });
   } catch (err) {
     if (signal?.aborted) throw err;
-    // A bare "Failed to fetch" (or "NetworkError…", depending on the browser) in
-    // a banner tells a user nothing, so say which half of it failed.
+    // "Failed to fetch" says nothing; say which half failed.
     throw Object.assign(
       new Error(`Couldn't reach the server to start the stream (${err.message}).`), { cause: err }
     );
@@ -101,8 +81,7 @@ export async function streamEvents(url, handlers, { signal, body } = {}) {
       chunk = await reader.read();
     } catch (err) {
       if (signal?.aborted) throw err;
-      // Mid-run: the server went away or something between dropped the
-      // connection. Whatever the handlers have already been given still stands.
+      // Mid-run drop; events already handled still stand.
       throw Object.assign(
         new Error(`The connection dropped part-way through the stream (${err.message}).`),
         { cause: err }

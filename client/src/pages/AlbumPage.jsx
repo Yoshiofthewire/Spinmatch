@@ -1,3 +1,4 @@
+import { useTitle } from '../lib/useTitle.js';
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { get } from '../api/client.js';
@@ -13,13 +14,16 @@ export default function AlbumPage() {
   const { libraryEnabled } = useConfig();
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
+  useTitle(data?.release.title || 'Album');
 
   useEffect(() => {
+    let cancelled = false;
     setData(null);
     setError(null);
     get(`/releases/${mbid}/tracks`)
-      .then(setData)
-      .catch(setError);
+      .then((d) => { if (!cancelled) setData(d); })
+      .catch((err) => { if (!cancelled) setError(err); });
+    return () => { cancelled = true; };
   }, [mbid]);
 
   if (error) return <p className="banner banner-error">{error.message}</p>;

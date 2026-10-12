@@ -1,4 +1,4 @@
-import { Fragment, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { get, post } from '../api/client.js';
 import { addEntry } from '../lib/history.js';
 import EqualizerLoader from './EqualizerLoader.jsx';
@@ -18,7 +18,13 @@ export default function IngestPanel() {
   const [error, setError] = useState(null);
   const [processed, setProcessed] = useState(0);
   const doneRef = useRef(false);
+  const esRef = useRef(null);
   const [expandedPath, setExpandedPath] = useState(null);
+  const [confirmProcess, setConfirmProcess] = useState(false);
+  const [scanning, setScanning] = useState(false);
+
+  // Leaving the page mid-run closes the stream rather than leaking it.
+  useEffect(() => () => esRef.current?.close(), []);
 
   function handleResolved(oldItem, resolution) {
     if (resolution.matched) {
@@ -43,14 +49,18 @@ export default function IngestPanel() {
   }
 
   async function handleScan() {
+    setConfirmProcess(false);
     setError(null);
     setResult(null);
     setExpandedPath(null);
+    setScanning(true);
     try {
       const data = await get('/ingest/scan');
       setItems(data.items);
     } catch (err) {
       setError(err);
+    } finally {
+      setScanning(false);
     }
   }
 
@@ -69,6 +79,8 @@ export default function IngestPanel() {
   }
 
   function runProcess({ dryRun }) {
+    // A pending confirm must not start a second stream once this one runs.
+    setConfirmProcess(false);
     setState('running');
     setError(null);
     setProcessed(0);
@@ -82,6 +94,7 @@ export default function IngestPanel() {
     const acc = { matched: [], needsReview: [], dryRun };
     setResult({ matched: [], needsReview: [], dryRun });
     const es = new EventSource(`/api/ingest/process-stream${dryRun ? '?dryRun=1' : ''}`);
+    esRef.current = es;
 
     es.addEventListener('item', (e) => {
       const item = JSON.parse(e.data);
@@ -117,19 +130,41 @@ export default function IngestPanel() {
   }
 
   const isPreview = result?.dryRun === true;
+  const busy = scanning || state === 'running';
 
   return (
     <div className="bulk-verify-panel">
       <div className="bulk-verify-actions">
-        <button onClick={handleScan} disabled={state === 'running'}>Scan ingest folder</button>
+        <button onClick={handleScan} disabled={busy}>
+          {scanning ? 'Scanning…' : 'Scan ingest folder'}
+        </button>
         {items && items.length > 0 && (
           <>
-            <button onClick={() => runProcess({ dryRun: true })} disabled={state === 'running'}>
+            <button onClick={() => runProcess({ dryRun: true })} disabled={busy}>
               Preview {items.length} item{items.length === 1 ? '' : 's'}
             </button>
-            <button onClick={() => runProcess({ dryRun: false })} disabled={state === 'running'}>
-              Process {items.length} item{items.length === 1 ? '' : 's'}
-            </button>
+            {!confirmProcess ? (
+              <button onClick={() => setConfirmProcess(true)} disabled={busy}>
+                Process {items.length} item{items.length === 1 ? '' : 's'}
+              </button>
+            ) : (
+              <span className="inline-confirm">
+                <span className="muted">
+                  Write tags and move {items.length} file{items.length === 1 ? '' : 's'}?
+                </span>
+                <button
+                  type="button"
+                  className="chip-button"
+                  disabled={busy}
+                  onClick={() => runProcess({ dryRun: false })}
+                >
+                  Confirm
+                </button>
+                <button type="button" className="link-button" onClick={() => setConfirmProcess(false)}>
+                  Cancel
+                </button>
+              </span>
+            )}
           </>
         )}
       </div>
@@ -156,68 +191,72 @@ export default function IngestPanel() {
           {result.matched.length === 0 ? (
             <p className="muted">Nothing was confidently matched this run.</p>
           ) : (
-            <table>
-              <thead>
-                <tr>
-                  <th>File</th><th>Title</th><th>Artist</th>
-                  <th>{isPreview ? 'Would fill' : 'Fields filled'}</th>
-                  <th>{isPreview ? 'Would move to' : 'Moved to'}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {result.matched.map((m) => (
-                  <tr key={m.path}>
-                    <td>{m.name}</td>
-                    <td>{m.title}</td>
-                    <td>{m.artist}</td>
-                    <td>{m.filledFields.join(', ') || 'none (already complete)'}</td>
-                    <td className="muted">{m.movedTo || '—'}</td>
+            <div className="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>File</th><th>Title</th><th>Artist</th>
+                    <th>{isPreview ? 'Would fill' : 'Fields filled'}</th>
+                    <th>{isPreview ? 'Would move to' : 'Moved to'}</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {result.matched.map((m) => (
+                    <tr key={m.path}>
+                      <td>{m.name}</td>
+                      <td>{m.title}</td>
+                      <td>{m.artist}</td>
+                      <td>{m.filledFields.join(', ') || 'none (already complete)'}</td>
+                      <td className="muted">{m.movedTo || '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
 
           <h2>Needs review ({result.needsReview.length})</h2>
           {result.needsReview.length === 0 ? (
             <p className="muted">Nothing needs review this run.</p>
           ) : (
-            <table>
-              <thead>
-                <tr><th>File</th><th>Reason</th><th>Action</th></tr>
-              </thead>
-              <tbody>
-                {result.needsReview.map((r) => (
-                  <Fragment key={r.path}>
-                    <tr>
-                      <td>{r.name}</td>
-                      <td className="muted">{r.reason}</td>
-                      <td>
-                        {r.code === 'no_match' && !isPreview && (
-                          <button
-                            type="button"
-                            onClick={() => setExpandedPath(expandedPath === r.path ? null : r.path)}
-                          >
-                            {expandedPath === r.path ? 'Cancel' : 'Find a match'}
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                    {expandedPath === r.path && !isPreview && (
+            <div className="table-scroll">
+              <table>
+                <thead>
+                  <tr><th>File</th><th>Reason</th><th>Action</th></tr>
+                </thead>
+                <tbody>
+                  {result.needsReview.map((r) => (
+                    <Fragment key={r.path}>
                       <tr>
-                        <td colSpan={3}>
-                          <IngestMatchPicker
-                            item={r}
-                            onResolved={(resolution) => handleResolved(r, resolution)}
-                            onCancel={() => setExpandedPath(null)}
-                          />
+                        <td>{r.name}</td>
+                        <td className="muted">{r.reason}</td>
+                        <td>
+                          {r.code === 'no_match' && !isPreview && (
+                            <button
+                              type="button"
+                              onClick={() => setExpandedPath(expandedPath === r.path ? null : r.path)}
+                            >
+                              {expandedPath === r.path ? 'Cancel' : 'Find a match'}
+                            </button>
+                          )}
                         </td>
                       </tr>
-                    )}
-                  </Fragment>
-                ))}
-              </tbody>
-            </table>
+                      {expandedPath === r.path && !isPreview && (
+                        <tr>
+                          <td colSpan={3}>
+                            <IngestMatchPicker
+                              item={r}
+                              onResolved={(resolution) => handleResolved(r, resolution)}
+                              onCancel={() => setExpandedPath(null)}
+                            />
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </>
       )}

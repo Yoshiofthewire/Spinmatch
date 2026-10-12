@@ -18,9 +18,6 @@ const SORTS = [
   ['added', 'Recently added'],
 ];
 
-// Unlike the artist and album tabs, this one queries the server per page: the
-// whole-library track list is tens of thousands of rows, too many to ship and
-// filter in the browser.
 export default function TracksTab({ onPlay }) {
   const [query, setQuery] = useState('');
   const [debounced, setDebounced] = useState('');
@@ -30,8 +27,7 @@ export default function TracksTab({ onPlay }) {
   const [state, setState] = useState('loading'); // loading | ready | error
   const [error, setError] = useState(null);
   const [editing, setEditing] = useState(null); // track id whose panel is open
-  // Bumped after an edit: the row's own values are what changed, so the page has
-  // to be refetched or it keeps showing what was there before.
+  // Bumped after an edit to refetch the page.
   const [reloadToken, setReloadToken] = useState(0);
 
   // Debounced so typing doesn't fire a request per keystroke.
@@ -86,69 +82,71 @@ export default function TracksTab({ onPlay }) {
         <p className="muted">No tracks match that search.</p>
       ) : (
         <>
-          <table className="library-table track-table">
-            <thead>
-              <tr>
-                <th aria-label="Play" />
-                <th>#</th><th>Title</th><th>Artist</th><th>Album</th>
-                <th>Length</th><th>Year</th><th>Format</th>
-                <th aria-label="Add to playlist" />
-                <th aria-label="Edit" />
-              </tr>
-            </thead>
-            <tbody>
-              {tracks.map((t) => (
-                <Fragment key={t.id}>
-                  <tr>
-                    <td>
-                      <button
-                        type="button"
-                        className="play-button"
-                        onClick={() => onPlay(t, tracks)}
-                        aria-label={`Play ${t.title}`}
-                      >
-                        ▶
-                      </button>
-                    </td>
-                    <td className="mono">{t.trackNumber ?? '—'}</td>
-                    <td>{t.title}</td>
-                    <td>{t.artist ?? <span className="muted">Unknown</span>}</td>
-                    <td>{t.album ?? <span className="muted">Unknown</span>}</td>
-                    <td className="mono">{formatDuration(t.durationMs)}</td>
-                    <td className="mono">{t.year ?? '—'}</td>
-                    <td className="mono">{t.ext ?? '—'}</td>
-                    <td>
-                      <AddToPlaylistButton artist={t.artist} title={t.title} album={t.album} />
-                    </td>
-                    <td>
-                      <button
-                        type="button"
-                        className="chip-button"
-                        onClick={() => setEditing(editing === t.id ? null : t.id)}
-                      >
-                        {editing === t.id ? 'Close' : 'Edit tags'}
-                      </button>
-                    </td>
-                  </tr>
-                  {editing === t.id && (
-                    <tr className="track-row-panel">
-                      <td colSpan="10">
-                        <TagEditPanel
-                          track={t}
-                          onSaved={() => {
-                            setEditing(null);
-                            setReloadToken((n) => n + 1);
-                          }}
-                          onCancel={() => setEditing(null)}
-                          onPlay={(track) => onPlay(track, tracks)}
-                        />
+          <div className="table-scroll">
+            <table className="library-table track-table">
+              <thead>
+                <tr>
+                  <th aria-label="Play" />
+                  <th>#</th><th>Title</th><th>Artist</th><th>Album</th>
+                  <th>Length</th><th>Year</th><th>Format</th>
+                  <th aria-label="Add to playlist" />
+                  <th aria-label="Edit" />
+                </tr>
+              </thead>
+              <tbody>
+                {tracks.map((t) => (
+                  <Fragment key={t.id}>
+                    <tr>
+                      <td>
+                        <button
+                          type="button"
+                          className="play-button"
+                          onClick={() => onPlay(t, tracks)}
+                          aria-label={`Play ${t.title}`}
+                        >
+                          ▶
+                        </button>
+                      </td>
+                      <td className="mono">{t.trackNumber ?? '—'}</td>
+                      <td>{t.title}</td>
+                      <td>{t.artist ?? <span className="muted">Unknown</span>}</td>
+                      <td>{t.album ?? <span className="muted">Unknown</span>}</td>
+                      <td className="mono">{formatDuration(t.durationMs)}</td>
+                      <td className="mono">{t.year ?? '—'}</td>
+                      <td className="mono">{t.ext ?? '—'}</td>
+                      <td>
+                        <AddToPlaylistButton artist={t.artist} title={t.title} album={t.album} />
+                      </td>
+                      <td>
+                        <button
+                          type="button"
+                          className="chip-button"
+                          onClick={() => setEditing(editing === t.id ? null : t.id)}
+                        >
+                          {editing === t.id ? 'Close' : 'Edit tags'}
+                        </button>
                       </td>
                     </tr>
-                  )}
-                </Fragment>
-              ))}
-            </tbody>
-          </table>
+                    {editing === t.id && (
+                      <tr className="track-row-panel">
+                        <td colSpan="10">
+                          <TagEditPanel
+                            track={t}
+                            onSaved={() => {
+                              setEditing(null);
+                              setReloadToken((n) => n + 1);
+                            }}
+                            onCancel={() => setEditing(null)}
+                            onPlay={(track) => onPlay(track, tracks)}
+                          />
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                ))}
+              </tbody>
+            </table>
+          </div>
           <Pagination page={page} pageCount={pageCount} onChange={setPage} />
         </>
       ))}

@@ -16,8 +16,7 @@ export function logout() {
   return post('/auth/logout', {});
 }
 
-// Changing the password also signs out every other session — see the server's
-// token_epoch handling. Requires the current password.
+// Also signs out every other session (server token_epoch).
 export function changePassword({ currentPassword, newPassword }) {
   return post('/auth/password', { currentPassword, newPassword });
 }

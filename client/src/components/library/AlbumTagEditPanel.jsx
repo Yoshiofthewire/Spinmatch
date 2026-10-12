@@ -8,22 +8,16 @@ import {
 
 const VARIES = Symbol('varies');
 
-// The one value every track shares, or VARIES if they disagree. A field that
-// varies starts blank: there is no single current value to show, and putting one
-// of them in the box would invite overwriting the rest with it by accident.
+// The shared value, or VARIES. A varying field starts blank so one value can't
+// be accidentally written over the rest.
 function commonValue(tracks, key) {
   if (!tracks.length) return null;
   const first = tracks[0][key] ?? null;
   return tracks.every((t) => (t[key] ?? null) === first) ? first : VARIES;
 }
 
-// Editing a whole album's tags by hand.
-//
-// No preview round-trip, unlike BulkFixPanel. That panel needs one because the
-// SERVER derives the values and you have to see them before they land; here you
-// typed them, so a preview would only read your own form back to you. What stands
-// in for it is the confirm step below, which says what will be written and to how
-// many files.
+// Hand-edit a whole album's tags. No server preview (you typed the values); a
+// confirm step stands in for it.
 export default function AlbumTagEditPanel({ artist, album, tracks, onSaved, onCancel }) {
   const albumCurrent = useMemo(
     () => Object.fromEntries(ALBUM_WIDE_KEYS.map((key) => [key, commonValue(tracks, key)])),
@@ -44,8 +38,7 @@ export default function AlbumTagEditPanel({ artist, album, tracks, onSaved, onCa
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
 
-  // A varying field has no single "original", so anything typed into it is a
-  // change. Everything else compares against the shared value.
+  // Anything typed into a varying field is a change.
   const albumChanges = ALBUM_WIDE_KEYS.filter((key) => (
     albumCurrent[key] === VARIES
       ? albumValues[key].trim() !== ''
@@ -192,10 +185,7 @@ export default function AlbumTagEditPanel({ artist, album, tracks, onSaved, onCa
             })}
           </div>
 
-          {/* Load-bearing, not a disclaimer: nothing outside the ingest path ever
-              moves a file, so the folder keeps its old name — and the file-path
-              repair source reads that folder, so it will keep proposing the name
-              you just changed away from. */}
+          {/* Folders aren't renamed, so the path repair source keeps proposing the old name. */}
           {renaming && (
             <p className="banner banner-error">
               This changes tags only. Spinmatch never moves or renames files, so the folder on
@@ -251,8 +241,7 @@ export default function AlbumTagEditPanel({ artist, album, tracks, onSaved, onCa
                       aria-label={`Title for ${track.title}`}
                       onChange={(e) => setRow(track.id, 'title', e.target.value)}
                     />
-                    {/* Boolean(), because titleSynthesized arrives from SQLite as
-                        0 or 1 — React renders a literal 0 for a false `&&`. */}
+                    {/* Boolean(): SQLite flags are 0/1 and React renders a bare 0. */}
                     {Boolean(track.titleSynthesized) && (
                       <span className="muted"> (from filename)</span>
                     )}

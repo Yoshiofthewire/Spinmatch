@@ -34,9 +34,7 @@ export class RateLimitedError extends Error {
   }
 }
 
-// The request was understood and refused because of the state of things, not
-// because of anything wrong with the request. Used by the duplicate trash to
-// refuse moving aside a track's last live copy.
+// Refused because of current state, not a bad request (e.g. trashing a last live copy).
 export class ConflictError extends Error {
   constructor(message) {
     super(message);

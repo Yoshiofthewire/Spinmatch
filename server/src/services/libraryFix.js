@@ -13,30 +13,18 @@ import { withFileLock } from '../lib/fileLock.js';
 import { NotFoundError, BadRequestError } from '../lib/httpErrors.js';
 import { assertMbid } from '../lib/mbid.js';
 
-// Repairing the tags of a file that is ALREADY in the library. Deliberately not
-// the ingest flow: ingest identifies unknown files and moves them into place,
-// whereas these files are already where they belong. Nothing here moves or
-// renames anything — the only write is to the file's tags.
+// Tag repair for files already in the library. Never moves or renames; only writes tags.
 
 async function trackOrThrow(trackId) {
   const track = getTrackById(getDb(), trackId);
   if (!track) throw new NotFoundError('Track not found');
-  // Same guard the cover and stream routes use: the path comes from our own
-  // index, but it is still re-validated before we open the file for writing.
+  // Re-validate our own indexed path before opening it for writing.
   const real = await assertReadableInsideMusicDir(track.path);
   return { track, real };
 }
 
-// MusicBrainz recordings that plausibly match the file, for a human to pick
-// from. Reuses the ingest picker's candidate source, which searches on whatever
-// tags the file does carry — the useful case being a file that has an artist and
-// title but no album, year, or number.
-//
-// The file's path is passed as a fallback because this is reached from the
-// Health tab, whose rows are by definition files with missing tags: searching
-// MusicBrainz for "the tags this file has" finds nothing when the tags are the
-// thing that's missing. Where the file sits on disk is the metadata those files
-// still carry, so it is what gets searched on instead.
+// Candidate recordings for a human to pick. Path tags are the fallback, since
+// Health rows are by definition files missing tags.
 export async function getFixCandidates(trackId) {
   const { track, real } = await trackOrThrow(trackId);
   const fallback = tagsFromPath(real);
@@ -44,13 +32,7 @@ export async function getFixCandidates(trackId) {
   return { track, candidates, pathTags: fallback };
 }
 
-// The same candidate list, identified by the audio instead of the metadata.
-// Reached from a button rather than on panel open: fingerprinting spawns fpcalc
-// over 120 seconds of audio and spends a rate-limited AcoustID call, which is
-// too much to do for every Health row a user expands.
-//
-// No tag-search fallback when this comes back empty — whoever asked already has
-// the tag/path candidates from getFixCandidates on screen.
+// Candidates by audio fingerprint. On demand only: fpcalc plus a rate-limited AcoustID call.
 export async function getFingerprintCandidates(trackId) {
   if (!config.acoustidApiKey) {
     throw new BadRequestError('AcoustID is not configured on this server');
@@ -60,10 +42,7 @@ export async function getFingerprintCandidates(trackId) {
   return { track, candidates };
 }
 
-// Where this recording sits on its release, so a missing track/disc number can
-// be filled too — that's the Health count the Overview chip surfaces, and the
-// one that actually breaks gap detection. Two cached upstream calls, and only
-// made when the file is in fact missing a number.
+// Track/disc number on the release; missing numbers break gap detection.
 async function positionOnRelease(releaseGroupMbid, recordingMbid) {
   const releaseMbid = await resolvePrimaryReleaseForGroup(releaseGroupMbid);
   if (!releaseMbid) return {};
@@ -72,21 +51,8 @@ async function positionOnRelease(releaseGroupMbid, recordingMbid) {
   return track ? { trackNumber: track.position, disc: track.discNumber } : {};
 }
 
-// Applies one candidate: fills the tags the file is missing and re-indexes it.
-//
-// By default writeTags only writes fields that are currently empty, which is
-// the contract the Health report implies — a "fix" must never overwrite
-// metadata the user already has, only fill the holes it flagged.
-//
-// `overwrite` is the exception the fingerprint path earns: when the audio says
-// the file is a different recording than its tags claim, the existing values
-// are the thing that's wrong and filling holes repairs nothing. The UI only
-// offers it for fingerprint-sourced candidates, and only when explicitly
-// ticked, because nothing here can be undone.
-//
-// `replaceCoverArt` says the same about the picture, and is its own flag: a
-// mis-tagged file usually carries the wrong sleeve too, but plenty of people
-// want the tags corrected and their own artwork kept.
+// Fills only empty tags by default, then re-indexes. `overwrite` (UI: fingerprint
+// candidates, explicit opt-in; irreversible) and `replaceCoverArt` are separate opt-ins.
 export async function applyFix({ trackId, recordingMbid, overwrite = false, replaceCoverArt = false }) {
   assertMbid(recordingMbid, 'recordingMbid');
   const { track, real } = await trackOrThrow(trackId);
@@ -95,28 +61,16 @@ export async function applyFix({ trackId, recordingMbid, overwrite = false, repl
   const releaseGroupMbid = recording.releaseGroups?.[0]?.mbid ?? null;
   const albumTitle = recording.releaseGroups?.[0]?.title ?? null;
 
-  // Fill-only can skip the tracklist for a file that already has a number;
-  // overwriting has to fetch it, since a wrong number is exactly what it's for.
   const position = (overwrite || track.trackNumber == null) && releaseGroupMbid
     ? await positionOnRelease(releaseGroupMbid, recordingMbid)
     : {};
 
-  // Only fetched when there's somewhere for it to go, so a fix on a file that is
-  // already arted costs no Cover Art Archive request unless the art is what's
-  // being replaced.
   const coverImage = (replaceCoverArt || !track.hasCoverArt) && releaseGroupMbid
     ? await getFrontCoverImage(releaseGroupMbid)
     : null;
 
-  // Write and re-index under one lock on this path. Everything above is lookups
-  // and can safely overlap; from here down it is a whole-file rewrite, and two
-  // of those at once corrupts the file rather than losing an edit. A
-  // double-clicked Apply button is enough to produce the overlap, because both
-  // clicks await the same MusicBrainz call and are released together.
-  //
-  // The re-index is inside the lock too: it stats and re-reads the file, and
-  // doing that while the next queued write has already started would index a
-  // half-written file.
+  // Concurrent whole-file rewrites corrupt the file (a double-click does it). Re-index
+  // inside the lock too, or it can read a half-written file.
   const filledFields = await withFileLock(real, async () => {
     const written = await writeTags(real, {
       artist: recording.artist ?? null,

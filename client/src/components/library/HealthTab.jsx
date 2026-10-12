@@ -7,9 +7,7 @@ import { getHealthTracks } from '../../api/library.js';
 
 const PAGE_SIZE = 50;
 
-// `fixable` is what separates a tagging problem from a file problem: a missing
-// duration means the audio stream itself couldn't be decoded, which no amount of
-// tag writing repairs, so that tile doesn't pretend to offer a fix.
+// `fixable`: tag problems only. A missing duration is undecodable audio; tags can't fix it.
 const ISSUES = [
   ['missingArtist', 'No artist tag', true],
   ['missingAlbum', 'No album tag', true],
@@ -26,14 +24,10 @@ function IssueTracks({ issue, fixable, onFixed, onSelectAlbum, onPlay }) {
   const [fixing, setFixing] = useState(null); // track being matched against MusicBrainz
   const [editing, setEditing] = useState(null); // track being edited by hand
   const [fixed, setFixed] = useState({}); // trackId -> filled field list
-  // Bumped after a repair to refetch the current page. A repaired track no
-  // longer matches the issue it was listed under, so without this it sits in the
-  // table looking untouched however many times you fix it.
+  // Bumped after a repair to refetch the page.
   const [reloadToken, setReloadToken] = useState(0);
 
-  // Everything below is scoped to one issue and one page of it: leaving either
-  // has to clear the open panel and the per-track badges too, or a badge keyed
-  // by track id reappears against whatever row reuses that id in the next view.
+  // Scoped to one issue and page; reset on leaving either so stale badges can't reappear.
   useEffect(() => { setPage(1); }, [issue]);
   useEffect(() => {
     setFixing(null);
@@ -61,8 +55,7 @@ function IssueTracks({ issue, fixable, onFixed, onSelectAlbum, onPlay }) {
     onFixed();
   }
 
-  // A hand edit reports the same way, so the row badge reads identically whether
-  // the values came from MusicBrainz or from the keyboard.
+  // Hand edits badge the row the same way as MusicBrainz fixes.
   function handleEdited(result) {
     setFixed((prev) => ({
       ...prev,
@@ -88,29 +81,18 @@ function IssueTracks({ issue, fixable, onFixed, onSelectAlbum, onPlay }) {
         </thead>
         <tbody>
           {data.tracks.map((track) => (
-            /* Fragment rather than a bare <tr> so the repair panel can open as a
-               row of its own directly beneath the one that was clicked. Rendering
-               it after the table instead puts it up to PAGE_SIZE rows below the
-               button, off-screen, which reads as the button doing nothing. */
+            /* Fragment so the repair panel opens as a row right beneath its track. */
             <Fragment key={track.id}>
               <tr className={fixed[track.id] ? 'track-row-fixed' : undefined}>
                 <td>{track.artist ?? <span className="muted">—</span>}</td>
                 <td>
-                  {/* A synthesized value is shown but marked: the scanner fills
-                      album from the folder name and title from the filename when
-                      the tag is empty, so a row listed under "No title tag" does
-                      carry a title — it just isn't one the file claims. Rendering
-                      it as if it were real made the whole category look like a
-                      false positive. */}
+                  {/* Synthesized values (from folder/filename) are shown but marked. */}
                   {track.title
                     ? <span className={track.titleSynthesized ? 'muted' : undefined}>{track.title}</span>
                     : <span className="muted">—</span>}
-                  {/* Boolean(), because the synthesized flags come back from
-                      SQLite as 0 and 1 rather than false and true — and React
-                      renders a literal 0 for the left side of a false `&&`. */}
+                  {/* Boolean(): SQLite flags are 0/1 and React renders a bare 0. */}
                   {Boolean(track.titleSynthesized) && <span className="muted"> (from filename)</span>}
-                  {/* The path is the only identifier an untagged file has, so it
-                      has to be visible for the row to mean anything. */}
+                  {/* The path is an untagged file's only identifier. */}
                   {(!track.title || Boolean(track.titleSynthesized))
                     && <span className="muted mono fix-path">{track.path}</span>}
                 </td>
@@ -140,12 +122,7 @@ function IssueTracks({ issue, fixable, onFixed, onSelectAlbum, onPlay }) {
                         >
                           {fixing?.id === track.id ? 'Close' : 'Fix tags'}
                         </button>
-                        {/* The other way to answer "what is this file?", and often
-                            the faster one here. Every row in this tab is a file
-                            whose tags are missing, which is exactly what the
-                            MusicBrainz search above has nothing to search on — but
-                            you may well be able to read the answer off the sleeve
-                            or the folder and simply type it. */}
+                        {/* Missing tags leave MusicBrainz nothing to search on; typing is often faster. */}
                         <button
                           type="button"
                           className="chip-button"
@@ -156,9 +133,7 @@ function IssueTracks({ issue, fixable, onFixed, onSelectAlbum, onPlay }) {
                         >
                           {editing?.id === track.id ? 'Close' : 'Edit tags'}
                         </button>
-                        {/* One file with an empty tag usually means the whole
-                            folder has one, and repairing them one at a time is
-                            the slow way round. */}
+                        {/* An empty tag usually means the whole folder has one. */}
                         {track.album && (
                           <button
                             type="button"
@@ -177,9 +152,7 @@ function IssueTracks({ issue, fixable, onFixed, onSelectAlbum, onPlay }) {
               {fixing?.id === track.id && (
                 <tr className="track-row-panel">
                   <td colSpan={fixable ? 5 : 4}>
-                    {/* The play queue is this page of the issue, so skipping
-                        forward walks the list being audited rather than
-                        stopping dead after one file. */}
+                    {/* Queue is this page, so skipping walks the audited list. */}
                     <FixTrackPanel
                       track={fixing}
                       onFixed={handleFixed}
@@ -215,20 +188,14 @@ function IssueTracks({ issue, fixable, onFixed, onSelectAlbum, onPlay }) {
   );
 }
 
-// Tag hygiene. Worth its own view because these are the same problems that make
-// gap and discography detection produce false positives: matching is done on
-// artist and title, so an empty artist tag is invisible to both. Each count
-// drills into the tracks behind it so it can be acted on, not just read.
+// Tag hygiene: bad artist/title tags cause false gaps in gap and discography detection.
 export default function HealthTab({
   health, totalTracks, duplicateCount, onFixed, onGoTo, onSelectAlbum, onPlay,
 }) {
   const [issue, setIssue] = useState(null);
   const active = ISSUES.find(([key]) => key === issue);
 
-  // Repairing the last track in a category drops its count to 0, which disables
-  // its tile — leaving the selection stuck on a tile that can no longer be
-  // clicked to dismiss it. Clearing the selection is what the disabled tile
-  // would have done if it were still clickable.
+  // A count reaching 0 disables its tile, so clear a selection stuck on it.
   useEffect(() => {
     if (issue && health[issue] === 0) setIssue(null);
   }, [issue, health]);
@@ -241,6 +208,7 @@ export default function HealthTab({
             key={key}
             type="button"
             className={`stat-tile stat-tile-button${issue === key ? ' stat-tile-active' : ''}`}
+            aria-pressed={issue === key}
             onClick={() => setIssue(issue === key ? null : key)}
             disabled={health[key] === 0}
           >

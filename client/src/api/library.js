@@ -1,4 +1,3 @@
-// client/src/api/library.js
 import { get, post, patch, del } from './client.js';
 
 function qs(params) {
@@ -34,8 +33,7 @@ export function scanLibrary() {
   return post('/library/scan', {});
 }
 
-// verify=1 opts into the slow per-track YouTube lookup; the default returns the
-// missing tracklist immediately.
+// verify=1 opts into the slow per-track YouTube lookup.
 export function getAlbumGaps(releaseGroupMbid, { verify = false } = {}) {
   return get(`/library/missing${qs({ releaseGroup: releaseGroupMbid, verify: verify ? '1' : '' })}`);
 }
@@ -56,9 +54,7 @@ export function getDuplicates() {
   return get('/library/duplicates');
 }
 
-// Moves one copy of a duplicated track into MUSIC_DIR/.spinmatch-trash. Nothing
-// is deleted — the file keeps its library layout under the trash folder, and
-// restoreDuplicate below moves it back.
+// Moves a duplicate into MUSIC_DIR/.spinmatch-trash; nothing is deleted.
 export function trashDuplicate(trackId) {
   return post(`/library/track/${trackId}/trash`, {});
 }
@@ -71,61 +67,48 @@ export function getFixCandidates(trackId) {
   return get(`/library/fix-candidates/${trackId}`);
 }
 
-// Identifies the file by its audio rather than its tags. Costs an fpcalc run and
-// an AcoustID call, so it's only ever fired from an explicit button.
+// Audio fingerprint (fpcalc + AcoustID): costly, explicit button only.
 export function getFingerprintCandidates(trackId) {
   return get(`/library/fingerprint-candidates/${trackId}`);
 }
 
-// `overwrite` replaces tags that disagree with the chosen recording instead of
-// only filling empty ones, and `replaceCoverArt` does the same for the embedded
-// picture. Both reserved for fingerprint matches — see FixTrackPanel.
+// `overwrite`/`replaceCoverArt` replace existing tags/art, not just fill blanks.
+// Fingerprint matches only.
 export function applyFix({ trackId, recordingMbid, overwrite = false, replaceCoverArt = false }) {
   return post('/library/fix', { trackId, recordingMbid, overwrite, replaceCoverArt });
 }
 
-// What repairing a whole album's tags would write. Read-only — 'path' makes no
-// upstream call at all, 'musicbrainz' makes two for the album.
+// Read-only preview. 'path' makes no upstream call; 'musicbrainz' makes two.
 export function previewBulkFix({ artist, album, source }) {
   return post('/library/bulk-fix/preview', { artist, album, source });
 }
 
-// Applies a previewed repair. Only the track ids travel: the server re-derives
-// what to write, so the browser never dictates tag values.
+// Only track ids travel: the server re-derives values, the browser never dictates them.
 export function applyBulkFix({ artist, album, source, trackIds }) {
   return post('/library/bulk-fix/apply', { artist, album, source, trackIds });
 }
 
-// Tag values typed by hand. Unlike applyFix and applyBulkFix above, these are the
-// two calls where the browser does say what to write.
-//
-// A field absent from `fields` is left alone, and so is a field sent blank —
-// editing overwrites, but never removes a tag.
+// Hand-typed values: the browser does say what to write here.
+// Absent or blank fields are left alone; editing never removes a tag.
 export function editTrackTags({ trackId, fields }) {
   return patch(`/library/track/${trackId}/tags`, { fields });
 }
 
-// `fields` applies to every chosen track; `perTrack` carries the per-row fields
-// (title, track number) as `[{trackId, fields}]`. Omitting `trackIds` means every
-// track on the album.
+// `perTrack` is `[{trackId, fields}]`. Omitting `trackIds` means the whole album.
 export function editAlbumTags({ artist, album, fields, perTrack, trackIds }) {
   return post('/library/album/tags', { artist, album, fields, perTrack, trackIds });
 }
 
-// Names the track at one position of an album so a gap row can be looked up. One
-// MusicBrainz resolve; the YouTube half is VerifyButton's POST /verify.
+// Names a gap row's track (one MusicBrainz resolve).
 export function getMissingTrack({ artist, album, disc, position }) {
   return get(`/library/missing-track${qs({ artist, album, disc, position })}`);
 }
 
-// Rescans only one artist's or album's folders. The library-wide scan is
-// scanLibrary() above.
 export function rescanLibraryPart({ artist, album }) {
   return post('/library/rescan', { artist, album });
 }
 
-// Which of these MusicBrainz results are already in the library. Offline on the
-// server, so this is safe to call alongside a search.
+// Offline on the server; safe to call alongside a search.
 export function checkOwned({ albums, recordings }) {
   return post('/library/owned', { albums, recordings });
 }
@@ -142,16 +125,12 @@ export function linkArtist({ artist, mbArtistId }) {
   return post('/library/artist-link', { artist, mbArtistId });
 }
 
-// Forgets a remembered artist match so the next check resolves it again. Needed
-// because an automatic match that guessed wrong is otherwise permanent.
+// Otherwise a wrong automatic artist match is permanent.
 export function unlinkArtist(artist) {
   return del(`/library/artist-link${qs({ artist })}`);
 }
 
-// URL builders, not requests — these are used as <img src> / <audio src>, which
-// the browser fetches directly rather than going through client.js.
-// Discovery. The first two walk the 1-req/s MusicBrainz queue, so callers must
-// keep them behind an explicit action rather than firing them on mount.
+// These two walk the 1-req/s MusicBrainz queue: explicit action only, never on mount.
 export function getSimilarArtists() {
   return get('/library/similar-artists');
 }
@@ -165,8 +144,7 @@ export function reconstructPlaylist(lines) {
   return post('/library/reconstruct-playlist', { lines });
 }
 
-// SSE endpoint for the whole-artist sweep. A URL rather than a request because
-// BulkVerifyPanel drives it with EventSource.
+// SSE URLs, read by lib/eventStream.js.
 export function artistMissingStreamUrl(artist) {
   return `/api/library/artist-missing/stream?artist=${encodeURIComponent(artist)}`;
 }
@@ -179,8 +157,6 @@ export function streamUrl(trackId) {
   return `/api/library/stream/${trackId}`;
 }
 
-// Consumed by EventSource, which fetches directly like the <img>/<audio> URLs
-// above rather than going through client.js.
 export function missingStreamUrl(releaseGroupMbid) {
   return `/api/library/missing/stream${qs({ releaseGroup: releaseGroupMbid })}`;
 }

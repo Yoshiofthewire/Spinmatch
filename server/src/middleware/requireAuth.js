@@ -4,9 +4,7 @@ import { parseCookies } from '../lib/cookies.js';
 
 export const SESSION_COOKIE = 'spinmatch_session';
 
-// Gate for every protected /api route. Returns a machine-readable code so the
-// client can distinguish "no admin yet -> show setup" from "not logged in ->
-// show login". Responds directly (not via next(err)) to keep the shape tight.
+// Codes let the client pick setup (SETUP_REQUIRED) vs login (UNAUTHENTICATED).
 export function requireAuth(req, res, next) {
   const db = getDb();
   if (!adminExists(db)) {

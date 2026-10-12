@@ -1,10 +1,7 @@
 import { useState } from 'react';
 import { rescanLibraryPart } from '../../api/library.js';
 
-// Rescans one artist's or album's folders rather than all of MUSIC_DIR — the
-// point being that after fixing tags or dropping a file in, you shouldn't have to
-// wait on a full pass to see it. Walks the folders (not just the known paths), so
-// a file added since the last scan is picked up too.
+// Rescans one artist's or album's folders, picking up new files too.
 export default function RescanButton({ artist, album, onDone }) {
   const [state, setState] = useState('idle'); // idle | running | done | error
   const [summary, setSummary] = useState(null);

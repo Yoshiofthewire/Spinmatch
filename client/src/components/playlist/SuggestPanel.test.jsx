@@ -150,3 +150,18 @@ describe('SuggestPanel review step', () => {
     await screen.findByText(new RegExp(expectedPhrase));
   });
 });
+
+describe('SuggestPanel seed search', () => {
+  it('shows a failed artist search as an error, not as no matches', async () => {
+    installFetchMock([{
+      test: (url) => url.startsWith('/api/library/artists'),
+      respond: () => jsonResponse({ error: { message: 'Library index unavailable' } }, { status: 503 }),
+    }]);
+    const user = userEvent.setup();
+    render(<SuggestPanel playlistId="pl1" />);
+
+    await user.type(screen.getByLabelText('Search your library for a seed artist'), 'Boar');
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Library index unavailable');
+  });
+});

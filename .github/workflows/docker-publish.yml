@@ -1,17 +1,7 @@
 name: Publish Docker image
 
-# Builds and pushes ghcr.io/yoshiofthewire/spinmatch on:
-#   - push to main            -> always publish
-#   - hourly schedule         -> publish only if yt-dlp has a newer release
-#                                than the one baked into the current :latest image
-#   - manual dispatch         -> always publish
-#
-# Nothing can subscribe to a PyPI release from inside Actions, so "when yt-dlp
-# updates" is a poll. Hourly is the useful resolution: a run that finds nothing
-# new exits in ~15s after one curl and one skopeo inspect, which is free on a
-# public repo, and it caps the delay between a yt-dlp release and an image
-# carrying it at an hour instead of a day. Minute 17 rather than :00 — the top
-# of the hour is when Actions' scheduler is most backed up.
+# Publishes on push to main and manual dispatch; the hourly poll publishes only
+# when PyPI has a newer yt-dlp than the :latest image's label.
 on:
   push:
     branches: [main]
@@ -56,8 +46,7 @@ jobs:
             exit 0
           fi
           image_lc=$(echo "$IMAGE_LC" | tr '[:upper:]' '[:lower:]')
-          # Read the ytdlp.version label off the currently published :latest image.
-          # A missing image / label (e.g. first-ever run) -> treat as needs-build.
+          # No image or label yet -> build.
           current=$(skopeo inspect "docker://${image_lc}:latest" 2>/dev/null \
             | jq -r '.Labels["ytdlp.version"] // ""' || true)
           echo "Published image yt-dlp: '${current:-<none>}' | PyPI latest: '$LATEST'"
@@ -97,10 +86,7 @@ jobs:
           context: .
           push: true
           platforms: linux/amd64
-          # Buildx defaults to attaching a provenance attestation on GitHub
-          # Actions, which wraps this single-platform build in an OCI index and
-          # publishes three GHCR versions per push (image + attestation + index).
-          # We only need the one image manifest.
+          # Default attestations wrap the image in an OCI index (3 GHCR versions per push).
           provenance: false
           sbom: false
           build-args: |

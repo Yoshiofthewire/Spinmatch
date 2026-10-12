@@ -10,9 +10,7 @@ import RescanButton from './RescanButton.jsx';
 import { getAlbumTracks } from '../../api/library.js';
 import { formatDuration, formatLongDuration } from '../../lib/format.js';
 
-// Builds the display rows for one disc: owned tracks in position order with a
-// placeholder row wherever a number is missing from the 1..max run. Showing the
-// hole in place is the whole point — a list of what you have can't show it.
+// One disc's rows: owned tracks in order, with a placeholder for each missing number.
 function rowsWithGaps(tracks) {
   const numbered = tracks.filter((t) => t.trackNumber != null);
   const unnumbered = tracks.filter((t) => t.trackNumber == null);
@@ -128,8 +126,7 @@ export default function AlbumDetail({
                     <td />
                     <td className="mono">{row.position}</td>
                     <td colSpan="4">
-                      {/* The hole is the one row that can't be edited — there is
-                          no file. What it can do is name itself. */}
+                      {/* No file to edit; it can only name itself. */}
                       <MissingTrackCell
                         artist={album.artist}
                         album={album.album}
@@ -165,10 +162,7 @@ export default function AlbumDetail({
                         </button>
                       </td>
                     </tr>
-                    {/* Opened as a row of its own directly beneath the one that
-                        was clicked, the way the Health tab does it. Rendered after
-                        the table instead, it lands a screen away and reads as the
-                        button doing nothing. */}
+                    {/* Panel opens as a row directly beneath its track. */}
                     {editing === row.track.id && (
                       <tr className="track-row-panel">
                         <td colSpan="6">
@@ -193,9 +187,7 @@ export default function AlbumDetail({
         </div>
       ))}
 
-      {/* Above BulkFixPanel so the two write paths sit together: this one writes
-          exactly what you type, that one fills only what's empty from a source it
-          derives itself. Seeing the contrast is the point. */}
+      {/* Next to BulkFixPanel: typed values vs. derived fills of blanks. */}
       {state === 'ready' && editingAlbum && (
         <AlbumTagEditPanel
           artist={album.artist}
@@ -204,26 +196,21 @@ export default function AlbumDetail({
           onSaved={(result) => {
             setReload((n) => n + 1);
             onLibraryChanged?.();
-            // The album's identity IS its (artist, album) pair, so a rename means
-            // the view's own query string now names an album that doesn't exist.
-            // The page has to move with it or the tracklist comes back empty.
+            // Identity is (artist, album): follow a rename or the URL names nothing.
             if (result.renamed) onAlbumRenamed?.(result.renamed);
           }}
           onCancel={() => setEditingAlbum(false)}
         />
       )}
 
-      {/* Repairs what's here; AlbumGapPanel below finds what isn't. Applying a
-          repair re-reads the tracklist, because the tags it just wrote are what
-          the rows above are showing. */}
+      {/* Applying a repair reloads the tracklist above. */}
       <BulkFixPanel
         artist={album.artist}
         album={album.album}
         onApplied={() => { setReload((n) => n + 1); onLibraryChanged?.(); }}
       />
 
-      {/* Independent of the local tracklist load, so an upstream failure and a
-          local failure can't take each other down. */}
+      {/* Separate load so upstream and local failures stay independent. */}
       <AlbumGapPanel artist={album.artist} album={album.album} />
     </div>
   );

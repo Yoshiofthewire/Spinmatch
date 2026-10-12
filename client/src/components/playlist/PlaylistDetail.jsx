@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import EqualizerLoader from '../EqualizerLoader.jsx';
+import ErrorBanner from '../ErrorBanner.jsx';
 import AddTracksPanel from './AddTracksPanel.jsx';
 import { useConfig } from '../../ConfigContext.jsx';
 import { formatBytes, formatDuration } from '../../lib/format.js';
@@ -10,21 +11,12 @@ import {
   exportM3u, dropoffUrl,
 } from '../../api/playlists.js';
 
-// `random` is the sampler's internal name for the method; the UI calls it
-// Chance, since that reads as what it does rather than how it's implemented.
+// The UI calls the sampler's `random` method "Chance".
 const SOURCE_LABELS = {
   manual: 'Manual', popular: 'Popular', random: 'Chance', paste: 'Pasted',
 };
 
-// One playlist: its ordered rows, and the actions that only make sense once
-// you're looking at a single playlist (rename, delete, export, reorder).
-//
-// Reordering is up/down buttons rather than native HTML5 drag-and-drop. Drag
-// events (dragstart/dragover/drop, the ghost image, the drop-target styling)
-// are fiddly to get right without a way to click through the result in a
-// browser, and this repo has no client-side test harness to catch a bad
-// interaction. Buttons are slower for a long playlist but they are honest —
-// every click does exactly what it says, and they work with a keyboard.
+// Reorder uses up/down buttons, not drag-and-drop: predictable and keyboard-accessible.
 export default function PlaylistDetail({ id, onPlay, onDeleted }) {
   const { playlistExportEnabled } = useConfig();
 
@@ -76,9 +68,7 @@ export default function PlaylistDetail({ id, onPlay, onDeleted }) {
   }
 
   // ---- Delete ----
-  // No window.confirm — the rest of this app never uses one, preferring an
-  // inline second step (see the drop-off Replace prompt below) so the choice
-  // stays on the page instead of a native dialog.
+  // Inline second step, not window.confirm, like the rest of the app.
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [deleteError, setDeleteError] = useState(null);
 
@@ -93,7 +83,10 @@ export default function PlaylistDetail({ id, onPlay, onDeleted }) {
   }
 
   // ---- Item removal ----
+  const [removeConfirmId, setRemoveConfirmId] = useState(null);
+
   async function removeItem(itemId) {
+    setRemoveConfirmId(null);
     setActionError(null);
     try {
       await removePlaylistItem(id, itemId);
@@ -110,8 +103,7 @@ export default function PlaylistDetail({ id, onPlay, onDeleted }) {
     if (target < 0 || target >= items.length) return;
     const reordered = [...items];
     [reordered[index], reordered[target]] = [reordered[target], reordered[index]];
-    // Optimistic: the row moves immediately, and only snaps back if the write
-    // fails, rather than waiting a round trip to feel like a working button.
+    // Optimistic; snaps back if the write fails.
     setPlaylist({ ...playlist, items: reordered });
     setActionError(null);
     try {
@@ -137,9 +129,7 @@ export default function PlaylistDetail({ id, onPlay, onDeleted }) {
       setM3uResult(result);
       setM3uState('done');
     } catch (err) {
-      // A file is already at that path. Like the drop-off 409 this is the
-      // confirmation gate rather than a failure: the file may be another
-      // playlist's export, or one Spinmatch never wrote at all.
+      // 409: a file exists there. Confirmation gate, not a failure.
       if (err.code === 'M3U_EXISTS') {
         setM3uConfirm(err.details?.existing ?? null);
         setM3uState('confirm');
@@ -158,8 +148,7 @@ export default function PlaylistDetail({ id, onPlay, onDeleted }) {
   const [dropoffError, setDropoffError] = useState(null);
   const dropoffAbortRef = useRef(null);
 
-  // Abort an in-flight export if the user navigates away mid-run — same
-  // pattern as BulkVerifyPanel.
+  // Abort an in-flight export on unmount.
   useEffect(() => () => dropoffAbortRef.current?.abort(), []);
 
   async function runDropoffExport(replace) {
@@ -171,9 +160,7 @@ export default function PlaylistDetail({ id, onPlay, onDeleted }) {
     const controller = new AbortController();
     dropoffAbortRef.current = controller;
 
-    // Exactly one terminal outcome ends a run: the `done` event, the `error`
-    // event, or the request never opening at all (including the 409 that
-    // means "confirm before replacing" — that one isn't a failure).
+    // One terminal outcome: `done`, `error`, or never opening (incl. the confirm 409).
     let terminal = null;
     try {
       await streamEvents(dropoffUrl(id), {
@@ -194,9 +181,7 @@ export default function PlaylistDetail({ id, onPlay, onDeleted }) {
       setDropoffState('error');
     } catch (err) {
       if (controller.signal.aborted) return; // unmounted mid-run
-      // The 409 pre-check: the folder already exists. This is the
-      // confirmation gate, not a failure — show what's there and let the
-      // user decide, rather than auto-retrying with replace: true.
+      // 409: folder exists. Let the user decide; never auto-retry with replace.
       if (err.code === 'DROPOFF_EXISTS') {
         setDropoffConfirm(err.details?.existing ?? null);
         setDropoffState('confirm');
@@ -208,7 +193,7 @@ export default function PlaylistDetail({ id, onPlay, onDeleted }) {
   }
 
   if (state === 'loading') return <EqualizerLoader label="Loading playlist…" />;
-  if (state === 'error') return <p className="banner banner-error">{error}</p>;
+  if (state === 'error') return <ErrorBanner message={error} onRetry={load} />;
   if (!playlist) return null;
 
   const gapCount = playlist.items.filter((i) => !i.track).length;
@@ -259,8 +244,7 @@ export default function PlaylistDetail({ id, onPlay, onDeleted }) {
           >
             {m3uState === 'running' ? 'Exporting…' : 'Export m3u'}
           </button>
-          {/* Hidden entirely rather than shown-disabled: no drop-off folder is
-              configured, so the action has nowhere to go. */}
+          {/* Hidden, not disabled: no drop-off folder configured. */}
           {playlistExportEnabled && (
             <button
               type="button"
@@ -297,9 +281,7 @@ export default function PlaylistDetail({ id, onPlay, onDeleted }) {
         {m3uState === 'error' && <p className="banner banner-error">{m3uError}</p>}
 
         {m3uState === 'confirm' && (
-          /* Spinmatch keeps no record of which playlist wrote which m3u, and
-             the file at that path may well be one it never wrote — so the
-             prompt describes the file rather than claiming it. */
+          /* Describe the file; Spinmatch may not have written it. */
           <p className="banner banner-rate-limited">
             A file already exists at{' '}
             <span className="mono">{m3uConfirm?.path ?? 'that path'}</span>
@@ -318,11 +300,7 @@ export default function PlaylistDetail({ id, onPlay, onDeleted }) {
         )}
 
         {dropoffState === 'confirm' && (
-          /* Names the folder rather than calling it "this playlist's". The
-             server refuses outright when another playlist's last export is
-             already there (two names can sanitize to one folder), but a folder
-             Spinmatch never created has nothing to attribute it to — so the
-             path and the size are what the user gets to judge by. */
+          /* Show path and size; the folder may not be this playlist's. */
           <p className="banner banner-rate-limited">
             A folder already exists
             {dropoffConfirm?.dir ? <> at <span className="mono">{dropoffConfirm.dir}</span></> : ''}
@@ -345,7 +323,14 @@ export default function PlaylistDetail({ id, onPlay, onDeleted }) {
           <div className="bulk-verify-progress">
             <EqualizerLoader />
             <div style={{ flex: 1 }}>
-              <div className="progress-bar">
+              <div
+                className="progress-bar"
+                role="progressbar"
+                aria-label="Files copied"
+                aria-valuemin={0}
+                aria-valuemax={dropoffProgress?.total || undefined}
+                aria-valuenow={dropoffProgress?.total ? dropoffProgress.index : undefined}
+              >
                 <div
                   className="progress-bar-fill"
                   style={{
@@ -388,7 +373,7 @@ export default function PlaylistDetail({ id, onPlay, onDeleted }) {
       {playlist.items.length === 0 ? (
         <p className="muted">This playlist is empty.</p>
       ) : (
-        <table className="library-table playlist-table">
+        <div className="table-scroll"><table className="library-table playlist-table">
           <thead>
             <tr>
               <th aria-label="Reorder" />
@@ -447,17 +432,8 @@ export default function PlaylistDetail({ id, onPlay, onDeleted }) {
                   {item.seedArtist && <span className="muted"> from {item.seedArtist}</span>}
                 </td>
                 <td className="playlist-row-actions">
-                  {/* Not a VerifyButton: a gap has no local file and no
-                      MusicBrainz lookup behind it, so it can never supply the
-                      duration POST /verify requires (requireLengthMs in
-                      server/src/routes/verify.js rejects a missing lengthMs
-                      outright — the same reason MissingTrackCell hides
-                      VerifyButton when a length is unknown). A VerifyButton
-                      here would only ever 400. Routing to the Search page
-                      instead reaches a result that carries its own length and
-                      its own working Find on YouTube button — the door a user
-                      would walk through by hand anyway. Do not swap this back
-                      for a VerifyButton; it will just rediscover the 400. */}
+                  {/* Not a VerifyButton: a gap has no duration, so POST /verify
+                      would 400 (requireLengthMs). Search supplies one. */}
                   {!item.track && (
                     <Link
                       className="chip-button"
@@ -466,14 +442,25 @@ export default function PlaylistDetail({ id, onPlay, onDeleted }) {
                       Find this track
                     </Link>
                   )}
-                  <button type="button" className="link-button" onClick={() => removeItem(item.id)}>
-                    Remove
-                  </button>
+                  {removeConfirmId !== item.id ? (
+                    <button type="button" className="link-button" onClick={() => setRemoveConfirmId(item.id)}>
+                      Remove
+                    </button>
+                  ) : (
+                    <span className="playlist-delete-confirm">
+                      <button type="button" className="chip-button" onClick={() => removeItem(item.id)}>
+                        Confirm remove
+                      </button>
+                      <button type="button" className="link-button" onClick={() => setRemoveConfirmId(null)}>
+                        Cancel
+                      </button>
+                    </span>
+                  )}
                 </td>
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       )}
     </div>
   );

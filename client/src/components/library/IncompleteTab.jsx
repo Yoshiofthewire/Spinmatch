@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import Pagination from '../Pagination.jsx';
 import { usePagination } from '../../lib/usePagination.js';
 import { albumKey } from '../../lib/albumKey.js';
@@ -9,9 +10,8 @@ const REASONS = [
   ['unnumbered', 'No track numbers', "Nothing to check against — these files aren't numbered."],
 ];
 
-// Entirely offline: computed from track numbers already in the index, so this
-// works with no network and answers instantly even on a large library.
-export default function IncompleteTab({ albums, onSelect }) {
+// Offline: computed from indexed track numbers.
+export default function IncompleteTab({ albums, onSelect, albumHref }) {
   const [reason, setReason] = useState('gaps');
 
   const filtered = useMemo(
@@ -31,6 +31,7 @@ export default function IncompleteTab({ albums, onSelect }) {
               key={key}
               type="button"
               className={`chip-button${reason === key ? ' chip-button-active' : ''}`}
+              aria-pressed={reason === key}
               onClick={() => setReason(key)}
             >
               {label} ({count.toLocaleString()})
@@ -60,26 +61,22 @@ export default function IncompleteTab({ albums, onSelect }) {
                 <tr key={albumKey(a.artist, a.album)}>
                   <td>{a.artist ?? <span className="muted">Unknown</span>}</td>
                   <td>
-                    <button type="button" className="link-button" onClick={() => onSelect(a)}>
+                    <Link className="link-button" to={albumHref(a)} onClick={() => onSelect(a)}>
                       {a.album}
-                    </button>
+                    </Link>
                   </td>
                   <td className="mono">
                     {a.trackCount}{a.maxTrackNumber ? ` / ${a.maxTrackNumber}` : ''}
                   </td>
                   {reason === 'gaps' && (
                     <td className="mono">
-                      {/* Each position opens the album, where the per-gap "Find
-                          this track" button lives. A button per position here
-                          instead would be hundreds of them on a page — and each
-                          one a MusicBrainz call — on the one tab whose whole value
-                          is being entirely offline. */}
+                      {/* Links to the album; per-gap lookups live there to keep this tab offline. */}
                       {a.missingPositions.slice(0, 12).map((position, i) => (
                         <span key={position}>
                           {i > 0 && ', '}
-                          <button type="button" className="link-button" onClick={() => onSelect(a)}>
+                          <Link className="link-button" to={albumHref(a)} onClick={() => onSelect(a)}>
                             {position}
-                          </button>
+                          </Link>
                         </span>
                       ))}
                       {a.missingPositions.length > 12 && ` +${a.missingPositions.length - 12}`}

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import EqualizerLoader from '../EqualizerLoader.jsx';
 import LocalCover from './LocalCover.jsx';
 import DiscographyPanel from './DiscographyPanel.jsx';
@@ -7,7 +8,7 @@ import { getLibraryAlbums } from '../../api/library.js';
 import { formatLongDuration } from '../../lib/format.js';
 import { albumKey } from '../../lib/albumKey.js';
 
-export default function ArtistDetail({ artist, onSelectAlbum, incompleteKeys, onLibraryChanged }) {
+export default function ArtistDetail({ artist, onSelectAlbum, albumHref, incompleteKeys, onLibraryChanged }) {
   const [albums, setAlbums] = useState([]);
   const [state, setState] = useState('loading'); // loading | ready | error
   const [error, setError] = useState(null);
@@ -51,9 +52,10 @@ export default function ArtistDetail({ artist, onSelectAlbum, incompleteKeys, on
           </p>
           <div className="album-grid">
             {albums.map((a) => (
-              <button
+              <Link
                 key={albumKey(a.artist, a.album)}
                 className="album-card"
+                to={albumHref(a)}
                 onClick={() => onSelectAlbum(a)}
               >
                 <LocalCover trackId={a.coverTrackId} alt={a.album} />
@@ -65,14 +67,13 @@ export default function ArtistDetail({ artist, onSelectAlbum, incompleteKeys, on
                 {incompleteKeys.has(albumKey(a.artist, a.album)) && (
                   <span className="badge-incomplete">incomplete</span>
                 )}
-              </button>
+              </Link>
             ))}
           </div>
         </>
       )}
 
-      {/* Rendered regardless of the local album load, so an upstream failure
-          and a local failure stay independent of each other. */}
+      {/* Independent of the local load, so failures stay separate. */}
       <DiscographyPanel artist={artist} />
     </div>
   );

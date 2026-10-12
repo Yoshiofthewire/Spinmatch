@@ -1,27 +1,18 @@
 name: CI
 
-# What has to be true before a change lands: the server suite passes, the client
-# still builds, and the image still builds.
-#
-# The image check matters more here than it looks. docker-publish.yml only builds
-# on push to main, so without this a Dockerfile mistake is merged first and
-# discovered when the publish run fails — with main already broken. Running it on
-# pull requests puts the failure before the merge instead.
+# Tests, client build, and (on PRs) the image build, so a Dockerfile mistake
+# fails before merge rather than in docker-publish.yml.
 on:
   push:
     branches: [main]
   pull_request:
   workflow_dispatch:
 
-# A newer push to the same branch makes the older run's answer irrelevant before
-# it finishes. Keyed on the ref rather than the SHA so the cancellation applies
-# across pushes to one branch, not just re-runs of one commit.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-# Read-only. Nothing here publishes; docker-publish.yml is the only workflow that
-# needs packages: write, and this one must not be a second way to get it.
+# Read-only: docker-publish.yml is the only workflow that may publish.
 permissions:
   contents: read
 
@@ -33,8 +24,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      # The Dockerfile's FROM line is the one Node version Dependabot bumps;
-      # CI tests that same major.
+      # Test the Node major the Dockerfile ships (Dependabot bumps it there).
       - name: Read Node version from Dockerfile
         id: node
         run: echo "major=$(grep -m1 -oP '^FROM node:\K[0-9]+' Dockerfile)" >> "$GITHUB_OUTPUT"
@@ -45,56 +35,28 @@ jobs:
           node-version: ${{ steps.node.outputs.major }}
           cache: npm
 
-      # ci, not install: it installs exactly what the lockfile pins and fails
-      # rather than quietly resolving something newer, which is the same
-      # reasoning the Dockerfile's build stage gives.
       - name: Install dependencies
         run: npm ci
 
-      # fpcalc, from Chromaprint — the same binary the Dockerfile installs, which
-      # is why it is installed here rather than stubbed. Most of fpcalc.test.js
-      # mocks execFile, but its last case deliberately runs the real thing
-      # against a real fixture, and that is the only test that would notice the
-      # binary changing its output format under us. Skipping it on a missing
-      # binary would leave CI green while testing nothing.
+      # One fpcalc test runs the real binary to catch output-format changes.
       - name: Install Chromaprint (fpcalc)
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libchromaprint-tools
 
-      # Runs the server workspace's suite (~600 tests, ~30s). Needs no network:
-      # every upstream is an undici MockAgent with net connect disabled, and
-      # yt-dlp is mocked at execFile rather than invoked, so that binary does not
-      # have to exist on the runner.
-      #
-      # One scanner test makes a directory unreadable with chmod 000 to prove an
-      # unreadable subtree isn't reconciled as "removed". GitHub's runners
-      # execute as an unprivileged user, so that holds; the test detects root and
-      # skips itself rather than passing vacuously if this ever runs in a
-      # container as uid 0.
+      # No network: upstreams are MockAgent, yt-dlp is mocked at execFile.
       - name: Run server tests
-        run: npm test
+        run: npm run test -w server
 
-      # Vitest + Testing Library, jsdom environment. Fetch is stubbed per test
-      # (see client/src/test/fetchMock.js) so this needs no network and no
-      # server running alongside it — same reasoning as the server suite above.
-      # A separate step from the build below so a red run points at "the
-      # components lied about what they'd request" rather than "something
-      # failed to compile".
       - name: Run client tests
         run: npm run test:run -w client
 
-      # The client build is what stands between a broken import and a
-      # container that serves a blank page. The test step above now covers
-      # the playlist feature's riskiest behaviour, but it does not import
-      # every file the way a full build does, so this stays as its own check.
+      # Catches broken imports in files the tests never load.
       - name: Build the client
         run: npm run build
 
   docker:
     name: Docker image builds
     runs-on: ubuntu-latest
-    # Skipped on push to main, where docker-publish.yml builds the same image for
-    # real a moment later. Duplicating that build would double the work to learn
-    # the same thing.
+    # On push to main docker-publish.yml builds it instead.
     if: github.event_name != 'push'
     steps:
       - name: Checkout
@@ -109,14 +71,8 @@ jobs:
           context: .
           push: false
           platforms: linux/amd64
-          # Matching docker-publish.yml: a single-platform build here would
-          # otherwise get wrapped in an OCI index by the default attestations,
-          # which is pure overhead for an image that is thrown away.
           provenance: false
           sbom: false
-          # YTDLP_VERSION deliberately unset, so this exercises the same
-          # unpinned "install the latest from PyPI" path a plain local
-          # `docker build` takes. The publish workflow passes a resolved version
-          # instead; that path is covered there.
+          # YTDLP_VERSION unset: exercises the unpinned local-build path.
           cache-from: type=gha
           cache-to: type=gha,mode=max

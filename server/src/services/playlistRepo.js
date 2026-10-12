@@ -1,17 +1,8 @@
 import { getDb, withTransaction } from '../lib/db.js';
 import { makeMatchKey, makeTitleKey } from '../lib/normalize.js';
 
-// Playlists, and the resolution of their items to files on disk.
-//
-// The only module that knows the playlist schema, the way libraryRepo is the
-// only thing that knows local_tracks.
-//
-// An item stores text, not a track id. See the comment on the table in db.js for
-// why. The consequence for this file is that every read resolves, and that
-// resolution is deliberately two indexed queries for the whole playlist rather
-// than one per row — the version of this that shipped inside reconstructPlaylist
-// ran a LIKE query per line and capped it at 25 candidates, which is both slow
-// and lossy for a common title.
+// Playlists and the resolution of their items to files; sole owner of the playlist schema.
+// Items store text, not track ids (see db.js), so every read resolves in two indexed queries.
 
 const TRACK_COLUMNS = `
   id, path, artist, album, title,
@@ -23,14 +14,8 @@ function placeholders(n) {
   return new Array(n).fill('?').join(', ');
 }
 
-// Of several live files answering to one key, prefer the one whose album the
-// item actually named, then the biggest file — a guess, but one that only ever
-// decides which of two copies you already own reaches the player.
-//
-// Exported for playlistDiscovery, which has to make the same choice when the
-// candidate pool reaches one track by two routes. One rule, in one place: two
-// copies of the same recording must not resolve differently depending on
-// whether the caller was resolving an item or building a suggestion.
+// Among copies of one key: the named album, then the biggest file. Shared with
+// playlistDiscovery so both resolve duplicates the same way.
 export function preferBest(candidates, album) {
   const wanted = album ? makeTitleKey(album) : null;
   const byAlbum = wanted
@@ -42,14 +27,8 @@ export function preferBest(candidates, album) {
   ), pool[0]);
 }
 
-/**
- * Attach a resolved local track to each item, or null where none exists.
- *
- * Two passes, both indexed. The second runs on *misses* rather than only on
- * artist-less items, which is what lets a playlist whose artist tag disagrees
- * with the file's ("The Beatles" against "Beatles") still resolve on title —
- * the same forgiveness the paste panel has always had.
- */
+// Attaches a local track (or null) to each item. Misses fall back to title alone,
+// so "The Beatles" vs "Beatles" still resolves.
 export function resolveItems(db, items) {
   if (!items.length) return items.map((item) => ({ ...item, track: null }));
 
@@ -114,9 +93,7 @@ export function listPlaylists(db) {
   const rows = db.prepare(
     'SELECT id, name, last_exported_at AS lastExportedAt FROM playlists ORDER BY updated_at DESC'
   ).all();
-  // Resolved per playlist rather than in one sweep: the counts have to reflect
-  // what actually resolves right now, and a JOIN on match_key would double-count
-  // a title you own two copies of.
+  // Per playlist, not a JOIN: a JOIN on match_key double-counts duplicate copies.
   return rows.map((row) => {
     const items = db.prepare(
       `SELECT ${ITEM_COLUMNS} FROM playlist_items WHERE playlist_id = ? ORDER BY position`
@@ -140,15 +117,8 @@ export function deletePlaylist(db, id) {
   db.prepare('DELETE FROM playlists WHERE id = ?').run(id);
 }
 
-/**
- * The playlist, if any, whose last export landed in exactly this folder.
- *
- * Two names can sanitize to one drop-off folder — "Mix: 2024" and "Mix 2024"
- * are two playlists (name_key only lowercases) with one destination — and the
- * replace confirmation would happily call the other one's export "this
- * playlist's". last_export_dir is the only record of who wrote what, so this is
- * what lets the export refuse by name rather than delete by accident.
- */
+// The playlist last exported to this folder. Two names can sanitize to one folder
+// ("Mix: 2024", "Mix 2024"), so export checks this before replacing.
 export function findPlaylistByExportDir(db, dir, { excludeId = null } = {}) {
   return db.prepare(
     'SELECT id, name FROM playlists WHERE last_export_dir = ? AND id IS NOT ?'
@@ -189,9 +159,7 @@ export function removeItem(db, playlistId, itemId) {
   renumber(db, playlistId);
 }
 
-// Positions are contiguous and rewritten wholesale. A playlist is hundreds of
-// rows, so this is milliseconds — and it removes the entire class of bug that
-// sparse gap-insertion schemes have when the gaps run out.
+// Positions stay contiguous, rewritten wholesale; playlists are small enough.
 function renumber(db, playlistId) {
   const ids = db.prepare(
     'SELECT id FROM playlist_items WHERE playlist_id = ? ORDER BY position'
@@ -206,8 +174,7 @@ export function reorderItems(db, playlistId, itemIds) {
   const owned = new Set(db.prepare(
     'SELECT id FROM playlist_items WHERE playlist_id = ?'
   ).all(playlistId).map((r) => r.id));
-  // Anything the caller didn't mention keeps its relative order at the end, so a
-  // stale client can't silently drop rows it hadn't loaded.
+  // Unmentioned rows go to the end, so a stale client can't drop them.
   const ordered = itemIds.filter((id) => owned.has(id));
   const rest = [...owned].filter((id) => !ordered.includes(id));
   const update = db.prepare('UPDATE playlist_items SET position = ? WHERE id = ?');
