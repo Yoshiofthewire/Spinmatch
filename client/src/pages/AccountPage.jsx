@@ -3,11 +3,12 @@ import { useState } from 'react';
 import { changePassword } from '../api/auth.js';
 import { useAuth } from '../AuthContext.jsx';
 import ApiTokens from '../components/ApiTokens.jsx';
+import SingleSignOn from '../components/SingleSignOn.jsx';
 
-// Password change, which also revokes every other session; API tokens.
+// Password change, which also revokes every other session; SSO link; API tokens.
 export default function AccountPage() {
   useTitle('Account');
-  const { username } = useAuth();
+  const { username, oidc } = useAuth();
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -90,6 +91,8 @@ export default function AccountPage() {
           {state === 'busy' ? 'Changing…' : 'Change password'}
         </button>
       </form>
+
+      {oidc?.enabled && <SingleSignOn />}
 
       <ApiTokens />
     </div>

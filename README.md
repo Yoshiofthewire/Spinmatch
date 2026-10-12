@@ -26,6 +26,7 @@ Spinmatch **only finds and verifies YouTube links**. It does not download audio.
 - [Adding new files: the Ingest page](#adding-new-files-the-ingest-page)
 - [History](#history)
 - [First-run login](#first-run-login)
+- [Single sign-on (OIDC)](#single-sign-on-oidc)
 - [API tokens](#api-tokens)
 - [Prerequisites](#prerequisites)
 - [Installing yt-dlp](#installing-yt-dlp)
@@ -597,6 +598,44 @@ Permitted values are a hop count (`1`), `true`, `false`, a subnet (`10.0.0.0/8`)
 (`loopback`). If the value is not valid, the server stops at startup and prints a message. It does
 not start with the setting silently inactive.
 
+## Single sign-on (OIDC)
+
+Spinmatch can sign the admin in through any standards OpenID Connect provider, such as Authentik,
+Authelia, Keycloak or KyIdentity. It is off until you set all four required variables. If you set
+some but not all, the server refuses to start and names the missing ones.
+
+| Variable | What it does |
+| --- | --- |
+| `OIDC_ISSUER` | The provider's issuer URL, exactly as its `/.well-known/openid-configuration` reports it, trailing slash included. |
+| `OIDC_CLIENT_ID` | The client ID you registered for Spinmatch. |
+| `OIDC_CLIENT_SECRET` | Its client secret (sent with HTTP Basic auth). |
+| `OIDC_REDIRECT_URI` | The callback URL, below. Spinmatch never derives it from the request's `Host` header. |
+| `OIDC_POST_LOGOUT_URI` | Optional. Where the provider sends you after **Log out**, if it supports that. Register it too. |
+| `OIDC_ONLY` | Optional. `1` refuses password login once an identity is linked. |
+
+Register a confidential client with the authorization code flow, PKCE (S256) and **RS256** ID
+tokens, and these URLs (replace the host with yours):
+
+- Redirect URI: `https://spinmatch.example/api/auth/oidc/callback`
+- Back-channel logout URI: `https://spinmatch.example/api/auth/oidc/backchannel-logout`
+
+All URLs must be HTTPS. Plain `http://` is accepted only for `localhost`, `127.0.0.1` and `[::1]`.
+
+**Linking.** Sign in with your password, open **Account**, and choose **Link identity** under
+**Single sign-on**. Spinmatch sends you to the provider and stores the issuer and subject (`sub`)
+it returns. After that, **Sign in with SSO** on the login page works for that identity only.
+Spinmatch never matches on email or username, so another account at the same provider is refused
+with "This identity isn't linked to Spinmatch". **Unlink** removes the link.
+
+**Logging out.** **Log out** signs out every Spinmatch session, as before, then sends the browser to
+the provider's end-session page when it advertises one. When the provider ends your session, it can
+post a back-channel logout token to the URL above. Spinmatch checks the token's signature and
+claims, refuses a repeat of the same token, and signs out every session.
+
+**OIDC_ONLY.** With `OIDC_ONLY=1` and an identity linked, password login returns 403. Setup and
+password change still work. If the provider is down or the link is lost, unset `OIDC_ONLY` and
+restart the server, then sign in with your password.
+
 ## API tokens
 
 Scripts and other tools use an API token instead of the login. Create one in the **API tokens**
@@ -682,6 +721,7 @@ Every other variable is optional. `.env.example` carries the same list with long
 | `FPCALC_PATH` | `fpcalc` | Path to the Chromaprint program, when it is not on `PATH`. |
 | `LISTENBRAINZ_ENABLED` | `1` | Set to `0` to drop the "sounds like" half of [Discovery](#discovery). |
 | `TRUST_PROXY` | unset | See [Running behind a reverse proxy](#running-behind-a-reverse-proxy). |
+| `OIDC_*` | unset | See [Single sign-on (OIDC)](#single-sign-on-oidc). |
 | `PUID`, `PGID` | `1000`, `1000` | Docker only. See [File ownership](#file-ownership-puid--pgid). |
 | `ACOUSTID_MIN_SCORE` | `0.5` | The lowest AcoustID confidence, from 0 to 1, that counts as a fingerprint match. |
 | `ARTIST_AUTO_ACCEPT_SCORE` | `90` | The MusicBrainz artist-search score, from 0 to 100, at or above which Spinmatch resolves a name without asking you. |

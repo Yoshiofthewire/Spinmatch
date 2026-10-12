@@ -60,7 +60,53 @@ export const config = {
     // "Export to player" target; unset hides the feature. Must be outside MUSIC_DIR.
     dropoffDir: process.env.DROPOFF_DIR || null,
   },
+  // Set by assertRequiredConfig: a bad OIDC config must stop boot, not a test's import.
+  oidc: null,
 };
+
+const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+// HTTPS only; plain http just for loopback (dev and tests). Credentials and fragments refused.
+export function secureUrlError(raw) {
+  let url;
+  try {
+    url = new URL(raw);
+  } catch {
+    return 'is not a URL';
+  }
+  if (url.username || url.password || url.hash) return 'must not contain credentials or a fragment';
+  if (url.protocol === 'https:') return null;
+  if (url.protocol === 'http:' && LOOPBACK.has(url.hostname)) return null;
+  return 'must use https (http is allowed only for localhost)';
+}
+
+const OIDC_REQUIRED = ['OIDC_ISSUER', 'OIDC_CLIENT_ID', 'OIDC_CLIENT_SECRET', 'OIDC_REDIRECT_URI'];
+
+// null when OIDC is off; throws on a partial or insecure config so it can't half-work.
+export function parseOidcEnv(env) {
+  const set = OIDC_REQUIRED.filter((k) => env[k]);
+  if (set.length === 0) {
+    if (env.OIDC_ONLY || env.OIDC_POST_LOGOUT_URI) {
+      throw new Error(`OIDC_ONLY / OIDC_POST_LOGOUT_URI need ${OIDC_REQUIRED.join(', ')}`);
+    }
+    return null;
+  }
+  const missing = OIDC_REQUIRED.filter((k) => !env[k]);
+  if (missing.length) throw new Error(`OIDC is partly configured; also set ${missing.join(', ')}`);
+  for (const key of ['OIDC_ISSUER', 'OIDC_REDIRECT_URI', 'OIDC_POST_LOGOUT_URI']) {
+    const error = env[key] && secureUrlError(env[key]);
+    if (error) throw new Error(`${key} ${error}`);
+  }
+  if (env.OIDC_ONLY && env.OIDC_ONLY !== '1') throw new Error('OIDC_ONLY must be 1 or unset');
+  return {
+    issuer: env.OIDC_ISSUER,
+    clientId: env.OIDC_CLIENT_ID,
+    clientSecret: env.OIDC_CLIENT_SECRET,
+    redirectUri: env.OIDC_REDIRECT_URI,
+    postLogoutUri: env.OIDC_POST_LOGOUT_URI || null,
+    only: env.OIDC_ONLY === '1',
+  };
+}
 
 export function userAgent() {
   const { appName, appVersion, contactEmail } = config.musicbrainz;
@@ -72,6 +118,12 @@ export function assertRequiredConfig() {
   if (!config.musicbrainz.contactEmail) {
     console.error('Missing required environment variable: MB_CONTACT_EMAIL');
     console.error('Copy .env.example to .env and fill in the required values.');
+    process.exit(1);
+  }
+  try {
+    config.oidc = parseOidcEnv(process.env);
+  } catch (err) {
+    console.error(`Refusing to start: ${err.message}`);
     process.exit(1);
   }
 }

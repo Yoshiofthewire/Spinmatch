@@ -80,7 +80,7 @@ test('openDb waits for a concurrent migration instead of racing it', async () =>
     const { workerData, parentPort } = require('node:worker_threads');
     const db = new DatabaseSync(workerData.dbPath);
     db.exec('BEGIN IMMEDIATE');
-    db.exec("UPDATE meta SET value = '11' WHERE key = 'schema_version'");
+    db.exec("UPDATE meta SET value = '12' WHERE key = 'schema_version'");
     parentPort.postMessage('migrating');
     setTimeout(() => { db.exec('COMMIT'); db.close(); }, 250);
   `;
@@ -91,7 +91,7 @@ test('openDb waits for a concurrent migration instead of racing it', async () =>
   });
   try {
     const db = openDb(dbPath);
-    assert.equal(db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value, '11');
+    assert.equal(db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value, '12');
     db.close();
   } finally {
     await worker.terminate();

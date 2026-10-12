@@ -5,7 +5,7 @@ import { config } from '../config.js';
 import { makeDupKey, makeMatchKey, makeTitleKey } from './normalize.js';
 
 // Bump with a matching step in migrate().
-const SCHEMA_VERSION = 11;
+const SCHEMA_VERSION = 12;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS meta (
@@ -93,7 +93,9 @@ CREATE TABLE IF NOT EXISTS app_auth (
   username      TEXT NOT NULL,
   password_hash TEXT NOT NULL,
   token_epoch   INTEGER NOT NULL DEFAULT 0,
-  created_at    INTEGER NOT NULL
+  created_at    INTEGER NOT NULL,
+  oidc_issuer   TEXT,
+  oidc_sub      TEXT
 );
 
 -- Persisted HMAC secret used to sign session cookies (survives restarts).
@@ -215,6 +217,30 @@ CREATE TABLE IF NOT EXISTS api_tokens (
   created_at   INTEGER NOT NULL,
   last_used_at INTEGER,
   revoked_at   INTEGER
+);
+
+-- One in-flight OIDC round trip each; single use, 5-minute life.
+CREATE TABLE IF NOT EXISTS oidc_pending (
+  id            TEXT PRIMARY KEY,
+  state         TEXT NOT NULL,
+  nonce         TEXT NOT NULL,
+  code_verifier TEXT NOT NULL,
+  purpose       TEXT NOT NULL CHECK (purpose IN ('login', 'link')),
+  -- link only: the admin and session epoch that started it, re-checked at the callback.
+  bound_to      TEXT,
+  created_at    INTEGER NOT NULL
+);
+
+-- IdP session ids of our SSO logins, so a sid-only logout token must name one of ours.
+CREATE TABLE IF NOT EXISTS oidc_sessions (
+  sid        TEXT PRIMARY KEY,
+  created_at INTEGER NOT NULL
+);
+
+-- Back-channel logout jti seen, kept until the token could no longer be accepted.
+CREATE TABLE IF NOT EXISTS oidc_logout_replay (
+  jti        TEXT PRIMARY KEY,
+  expires_at INTEGER NOT NULL
 );
 `;
 
@@ -371,6 +397,11 @@ export function migrate(db) {
   // v11: api_tokens (new table, created by SCHEMA) and playlist_items.matchable.
   if (current < 11) {
     addMissingColumns(db, 'playlist_items', [['matchable', 'INTEGER NOT NULL DEFAULT 1']]);
+  }
+
+  if (current < 12) {
+    // oidc_pending/oidc_logout_replay/oidc_sessions come from SCHEMA.
+    addMissingColumns(db, 'app_auth', [['oidc_issuer', 'TEXT'], ['oidc_sub', 'TEXT']]);
   }
 
   db.prepare(

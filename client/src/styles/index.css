@@ -749,6 +749,21 @@ a:hover {
   border-color: var(--lock);
 }
 
+/* A link styled as the secondary button. */
+.sso-link {
+  padding: 0.8rem 1.3rem;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-weight: 600;
+  text-align: center;
+  text-decoration: none;
+}
+
+.sso-link:hover {
+  border-color: var(--lock);
+}
+
 /* ---------- Account ---------- */
 
 .account-page {

@@ -1,13 +1,14 @@
 import { useState } from 'react';
 import { login } from '../api/auth.js';
 import { useAuth } from '../AuthContext.jsx';
+import { ssoErrorMessage } from '../lib/ssoError.js';
 import Logo from '../components/Logo.jsx';
 
 export default function LoginPage() {
-  const { refresh } = useAuth();
+  const { refresh, oidc } = useAuth();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState(null);
+  const [error, setError] = useState(() => ssoErrorMessage(window.location.search));
   const [busy, setBusy] = useState(false);
 
   async function handleSubmit(e) {
@@ -29,6 +30,8 @@ export default function LoginPage() {
         <Logo />
         <h1>Sign in</h1>
         {error && <div className="banner banner-error">{error}</div>}
+        {/* A navigation, not a fetch: the server redirects to the identity provider. */}
+        {oidc?.enabled && <a className="sso-link" href="/api/auth/oidc/start">Sign in with SSO</a>}
         <label>
           Username
           <input value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" required />
