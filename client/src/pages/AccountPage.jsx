@@ -100,7 +100,7 @@ export default function AccountPage() {
         <h2>Backup</h2>
         <p className="muted">
           A copy of Spinmatch&apos;s database: playlists, history, tag-edit undo, links and
-          settings. It also holds your password hash and session secret, so keep it private.
+          settings. It also holds your password hash, so keep it private.
           Your music files are not included.
         </p>
         <a className="button-link" href="/api/backup/download" download>Download database backup</a>

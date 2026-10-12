@@ -59,3 +59,30 @@ test('no session is 401, and an API token is refused even with full scope', asyn
   const res = await fetch(`${base}/api/backup/download`, { headers: { authorization: `Bearer ${token}` } });
   assert.equal(res.status, 403);
 });
+
+test('the backup never contains the session-signing secret, not even in free pages', async () => {
+  const secret = getSigningSecret(db);
+  const bytes = Buffer.from(await (await fetch(`${base}/api/backup/download`, { headers: { cookie } })).arrayBuffer());
+  assert.equal(bytes.includes(Buffer.from(secret)), false, 'secret bytes absent');
+
+  // A restored copy makes a fresh secret, so an old session cookie no longer works there.
+  const out = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'spm-restore-')), 'library.db');
+  fs.writeFileSync(out, bytes);
+  const restored = openDb(out);
+  try {
+    assert.equal(restored.prepare('SELECT COUNT(*) AS n FROM auth_secret').get().n, 0);
+    const { sessionFromToken } = await import('../../src/services/auth.js');
+    const token = cookie.split('=')[1];
+    assert.equal(sessionFromToken(restored, token), null);
+    assert.notEqual(getSigningSecret(restored), secret);
+  } finally {
+    restored.close();
+    fs.rmSync(path.dirname(out), { recursive: true, force: true });
+  }
+});
+
+test('a failure creating the temp copy answers 500 rather than hanging', async (t) => {
+  t.mock.method(fs, 'mkdtempSync', () => { throw Object.assign(new Error('no space'), { code: 'ENOSPC' }); });
+  const res = await fetch(`${base}/api/backup/download`, { headers: { cookie }, signal: AbortSignal.timeout(5000) });
+  assert.equal(res.status, 500);
+});

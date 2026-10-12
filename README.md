@@ -777,8 +777,9 @@ http://localhost:5173.
 history, tag-edit undo, MusicBrainz links, API tokens (hashed) and settings. Your music files are not
 in it; back those up as you already do.
 
-The copy also holds your password hash and the session secret, so keep it private. It needs a signed-in
-session; API tokens can't download it.
+The copy also holds your password hash, so keep it private. It needs a signed-in session; API tokens
+can't download it. It leaves out the secret that signs session cookies, so a leaked backup can't be used
+to sign in; a restored copy makes a new one, and everyone signs in again.
 
 To restore, stop Spinmatch, replace `library.db` (in Docker, the file in your `/data/db` volume) with
 the downloaded file, delete any `library.db-wal` and `library.db-shm` beside it, and start Spinmatch

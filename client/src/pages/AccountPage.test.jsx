@@ -14,6 +14,6 @@ describe('AccountPage', () => {
     const link = await screen.findByRole('link', { name: 'Download database backup' });
     expect(link).toHaveAttribute('href', '/api/backup/download');
     expect(link).toHaveAttribute('download');
-    expect(screen.getByText(/password hash and session secret/)).toBeInTheDocument();
+    expect(screen.getByText(/holds your password hash/)).toBeInTheDocument();
   });
 });
