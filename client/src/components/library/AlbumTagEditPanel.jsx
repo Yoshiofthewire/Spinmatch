@@ -29,10 +29,10 @@ export default function AlbumTagEditPanel({ artist, album, tracks, onSaved, onCa
       key, albumCurrent[key] === VARIES ? '' : toFormValue(albumCurrent[key]),
     ]),
   ));
-  const [rows, setRows] = useState(() => Object.fromEntries(tracks.map((t) => [t.id, {
-    title: t.titleSynthesized ? '' : toFormValue(t.title),
-    trackNumber: toFormValue(t.trackNumber),
-  }])));
+  const [rows, setRows] = useState(() => Object.fromEntries(tracks.map((t) => [t.id, initialRow(t)])));
+  // The panel outlives a tracklist reload (so a save's result survives); a track a
+  // rescan found since gets its form row on first use, and starts unticked.
+  const rowFor = (t) => rows[t.id] ?? initialRow(t);
   const [included, setIncluded] = useState(() => new Set(tracks.map((t) => t.id)));
   const [stage, setStage] = useState('edit'); // edit | confirm | saving | done | error
   const [result, setResult] = useState(null);
@@ -53,7 +53,7 @@ export default function AlbumTagEditPanel({ artist, album, tracks, onSaved, onCa
     .filter((t) => included.has(t.id))
     .map((t) => ({
       trackId: t.id,
-      fields: patchFrom(rows[t.id], {
+      fields: patchFrom(rowFor(t), {
         title: t.titleSynthesized ? null : t.title,
         trackNumber: t.trackNumber,
       }, PER_TRACK_KEYS),
@@ -72,8 +72,8 @@ export default function AlbumTagEditPanel({ artist, album, tracks, onSaved, onCa
     });
   }
 
-  function setRow(id, key, value) {
-    setRows((prev) => ({ ...prev, [id]: { ...prev[id], [key]: value } }));
+  function setRow(track, key, value) {
+    setRows((prev) => ({ ...prev, [track.id]: { ...(prev[track.id] ?? initialRow(track)), [key]: value } }));
   }
 
   async function save() {
@@ -232,18 +232,18 @@ export default function AlbumTagEditPanel({ artist, album, tracks, onSaved, onCa
                       max={999}
                       step={1}
                       className="tag-edit-number"
-                      value={rows[track.id].trackNumber}
+                      value={rowFor(track).trackNumber}
                       aria-label={`Track number for ${track.title}`}
-                      onChange={(e) => setRow(track.id, 'trackNumber', e.target.value)}
+                      onChange={(e) => setRow(track, 'trackNumber', e.target.value)}
                     />
                   </td>
                   <td>
                     <input
                       type="text"
-                      value={rows[track.id].title}
+                      value={rowFor(track).title}
                       placeholder={track.titleSynthesized ? track.title : ''}
                       aria-label={`Title for ${track.title}`}
-                      onChange={(e) => setRow(track.id, 'title', e.target.value)}
+                      onChange={(e) => setRow(track, 'title', e.target.value)}
                     />
                     {/* Boolean(): SQLite flags are 0/1 and React renders a bare 0. */}
                     {Boolean(track.titleSynthesized) && (
@@ -271,4 +271,8 @@ export default function AlbumTagEditPanel({ artist, album, tracks, onSaved, onCa
       )}
     </div>
   );
+}
+
+function initialRow(t) {
+  return { title: t.titleSynthesized ? '' : toFormValue(t.title), trackNumber: toFormValue(t.trackNumber) };
 }

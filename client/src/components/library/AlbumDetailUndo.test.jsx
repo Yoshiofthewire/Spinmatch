@@ -42,3 +42,17 @@ describe('AlbumDetail album edit', () => {
     expect(screen.getByRole('button', { name: 'Undo' })).toBeInTheDocument();
   });
 });
+
+describe('AlbumTagEditPanel', () => {
+  it('renders a track that a rescan found while the editor was open, unticked', async () => {
+    const { default: AlbumTagEditPanel } = await import('./AlbumTagEditPanel.jsx');
+    const second = { ...track, id: 2, title: 'Morning Bell', trackNumber: 10 };
+    const props = { artist: 'Radiohead', album: 'Kid A', onSaved: () => {}, onCancel: () => {} };
+    const { rerender } = render(<AlbumTagEditPanel {...props} tracks={[track]} />);
+    rerender(<AlbumTagEditPanel {...props} tracks={[track, second]} />);
+
+    expect(screen.getByLabelText('Title for Morning Bell')).toHaveValue('Morning Bell');
+    expect(screen.getByLabelText('Include Morning Bell')).not.toBeChecked();
+    expect(screen.getByLabelText('Include Idioteque')).toBeChecked();
+  });
+});
