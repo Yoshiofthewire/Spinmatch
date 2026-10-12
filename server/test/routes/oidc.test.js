@@ -409,8 +409,28 @@ test('the replay record is kept past the token lifetime', async () => {
 
 test('sid-only and sub-only logout tokens are accepted', async () => {
   await link();
+  await roundTrip(); // an SSO login records the IdP session id the sid-only token names
   assert.equal((await postLogout(idp.logoutToken((h, c) => { delete c.sub; }))).status, 200);
   assert.equal((await postLogout(idp.logoutToken((h, c) => { delete c.sid; }))).status, 200);
+});
+
+test('a sid-only logout token for a session we never created is refused and signs nobody out', async () => {
+  await link();
+  const { session } = await roundTrip();
+  const res = await postLogout(idp.logoutToken((h, c) => { delete c.sub; c.sid = 'someone-elses-idp-session'; }));
+  assert.equal(res.status, 400);
+  assert.equal((await status(session)).authenticated, true);
+});
+
+test('a link started by a session that was revoked before the callback is refused', async () => {
+  const { revokeSessions } = await import('../../src/services/auth.js');
+  const result = await roundTrip({
+    purpose: 'link',
+    session: passwordSession(),
+    editCallback: (url) => { revokeSessions(db); return url; }, // e.g. logout everywhere mid-flow
+  });
+  assert.equal(result.location, '/account?sso_error=expired');
+  assert.equal(db.prepare('SELECT oidc_sub FROM app_auth').get().oidc_sub, null);
 });
 
 const badLogout = {

@@ -226,7 +226,15 @@ CREATE TABLE IF NOT EXISTS oidc_pending (
   nonce         TEXT NOT NULL,
   code_verifier TEXT NOT NULL,
   purpose       TEXT NOT NULL CHECK (purpose IN ('login', 'link')),
+  -- link only: the admin and session epoch that started it, re-checked at the callback.
+  bound_to      TEXT,
   created_at    INTEGER NOT NULL
+);
+
+-- IdP session ids of our SSO logins, so a sid-only logout token must name one of ours.
+CREATE TABLE IF NOT EXISTS oidc_sessions (
+  sid        TEXT PRIMARY KEY,
+  created_at INTEGER NOT NULL
 );
 
 -- Back-channel logout jti seen, kept until the token could no longer be accepted.
@@ -392,7 +400,7 @@ export function migrate(db) {
   }
 
   if (current < 12) {
-    // oidc_pending/oidc_logout_replay come from SCHEMA.
+    // oidc_pending/oidc_logout_replay/oidc_sessions come from SCHEMA.
     addMissingColumns(db, 'app_auth', [['oidc_issuer', 'TEXT'], ['oidc_sub', 'TEXT']]);
   }
 

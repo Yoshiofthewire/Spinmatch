@@ -70,6 +70,13 @@ export function discover() {
 
 // ---- Pending round trips (single-use rows behind an HttpOnly cookie) ----
 
+// Identifies the admin row and its current session epoch; a revocation or a recreated
+// admin changes it, which invalidates a link that was started before.
+export function adminBinding(db) {
+  const admin = db.prepare('SELECT created_at, token_epoch FROM app_auth WHERE id = 1').get();
+  return admin ? `${admin.created_at}:${admin.token_epoch}` : null;
+}
+
 export async function startFlow(db, purpose) {
   const { cfg } = await discover();
   const row = {
@@ -81,8 +88,8 @@ export async function startFlow(db, purpose) {
   const now = Date.now();
   db.prepare('DELETE FROM oidc_pending WHERE created_at <= ?').run(now - PENDING_TTL_MS);
   db.prepare(
-    'INSERT INTO oidc_pending (id, state, nonce, code_verifier, purpose, created_at) VALUES (?, ?, ?, ?, ?, ?)',
-  ).run(row.id, row.state, row.nonce, row.verifier, purpose, now);
+    'INSERT INTO oidc_pending (id, state, nonce, code_verifier, purpose, bound_to, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+  ).run(row.id, row.state, row.nonce, row.verifier, purpose, purpose === 'link' ? adminBinding(db) : null, now);
   const url = client.buildAuthorizationUrl(cfg, {
     redirect_uri: config.oidc.redirectUri,
     scope: 'openid profile email',
@@ -143,7 +150,16 @@ function checkIdToken(meta, idToken, claims) {
   // Without sid, a session-scoped back-channel logout could never reach this login.
   if (meta.backchannel_logout_session_supported && (typeof claims.sid !== 'string' || !claims.sid)) fail('no sid');
   if (claims.auth_time !== undefined && claims.auth_time > claims.iat + LEEWAY_S) fail('auth_time after iat');
-  return { iss: claims.iss, sub: claims.sub };
+  return { iss: claims.iss, sub: claims.sub, sid: typeof claims.sid === 'string' ? claims.sid : null };
+}
+
+const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // matches the session cookie
+
+export function recordSid(db, sid) {
+  if (!sid) return;
+  const now = Date.now();
+  db.prepare('DELETE FROM oidc_sessions WHERE created_at < ?').run(now - SESSION_TTL_MS);
+  db.prepare('INSERT INTO oidc_sessions (sid, created_at) VALUES (?, ?) ON CONFLICT(sid) DO NOTHING').run(sid, now);
 }
 
 // ---- Account link (issuer + sub on the admin row) ----
@@ -223,7 +239,11 @@ export function applyLogout(db, { jti, replayUntil }) {
 }
 
 // The logout must name the linked identity; sid alone can only end that same identity.
-export function logoutMatchesLink(db, { sub }) {
+// With sub it must be the linked identity; a sid-only token must name a session one of
+// our SSO logins created, or any IdP user's logout could sign the admin out.
+export function logoutMatchesLink(db, { sub, sid }) {
   const link = getLink(db);
-  return Boolean(link && link.issuer === config.oidc.issuer && (sub === undefined || sub === link.sub));
+  if (!link || link.issuer !== config.oidc.issuer) return false;
+  if (sub !== undefined) return sub === link.sub;
+  return typeof sid === 'string' && Boolean(db.prepare('SELECT 1 FROM oidc_sessions WHERE sid = ?').get(sid));
 }

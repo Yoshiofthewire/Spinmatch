@@ -3,7 +3,7 @@ import { getDb } from '../lib/db.js';
 import { getAdmin } from '../services/auth.js';
 import {
   oidcEnabled, startFlow, takePending, finishFlow, isLinked, getLink, setLink, SsoError, describe,
-  verifyLogoutToken, applyLogout, logoutMatchesLink, PENDING_TTL_MS,
+  verifyLogoutToken, applyLogout, logoutMatchesLink, PENDING_TTL_MS, adminBinding, recordSid,
 } from '../services/oidc.js';
 import { requireAuth } from '../middleware/requireAuth.js';
 import { serializeCookie, parseCookies } from '../lib/cookies.js';
@@ -76,11 +76,16 @@ oidcRouter.get('/callback', async (req, res) => {
     const search = new URL(req.originalUrl, 'http://unused').search;
     const identity = await finishFlow(pending, search);
     if (pending.purpose === 'link') {
+      // The session that started this link may have been revoked since (logout, password).
+      if (!pending.bound_to || pending.bound_to !== adminBinding(db)) {
+        throw new SsoError('expired', 'the session that started this link was revoked');
+      }
       setLink(db, identity);
       return res.redirect('/account?sso_linked=1');
     }
     if (!isLinked(db, identity)) throw new SsoError('unlinked', 'identity is not the linked one');
     const admin = getAdmin(db);
+    recordSid(db, identity.sid);
     setSession(req, res, admin.username, admin.tokenEpoch);
     res.redirect('/');
   } catch (err) {

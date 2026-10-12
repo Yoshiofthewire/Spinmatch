@@ -345,8 +345,9 @@ test('v12 adds the OIDC link columns to an existing admin row', () => {
     const db = openDb(dbPath);
     const row = db.prepare('SELECT username, token_epoch, oidc_issuer, oidc_sub FROM app_auth').get();
     assert.deepEqual({ ...row }, { username: 'yoshi', token_epoch: 3, oidc_issuer: null, oidc_sub: null });
-    db.prepare("INSERT INTO oidc_pending VALUES ('i', 's', 'n', 'v', 'login', 1)").run();
+    db.prepare("INSERT INTO oidc_pending (id, state, nonce, code_verifier, purpose, created_at) VALUES ('i', 's', 'n', 'v', 'login', 1)").run();
     db.prepare("INSERT INTO oidc_logout_replay VALUES ('j', 1)").run();
+    db.prepare("INSERT INTO oidc_sessions VALUES ('sid', 1)").run();
     db.close();
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
