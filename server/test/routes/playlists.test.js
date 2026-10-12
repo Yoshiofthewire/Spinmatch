@@ -286,3 +286,91 @@ test('config advertises whether export to player is available', async () => {
   const body = await (await fetch(`${baseUrl}/api/config`)).json();
   assert.equal(body.playlistExportEnabled, true);
 });
+
+test('import: creates the playlist, path and #EXTINF hits resolve, the rest are gaps', async () => {
+  const text = [
+    '#EXTM3U',
+    'A/Al/01.mp3',
+    '#EXTINF:200,A - One',
+    'C:\\Users\\me\\Music\\elsewhere.mp3',
+    '#EXTINF:100,Nobody - Nothing',
+    '../../etc/passwd',
+  ].join('\r\n');
+  const res = await postJson(`${baseUrl}/api/playlists/import`, { name: 'Imported', text });
+  assert.equal(res.status, 200, await res.clone().text());
+  const body = await res.json();
+  assert.equal(body.playlist.name, 'Imported');
+  assert.equal(body.added, 3);
+  assert.equal(body.gaps, 1);
+  assert.equal(body.truncated, false);
+
+  const saved = await (await fetch(`${baseUrl}/api/playlists/${body.playlist.id}`)).json();
+  assert.deepEqual(saved.items.map((i) => [i.source, i.title, Boolean(i.track)]), [
+    ['import', 'One', true], ['import', 'One', true], ['import', 'Nothing', false],
+  ]);
+
+  const dupe = await postJson(`${baseUrl}/api/playlists/import`, { name: 'imported', text });
+  assert.equal(dupe.status, 409);
+});
+
+test('import: reports truncation past 5000 entries', async () => {
+  const text = Array.from({ length: 5001 }, (_, i) => `x${i}.mp3`).join('\n');
+  const res = await postJson(`${baseUrl}/api/playlists/import`, { name: 'Over the cap', text });
+  const body = await res.json();
+  assert.equal(res.status, 200, JSON.stringify(body));
+  assert.equal(body.added, 5000);
+  assert.equal(body.truncated, true);
+});
+
+test('import: an empty file or missing text is a 400 and creates nothing', async () => {
+  for (const payload of [{ name: 'Empty', text: '#EXTM3U\n' }, { name: 'Empty' }]) {
+    assert.equal((await postJson(`${baseUrl}/api/playlists/import`, payload)).status, 400);
+  }
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM playlists WHERE name = 'Empty'").get().n, 0);
+});
+
+test('import accepts a 1 MB body; other routes still refuse it; import refuses 3 MB', async () => {
+  const text = `${'#'.repeat(1024 * 1024)}\nA/Al/01.mp3`;
+  const ok = await postJson(`${baseUrl}/api/playlists/import`, { name: 'Huge', text });
+  assert.equal(ok.status, 200, await ok.clone().text());
+
+  const other = await postJson(`${baseUrl}/api/playlists`, { name: 'x', pad: text });
+  assert.equal(other.status, 413);
+  // Another spelling reaches the same route but gets the small global parser.
+  const otherSpelling = await postJson(`${baseUrl}/api/Playlists/import`, { name: 'Huge2', text });
+  assert.equal(otherSpelling.status, 413);
+
+  const tooBig = await postJson(`${baseUrl}/api/playlists/import`, {
+    name: 'Huger', text: 'x'.repeat(3 * 1024 * 1024),
+  });
+  assert.equal(tooBig.status, 413);
+});
+
+test('import: a failure adding items leaves no empty playlist behind', async () => {
+  db.exec("CREATE TEMP TRIGGER fail_items BEFORE INSERT ON playlist_items BEGIN SELECT RAISE(ABORT, 'boom'); END");
+  try {
+    const res = await postJson(`${baseUrl}/api/playlists/import`, { name: 'Half made', text: 'A/Al/01.mp3' });
+    assert.equal(res.status, 500);
+    assert.equal(db.prepare("SELECT COUNT(*) AS n FROM playlists WHERE name = 'Half made'").get().n, 0);
+  } finally {
+    db.exec('DROP TRIGGER IF EXISTS temp.fail_items');
+  }
+});
+
+test('import: a bare file name never matches; #EXTINF does, even beside an outside path', async () => {
+  const text = [
+    '#EXTM3U',
+    // Outside MUSIC_DIR: never looked up, but its #EXTINF text is.
+    '#EXTINF:200,A - One',
+    '../../elsewhere/whatever.mp3',
+    // No #EXTINF and not in the library: the file name "One" must stay display text.
+    'Somewhere/One.mp3',
+  ].join('\n');
+  const res = await postJson(`${baseUrl}/api/playlists/import`, { name: 'Names only', text });
+  const body = await res.json();
+  assert.equal(res.status, 200, JSON.stringify(body));
+  assert.equal(body.gaps, 1);
+
+  const saved = await (await fetch(`${baseUrl}/api/playlists/${body.playlist.id}`)).json();
+  assert.deepEqual(saved.items.map((i) => [i.title, Boolean(i.track)]), [['One', true], ['One', false]]);
+});

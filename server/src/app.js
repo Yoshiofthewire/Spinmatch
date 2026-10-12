@@ -13,7 +13,9 @@ import { libraryRouter } from './routes/library.js';
 import { playlistsRouter } from './routes/playlists.js';
 import { historyRouter } from './routes/history.js';
 import { authRouter } from './routes/auth.js';
-import { requireAuth } from './middleware/requireAuth.js';
+import { tokensRouter } from './routes/tokens.js';
+import { requireAuth, sessionOnly } from './middleware/requireAuth.js';
+import { bearerAuth } from './middleware/bearerAuth.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { securityHeaders } from './middleware/securityHeaders.js';
 import { sameOriginOnly } from './middleware/sameOriginOnly.js';
@@ -41,7 +43,12 @@ export function createApp({ gate = requireAuth, clientDist = CLIENT_DIST } = {})
     }
   }
   app.use(securityHeaders);
-  app.use(express.json({ limit: '256kb' }));
+  // Before the CSRF guard, which exempts the token requests this marks.
+  app.use('/api', bearerAuth);
+  // m3u import parses its own 2mb body behind the gate. Any other spelling of the
+  // path gets this 256kb parser, so a mismatch fails small.
+  const json = express.json({ limit: '256kb' });
+  app.use((req, res, next) => (req.path === '/api/playlists/import' ? next() : json(req, res, next)));
 
   // CSRF guard for all unsafe methods; SSE GETs that do real work opt in per route.
   app.use('/api', (req, res, next) => (
@@ -55,9 +62,10 @@ export function createApp({ gate = requireAuth, clientDist = CLIENT_DIST } = {})
   // Public routes.
   app.get('/api/health', (req, res) => res.json({ ok: true }));
   app.use('/api/config', configRouter);
-  app.use('/api/auth', authRouter);
+  app.use('/api/auth', sessionOnly, authRouter);
 
-  // Everything else requires a session.
+  // Everything else requires a session or an API token; credentials need a session.
+  app.use('/api/tokens', sessionOnly, gate, tokensRouter);
   app.use('/api/search', gate, searchRouter);
   app.use('/api/artists', gate, artistsRouter);
   app.use('/api/releases', gate, releasesRouter);

@@ -82,6 +82,7 @@ test('every /api route requires a session except the documented public ones', as
     '/api/ingest/scan',
     '/api/ingest/file/candidates?path=x',
     '/api/history',
+    '/api/tokens',
   ];
   for (const url of PROTECTED) {
     const res = await fetch(baseUrl + url, { redirect: 'manual' });
@@ -170,7 +171,7 @@ test('cross-site state-changing requests are refused across the whole API', asyn
   const POSTS = ['/api/verify', '/api/verify/album/11111111-1111-4111-8111-111111111111',
     '/api/library/scan', '/api/library/fix', '/api/library/owned', '/api/library/rescan',
     '/api/library/artist-link', '/api/library/trash/restore', '/api/ingest/process', '/api/ingest/file/resolve',
-    '/api/history/import'];
+    '/api/history/import', '/api/tokens', '/api/playlists/import'];
   for (const url of POSTS) {
     const res = await fetch(baseUrl + url, {
       method: 'POST',

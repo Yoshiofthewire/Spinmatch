@@ -108,7 +108,7 @@ test('a fresh database is created at the current version with no migration work'
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'spinmatch-fresh-'));
   const db = openDb(path.join(dir, 'library.db'));
   const version = db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get();
-  assert.equal(version.value, '10');
+  assert.equal(version.value, '11');
   db.close();
   fs.rmSync(dir, { recursive: true, force: true });
 });
@@ -142,7 +142,7 @@ test('a forced re-tag happens once per version that needs one, not on every upgr
     assert.equal(second.prepare('SELECT change_key FROM local_tracks').get().change_key, '');
     assert.equal(
       second.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value,
-      '10',
+      '11',
     );
     second.prepare("UPDATE local_tracks SET change_key = '20:2'").run();
     second.close();
@@ -292,7 +292,7 @@ test('v7 backfills match_key and title_key without re-reading files', () => {
   db.prepare(`INSERT INTO local_tracks (path, artist, album, title, change_key, updated_at)
               VALUES ('/m/a.mp3', 'Portishead', 'Dummy', 'Roads [Live]', 'k', 1)`).run();
 
-  assert.equal(migrate(db), 10);
+  assert.equal(migrate(db), 11);
 
   const row = db.prepare("SELECT match_key AS m, title_key AS t, change_key AS c FROM local_tracks WHERE path = '/m/a.mp3'").get();
   assert.equal(row.m, 'portishead\u001froads');
@@ -317,7 +317,7 @@ test('v8 refolds keys so NFD and NFC spellings of one track agree', () => {
   db.prepare(`INSERT INTO playlist_items (playlist_id, position, artist, title, match_key, title_key, source, added_at)
               VALUES (1, 0, ?, 'Hoppípolla', 'stale', 'stale', 'manual', 1)`).run(nfc);
 
-  assert.equal(migrate(db), 10);
+  assert.equal(migrate(db), 11);
 
   const track = db.prepare('SELECT dup_key d, match_key m, title_key t, change_key c FROM local_tracks').get();
   const item = db.prepare('SELECT match_key m, title_key t FROM playlist_items').get();

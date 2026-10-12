@@ -1,9 +1,16 @@
-import { BadRequestError } from '../lib/httpErrors.js';
+import { BadRequestError, ForbiddenError } from '../lib/httpErrors.js';
+import { READ_ONLY_MESSAGE } from './requireAuth.js';
 
 // CSRF guard. Fails closed: Sec-Fetch-Site, else Origin, else Referer must prove same-origin.
 // Referer is needed: plain-HTTP LAN installs get no Sec-Fetch-Site, and same-origin GETs
 // (EventSource) send no Origin.
 export function sameOriginOnly(req, res, next) {
+  // Set only by bearerAuth: no ambient credential, so no CSRF. Every route this guards
+  // changes state or does real work (SSE GETs), so a read-only token stops here.
+  if (req.auth?.kind === 'token') {
+    return req.auth.scope === 'full' ? next() : next(new ForbiddenError(READ_ONLY_MESSAGE));
+  }
+
   const site = req.get('Sec-Fetch-Site');
   if (site) {
     // 'none' = user navigation. 'same-site' rejected: a sibling subdomain isn't us.

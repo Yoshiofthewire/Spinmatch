@@ -2,6 +2,7 @@ import {
   argon2 as _argon2, scrypt as _scrypt, randomBytes, createHash, createHmac, timingSafeEqual,
 } from 'node:crypto';
 import { promisify } from 'node:util';
+import { revokeAllTokens } from './apiTokens.js';
 
 const argon2 = promisify(_argon2);
 const scrypt = promisify(_scrypt);
@@ -160,8 +161,9 @@ export function createAdmin(db, username, passwordHash) {
     + 'VALUES (1, ?, ?, 0, ?) ON CONFLICT(id) DO NOTHING'
   ).run(username, passwordHash, Date.now());
   if (!changes) return false;
-  // A recreated admin must not accept the previous admin's tokens.
+  // A recreated admin must not accept the previous admin's sessions or API tokens.
   rotateSigningSecret(db);
+  revokeAllTokens(db);
   return true;
 }
 

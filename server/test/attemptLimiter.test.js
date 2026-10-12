@@ -32,3 +32,17 @@ test('the window resets after windowMs', () => {
   t = 1001; // window elapsed
   assert.equal(limit('ip').allowed, true);
 });
+
+test('blockedFor: 0 until max failures are recorded, then the time left in the window', () => {
+  let t = 0;
+  const limit = createAttemptLimiter({ max: 2, windowMs: 1000, now: () => t });
+  assert.equal(limit.blockedFor('ip'), 0);
+  limit('ip');
+  assert.equal(limit.blockedFor('ip'), 0);
+  limit('ip');
+  t = 400;
+  assert.equal(limit.blockedFor('ip'), 600);
+  assert.equal(limit.blockedFor('other'), 0);
+  t = 1000;
+  assert.equal(limit.blockedFor('ip'), 0);
+});
