@@ -18,6 +18,28 @@ const imageCache = new TTLCache({
   sizeOf: (value) => value?.bytes?.length ?? 0,
 });
 
+// Cover Art Archive redirects to archive.org mirrors. Redirects are followed by hand and
+// only to those hosts over https: the bytes end up in the user's files, so a redirect
+// must never reach a LAN address or anywhere else.
+const MAX_REDIRECTS = 5;
+const ALLOWED_HOST = /(^|\.)(coverartarchive\.org|archive\.org)$/;
+
+async function fetchArchive(url, init) {
+  let current = new URL(url);
+  for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
+    const response = await fetch(current, { ...init, redirect: 'manual' });
+    const location = response.status >= 300 && response.status < 400 && response.headers.get('location');
+    if (!location) return { response, url: current.href };
+    await response.body?.cancel();
+    const next = new URL(location, current);
+    if (next.protocol !== 'https:' || !ALLOWED_HOST.test(next.hostname)) {
+      throw new Error(`refusing a redirect to ${next.host}`);
+    }
+    current = next;
+  }
+  throw new Error('too many redirects');
+}
+
 // Cover Art Archive front-cover URL, or null (route falls back to a placeholder).
 export async function getFrontCoverUrl(releaseGroupMbid) {
   const cached = cache.get(releaseGroupMbid);
@@ -26,12 +48,11 @@ export async function getFrontCoverUrl(releaseGroupMbid) {
   const url = `https://coverartarchive.org/release-group/${releaseGroupMbid}/front`;
   let result = null;
   try {
-    const response = await fetch(url, {
+    const { response, url: finalUrl } = await fetchArchive(url, {
       method: 'HEAD',
-      redirect: 'follow',
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
-    if (response.ok) result = response.url;
+    if (response.ok) result = finalUrl;
   } catch (err) {
     console.warn(`coverArt: front-cover lookup failed for ${releaseGroupMbid}: ${err.message}`);
     result = null;
@@ -64,7 +85,7 @@ export async function getFrontCoverImage(releaseGroupMbid) {
   let result = null;
   if (url) {
     try {
-      const response = await fetch(url, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+      const { response } = await fetchArchive(url, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
       const declared = Number(response.headers.get('content-length'));
       if (response.ok && !(declared > MAX_IMAGE_BYTES)) {
         const bytes = await readCapped(response, MAX_IMAGE_BYTES);

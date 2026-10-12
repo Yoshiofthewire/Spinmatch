@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { MockAgent, setGlobalDispatcher } from 'undici';
+import { MockAgent, setGlobalDispatcher, getGlobalDispatcher } from 'undici';
 
 const { getFrontCoverUrl, getFrontCoverImage } = await import('../src/services/coverArt.js');
 
@@ -116,4 +116,33 @@ test('getFrontCoverImage refuses art that declares itself over the limit', async
     .reply(200, '', { headers: { 'content-type': 'image/jpeg', 'content-length': String(MAX_IMAGE_BYTES + 1) } });
 
   assert.equal(await getFrontCoverImage('rg-huge'), null);
+});
+
+test('a redirect off Cover Art Archive / archive.org, or to plain http, is never followed', async () => {
+  for (const [id, location] of [
+    ['rg-lan', 'https://192.168.1.10/admin.png'],
+    ['rg-other-host', 'https://evil.example/front.jpg'],
+    ['rg-http', 'http://ia800.us.archive.org/front.jpg'],
+    ['rg-lookalike', 'https://notarchive.org/front.jpg'],
+  ]) {
+    const pool = mockCoverArtArchive();
+    pool.intercept({ path: `/release-group/${id}/front`, method: 'HEAD' }).reply(307, '', { headers: { location } });
+    // The target would answer if it were ever asked.
+    const target = new URL(location);
+    getGlobalDispatcher().get(target.origin).intercept({ path: target.pathname, method: 'HEAD' }).reply(200, '');
+    assert.equal(await getFrontCoverUrl(id), null, location);
+  }
+});
+
+test('a redirect to an archive.org mirror is followed', async () => {
+  const agent = new MockAgent();
+  agent.disableNetConnect();
+  setGlobalDispatcher(agent);
+  agent.get('https://coverartarchive.org')
+    .intercept({ path: '/release-group/rg-mirror/front', method: 'HEAD' })
+    .reply(307, '', { headers: { location: 'https://ia800.us.archive.org/0/items/x/front.jpg' } });
+  agent.get('https://ia800.us.archive.org')
+    .intercept({ path: '/0/items/x/front.jpg', method: 'HEAD' })
+    .reply(200, '');
+  assert.equal(await getFrontCoverUrl('rg-mirror'), 'https://ia800.us.archive.org/0/items/x/front.jpg');
 });
