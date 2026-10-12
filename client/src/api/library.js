@@ -90,13 +90,24 @@ export function applyBulkFix({ artist, album, source, trackIds }) {
 
 // Hand-typed values: the browser does say what to write here.
 // Absent or blank fields are left alone; editing never removes a tag.
-export function editTrackTags({ trackId, fields }) {
-  return patch(`/library/track/${trackId}/tags`, { fields });
+// `expectedMtimeMs` (the loaded row's) makes the server 409 if the file changed since.
+export function editTrackTags({ trackId, fields, expectedMtimeMs }) {
+  return patch(`/library/track/${trackId}/tags`, { fields, expectedMtimeMs });
 }
 
 // `perTrack` is `[{trackId, fields}]`. Omitting `trackIds` means the whole album.
 export function editAlbumTags({ artist, album, fields, perTrack, trackIds }) {
   return post('/library/album/tags', { artist, album, fields, perTrack, trackIds });
+}
+
+// Journaled tag writes, newest first.
+export function listChanges({ limit, offset } = {}) {
+  return get(`/library/changes${qs({ limit, offset })}`);
+}
+
+// Files changed since the write are skipped and come back in `conflicts`.
+export function undoChange(batchId) {
+  return post(`/library/changes/${batchId}/undo`, {});
 }
 
 // Names a gap row's track (one MusicBrainz resolve).

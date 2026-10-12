@@ -1,6 +1,8 @@
+import UndoChange from './UndoChange.jsx';
+
 // Multi-file write outcome. Writes don't stop at a failure, so always list the
 // failed files (server messages carry no absolute paths).
-export default function WriteResultBanner({ result, verb = 'Wrote', nothingLabel }) {
+export default function WriteResultBanner({ result, verb = 'Wrote', nothingLabel, onUndone }) {
   const applied = result.applied?.length ?? 0;
   const failed = result.failed ?? [];
 
@@ -21,6 +23,7 @@ export default function WriteResultBanner({ result, verb = 'Wrote', nothingLabel
           </ul>
         </div>
       )}
+      {result.batchId && <UndoChange batchId={result.batchId} onUndone={onUndone} />}
     </>
   );
 }

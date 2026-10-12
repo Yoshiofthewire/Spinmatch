@@ -5,6 +5,7 @@ import { tagsFromPath } from './libraryPathTags.js';
 import { resolveAlbum } from './libraryDiscography.js';
 import { resolvePrimaryReleaseForGroup, getReleaseWithTracks } from './musicbrainz.js';
 import { readTags, writeTags, plannedFills } from './tags.js';
+import { openJournal } from './tagJournal.js';
 import { reindexFile } from './libraryScanner.js';
 import { assertReadableInsideMusicDir } from '../lib/paths.js';
 import { withFileLock } from '../lib/fileLock.js';
@@ -167,7 +168,7 @@ export async function previewBulkFix({ artist = null, album, source = 'path', db
  * The client picks track ids, never tag values; values come from the server-side preview.
  * Failures are per track, so one bad file doesn't hide what was already written.
  * @returns {{applied: Array<{trackId, filledFields}>, failed: Array<{trackId, message}>,
- *   skipped: number}}
+ *   skipped: number, batchId: number|null}}
  */
 export async function applyBulkFix({
   artist = null, album, source = 'path', trackIds, preview = null, db = getDb(),
@@ -184,26 +185,34 @@ export async function applyBulkFix({
   // Intersecting with the preview confines the request to the named album.
   const chosen = resolved.tracks.filter((t) => wanted.has(t.trackId) && !t.unreadable && t.proposed);
 
+  const journal = openJournal(db, 'bulk-fix', `Bulk fix: ${resolved.artist ?? 'Unknown artist'} – ${resolved.album}`);
   const applied = [];
   const failed = [];
-  for (const track of chosen) {
-    await yieldToEventLoop();
-    try {
-      const real = await assertReadableInsideMusicDir(track.path);
-      const filledFields = await withFileLock(real, async () => {
-        // Under the lock, so nothing can change the file between check and write.
-        await assertUnchangedSincePreview(track);
-        const written = await writeTags(real, track.proposed);
-        await reindexFile(real);
-        return written.filledFields;
-      });
-      applied.push({ trackId: track.trackId, filledFields });
-    } catch (err) {
-      // Raw fs messages carry absolute server paths: log them, return only a code.
-      console.warn(`libraryBulkFix: track ${track.trackId} failed: ${err.message}`);
-      failed.push({ trackId: track.trackId, ...describeFailure(err) });
+  try {
+    for (const track of chosen) {
+      await yieldToEventLoop();
+      try {
+        const real = await assertReadableInsideMusicDir(track.path);
+        const filledFields = await withFileLock(real, async () => {
+          // Under the lock, so nothing can change the file between check and write.
+          await assertUnchangedSincePreview(track);
+          const written = await writeTags(real, track.proposed);
+          await journal.record({ trackId: track.trackId, real }, written);
+          await reindexFile(real);
+          return written.filledFields;
+        });
+        applied.push({ trackId: track.trackId, filledFields });
+      } catch (err) {
+        // Raw fs messages carry absolute server paths: log them, return only a code.
+        console.warn(`libraryBulkFix: track ${track.trackId} failed: ${err.message}`);
+        failed.push({ trackId: track.trackId, ...describeFailure(err) });
+      }
     }
+  } finally {
+    journal.close();
   }
 
-  return { applied, failed, skipped: wanted.size - applied.length - failed.length };
+  return {
+    applied, failed, skipped: wanted.size - applied.length - failed.length, batchId: journal.batchId,
+  };
 }

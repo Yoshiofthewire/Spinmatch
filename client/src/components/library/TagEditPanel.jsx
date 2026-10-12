@@ -43,6 +43,7 @@ export default function TagEditPanel({ track, onSaved, onCancel, onPlay }) {
       const result = await editTrackTags({
         trackId: track.id,
         fields: patchFrom(values, current, TAG_FIELDS.map((f) => f.key)),
+        expectedMtimeMs: track.mtimeMs ?? undefined,
       });
       onSaved(result);
     } catch (err) {
@@ -68,7 +69,7 @@ export default function TagEditPanel({ track, onSaved, onCancel, onPlay }) {
         {track.path && <p className="muted mono fix-path">{track.path}</p>}
       </div>
 
-      {/* Read back hand-typed changes before an irreversible write. */}
+      {/* Read back hand-typed changes before writing them. */}
       {(stage === 'confirm' || stage === 'saving') && (
         <div className="tag-edit-confirm">
           <p>Write these tags to the file?</p>

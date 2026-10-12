@@ -1,12 +1,14 @@
+import fs from 'node:fs/promises';
 import { getDb } from '../lib/db.js';
 import { getTrackById, getAlbumTracksForRepair } from './libraryRepo.js';
 import { writeTags } from './tags.js';
+import { openJournal } from './tagJournal.js';
 import { reindexFile } from './libraryScanner.js';
 import { assertReadableInsideMusicDir } from '../lib/paths.js';
 import { withFileLock } from '../lib/fileLock.js';
 import { yieldToEventLoop, describeFailure } from '../lib/writeLoop.js';
 import { MAX_BULK_FIX } from './libraryBulkFix.js';
-import { NotFoundError, BadRequestError } from '../lib/httpErrors.js';
+import { NotFoundError, BadRequestError, ConflictError } from '../lib/httpErrors.js';
 import {
   MAX_TRACK_NUMBER, MAX_DISC_NUMBER, MIN_YEAR, MAX_YEAR, MAX_TAG_TEXT,
 } from '../lib/tagLimits.js';
@@ -83,26 +85,39 @@ export function validateTagEdit(fields, { allow = EDITABLE_FIELDS } = {}) {
 
 // Write and re-index under one lock: concurrent rewrites corrupt the file, and
 // re-indexing outside it could read a half-written file.
-async function writeOne(real, patch) {
+async function writeOne(journal, trackId, real, patch, expectedMtimeMs = null) {
   return withFileLock(real, async () => {
-    const { filledFields } = await writeTags(real, patch, { overwrite: true });
+    // The form was filled from the index; refuse if the file moved on since.
+    if (expectedMtimeMs != null && Math.trunc((await fs.stat(real)).mtimeMs) !== expectedMtimeMs) {
+      throw new ConflictError('This file changed since you opened it. Close the editor and try again.');
+    }
+    const written = await writeTags(real, patch, { overwrite: true });
+    await journal.record({ trackId, real }, written);
     await reindexFile(real);
-    return filledFields;
+    return written.filledFields;
   });
 }
 
-// No staleness check (unlike bulk fix): the user typed these values.
-export async function editTrackTags({ trackId, fields, db = getDb() }) {
+const named = (artist, rest) => `${artist ?? 'Unknown artist'} – ${rest}`;
+
+// `expectedMtimeMs` is the track row's mtimeMs the client loaded; omitted skips the check.
+export async function editTrackTags({ trackId, fields, expectedMtimeMs = null, db = getDb() }) {
   const patch = validateTagEdit(fields);
   const track = getTrackById(db, trackId);
   if (!track) throw new NotFoundError('Track not found');
   // Re-validate even our own indexed path before writing.
   const real = await assertReadableInsideMusicDir(track.path);
 
-  const changedFields = await writeOne(real, patch);
+  const journal = openJournal(db, 'edit', `Edited tags: ${named(track.artist, track.title)}`);
+  let changedFields;
+  try {
+    changedFields = await writeOne(journal, trackId, real, patch, expectedMtimeMs);
+  } finally {
+    journal.close();
+  }
 
   // Re-read row: re-index recomputes *_synthesized and dup_key.
-  return { trackId, changedFields, track: getTrackById(db, trackId) };
+  return { trackId, changedFields, batchId: journal.batchId, track: getTrackById(db, trackId) };
 }
 
 // `fields` on every chosen track, plus `perTrack` overrides.
@@ -143,23 +158,28 @@ export async function editAlbumTags({
     throw new BadRequestError(`at most ${MAX_BULK_FIX} tracks per request`);
   }
 
+  const journal = openJournal(db, 'album-edit', `Album tags: ${named(artist, album)}`);
   const applied = [];
   const failed = [];
-  for (const id of wanted) {
-    const row = byId.get(id);
-    const patch = { ...albumPatch, ...(overrides.get(id) ?? {}) };
-    if (!Object.keys(patch).length) continue;
+  try {
+    for (const id of wanted) {
+      const row = byId.get(id);
+      const patch = { ...albumPatch, ...(overrides.get(id) ?? {}) };
+      if (!Object.keys(patch).length) continue;
 
-    // taglib is sync; yield so the loop doesn't hog the main thread.
-    await yieldToEventLoop();
-    try {
-      const real = await assertReadableInsideMusicDir(row.path);
-      applied.push({ trackId: id, changedFields: await writeOne(real, patch) });
-    } catch (err) {
-      // Raw message has an absolute path: log it, don't return it.
-      console.warn(`tagEdit: ${row.path} failed: ${err?.message}`);
-      failed.push({ trackId: id, ...describeFailure(err) });
+      // taglib is sync; yield so the loop doesn't hog the main thread.
+      await yieldToEventLoop();
+      try {
+        const real = await assertReadableInsideMusicDir(row.path);
+        applied.push({ trackId: id, changedFields: await writeOne(journal, id, real, patch) });
+      } catch (err) {
+        // Raw message has an absolute path: log it, don't return it.
+        console.warn(`tagEdit: ${row.path} failed: ${err?.message}`);
+        failed.push({ trackId: id, ...describeFailure(err) });
+      }
     }
+  } finally {
+    journal.close();
   }
 
   // Tells the client its ?artist=/?album= view no longer exists.
@@ -170,5 +190,5 @@ export async function editAlbumTags({
     }
     : null;
 
-  return { applied, failed, skipped: rows.length - wanted.length, renamed };
+  return { applied, failed, skipped: rows.length - wanted.length, renamed, batchId: journal.batchId };
 }

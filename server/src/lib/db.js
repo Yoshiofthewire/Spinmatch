@@ -5,7 +5,7 @@ import { config } from '../config.js';
 import { makeDupKey, makeMatchKey, makeTitleKey } from './normalize.js';
 
 // Bump with a matching step in migrate().
-const SCHEMA_VERSION = 8;
+const SCHEMA_VERSION = 9;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS meta (
@@ -165,6 +165,29 @@ CREATE TABLE IF NOT EXISTS playlist_items (
   seed_artist TEXT,
   added_at    INTEGER NOT NULL
 );
+
+-- Undo journal: one batch per user action (kind: edit | album-edit | fix | bulk-fix).
+CREATE TABLE IF NOT EXISTS tag_batches (
+  id         INTEGER PRIMARY KEY,
+  kind       TEXT NOT NULL,
+  label      TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  undone_at  INTEGER
+);
+
+-- before/after are JSON {field: value|null}; a coverArt key means art was written.
+CREATE TABLE IF NOT EXISTS tag_writes (
+  id                INTEGER PRIMARY KEY,
+  batch_id          INTEGER NOT NULL REFERENCES tag_batches(id) ON DELETE CASCADE,
+  track_id          INTEGER,
+  path              TEXT NOT NULL,
+  before            TEXT NOT NULL,
+  after             TEXT NOT NULL,
+  cover_before      BLOB,
+  cover_before_mime TEXT,
+  after_mtime_ms    INTEGER,
+  undone_at         INTEGER
+);
 `;
 
 // After migrate(): upgraded installs lack these columns until it runs.
@@ -194,6 +217,7 @@ CREATE INDEX IF NOT EXISTS idx_lt_live_dup_key ON local_tracks(dup_key) WHERE re
 CREATE INDEX IF NOT EXISTS idx_lt_live_match_key ON local_tracks(match_key) WHERE removed = 0;
 CREATE INDEX IF NOT EXISTS idx_lt_live_title_key ON local_tracks(title_key) WHERE removed = 0;
 CREATE INDEX IF NOT EXISTS idx_pi_playlist ON playlist_items(playlist_id, position);
+CREATE INDEX IF NOT EXISTS idx_tw_batch ON tag_writes(batch_id);
 
 -- Superseded by the partial indexes above, which SQLite can use for strictly
 -- more queries. Dropped so an upgraded install isn't paying to maintain both.
@@ -313,6 +337,8 @@ export function migrate(db) {
       updateItem.run(makeMatchKey(r.artist, r.title), makeTitleKey(r.title), r.id);
     }
   }
+
+  // v9: tag_batches/tag_writes, new tables only, created by SCHEMA.
 
   db.prepare(
     "INSERT INTO meta (key, value) VALUES ('schema_version', ?) " +

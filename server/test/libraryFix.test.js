@@ -77,7 +77,7 @@ async function freshFix({ current, recording = RECORDING, coverImage = null, fin
           overwrite: opts?.overwrite ?? false,
           replaceCoverArt: opts?.replaceCoverArt ?? false,
         };
-        return { filledFields };
+        return { filledFields, before: {} };
       },
       plannedFills: () => [],
     },

@@ -238,7 +238,7 @@ const TRACK_SORTS = {
 const TRACK_COLUMNS = `
   id, artist, album, title, duration_ms AS durationMs, track_number AS trackNumber,
   disc, year, genre, has_cover_art AS hasCoverArt, ext, size_bytes AS sizeBytes,
-  added_at AS addedAt,
+  added_at AS addedAt, mtime_ms AS mtimeMs,
   album_synthesized AS albumSynthesized, title_synthesized AS titleSynthesized
 `;
 

@@ -18,6 +18,7 @@ Spinmatch **only finds and verifies YouTube links**. It does not download audio.
 - [Your library](#your-library)
   - [Repairing a whole album's tags](#repairing-a-whole-albums-tags)
   - [Editing tags by hand](#editing-tags-by-hand)
+  - [Undoing a tag change](#undoing-a-tag-change)
   - [MusicBrainz checks](#musicbrainz-checks)
   - [Discovery](#discovery)
   - [The preview player](#the-preview-player)
@@ -75,7 +76,7 @@ more.
 
 ![The Library overview tab: 16,041 tracks, 2,266 albums, 995 artists, 41 days of playtime, 113 GB on disk](docs/screenshots/library-overview.png)
 
-The Library page has eight tabs:
+The Library page has nine tabs:
 
 - **Overview** — the track, album, and artist counts, the total playtime, the total size on disk,
   and a format breakdown. It also has shortcuts into the reports below.
@@ -171,6 +172,8 @@ The Library page has eight tabs:
   accident. An **Undo** appears next to a copy you have just moved and puts it straight back. Undo
   is there while the page is open; after that, moving the file back by hand is easy, because the
   trash mirrors your library.
+- **Changes** — every tag write Spinmatch has made to your library, newest first, each with an
+  **Undo**. See [Undoing a tag change](#undoing-a-tag-change).
 - **Discover** — the one view that looks outward. It shows artists and records connected to the ones
   that you own the most of. See [Discovery](#discovery).
 
@@ -229,13 +232,13 @@ different values with one by accident.
 Three points are worth your attention, because they surprise people:
 
 - **A field that you leave blank keeps its current value.** An edit replaces a value, but it never
-  *removes* a tag. Spinmatch cannot empty a field, on purpose, because that is the one operation
-  with no way to undo it. If you clear a box, the panel says so on the row instead of doing nothing
+  *removes* a tag. Spinmatch cannot empty a field, on purpose. If you clear a box, the panel says so on the row instead of doing nothing
   silently. To remove a tag, clear it in an external tag editor and then rescan.
 - **Spinmatch writes nothing until you confirm it.** When you press **Save**, Spinmatch shows the
   pending changes as a plain list of the old value, the new value, and the number of files. It
-  writes only when you press **Write these tags**. Nothing in this app can be undone, and this is
-  the one path whose values come from a keyboard instead of a lookup.
+  writes only when you press **Write these tags**. This is the one path whose values come from a
+  keyboard instead of a lookup. If you got it wrong anyway, see
+  [Undoing a tag change](#undoing-a-tag-change).
 - **A change to the artist or the album changes the tags only.** Spinmatch never moves or renames a
   file, so the directory on disk keeps its old name. The **From file paths** repair source reads that
   directory, so it continues to propose the name that you changed away from. The panel warns you as
@@ -244,6 +247,21 @@ Three points are worth your attention, because they surprise people:
 Both paths write in place and re-index the file immediately. They report the result for each file. A
 file that is read-only or absent appears as a failure, and Spinmatch still writes the rest of the
 album.
+
+### Undoing a tag change
+
+Spinmatch records the old tags (and the old embedded cover) of every file it changes from the
+Library: hand edits of a track or an album, MusicBrainz fixes, and whole-album repairs. Each of
+those actions can be undone once from the **Changes** tab; album edits and repairs also show an
+**Undo** under their result. Undo puts back what was there, including emptying a field that was
+empty before, and an artist or genre that held several values. Only the front cover is restored.
+
+- **Undo never overwrites a later change.** If a file was edited again, by Spinmatch or anything
+  else, or is no longer there, undo skips it and lists it. The rest of the change is still undone.
+- **Not covered:** the Ingest page, and moving duplicates aside (that has its own Undo).
+- **Safe to retry.** If a file fails (a permissions error, say) or Spinmatch stops partway, run
+  Undo again: files already restored are skipped.
+- **Kept for 90 days, and at most the 500 newest changes.**
 
 ### MusicBrainz checks
 

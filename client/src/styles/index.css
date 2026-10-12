@@ -1718,7 +1718,7 @@ a:hover {
   font-style: italic;
 }
 
-/* Read-back before an irreversible write of hand-typed values. */
+/* Read-back before writing hand-typed values. */
 .tag-edit-confirm {
   padding: 0.85rem 1rem;
   margin-bottom: 0.85rem;

@@ -40,7 +40,7 @@ async function freshTagEdit({ writeTags } = {}) {
       plannedFills: () => [],
       writeTags: writeTags ?? (async (filePath, desired, options) => {
         writes.push({ filePath, desired, options });
-        return { filledFields: Object.keys(desired) };
+        return { filledFields: Object.keys(desired), before: {} };
       }),
     },
   });
@@ -402,7 +402,7 @@ test('editAlbumTags isolates a failing file and leaks no path in the message', a
         throw err;
       }
       writes.push({ filePath, desired });
-      return { filledFields: Object.keys(desired) };
+      return { filledFields: Object.keys(desired), before: {} };
     },
   });
 
