@@ -128,7 +128,6 @@ export default function DiscographyPanel({ artist }) {
           {/* Opt-in: a rate-limited lookup per missing track, minutes of work. */}
           {data.missing.length > 0 && (
             <BulkVerifyPanel
-              artist={artist}
               trackCount={0}
               streamUrl={artistMissingStreamUrl(artist)}
               prompt={`Finding every track from all ${data.missing.length} missing albums

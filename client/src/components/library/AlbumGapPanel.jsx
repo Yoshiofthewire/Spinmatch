@@ -67,8 +67,6 @@ export default function AlbumGapPanel({ artist, album }) {
           {/* Verifies only the missing tracks. */}
           {data.album?.mbid && data.missing.length > 1 && (
             <BulkVerifyPanel
-              artist={data.album?.artist ?? artist}
-              album={album}
               trackCount={data.missing.length}
               streamUrl={missingStreamUrl(data.album.mbid)}
               prompt={`Finding all ${data.missing.length} missing tracks on YouTube checks them

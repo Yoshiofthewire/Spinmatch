@@ -3,6 +3,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 process.env.MB_CONTACT_EMAIL = 'test@example.com';
+// Status falls back to stored stats; keep that off the real data/library.db.
+process.env.LIBRARY_DB = ':memory:';
 
 const { intervalForSize, startLibrarySync, getScanStatus, trackedScan } = await import('../src/services/librarySync.js');
 

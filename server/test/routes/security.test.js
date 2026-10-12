@@ -81,6 +81,7 @@ test('every /api route requires a session except the documented public ones', as
     '/api/library/stream/1',
     '/api/ingest/scan',
     '/api/ingest/file/candidates?path=x',
+    '/api/history',
   ];
   for (const url of PROTECTED) {
     const res = await fetch(baseUrl + url, { redirect: 'manual' });
@@ -168,7 +169,8 @@ test('cross-site state-changing requests are refused across the whole API', asyn
   }));
   const POSTS = ['/api/verify', '/api/verify/album/11111111-1111-4111-8111-111111111111',
     '/api/library/scan', '/api/library/fix', '/api/library/owned', '/api/library/rescan',
-    '/api/library/artist-link', '/api/library/trash/restore', '/api/ingest/process', '/api/ingest/file/resolve'];
+    '/api/library/artist-link', '/api/library/trash/restore', '/api/ingest/process', '/api/ingest/file/resolve',
+    '/api/history/import'];
   for (const url of POSTS) {
     const res = await fetch(baseUrl + url, {
       method: 'POST',
@@ -178,6 +180,17 @@ test('cross-site state-changing requests are refused across the whole API', asyn
     assert.equal(res.status, 400, `${url} accepted a cross-site POST`);
     assert.match((await res.json()).error.message, /[Cc]ross-/);
   }
+
+  db.prepare("INSERT INTO verify_history (title, action, created_at) VALUES ('kept', 'verified', 1)").run();
+  const del = await fetch(`${baseUrl}/api/history`, {
+    method: 'DELETE', headers: { Cookie: cookie, 'Sec-Fetch-Site': 'cross-site' },
+  });
+  assert.equal(del.status, 400, 'DELETE /api/history accepted a cross-site request');
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM verify_history').get().n, 1);
+  const same = await fetch(`${baseUrl}/api/history`, {
+    method: 'DELETE', headers: { Cookie: cookie, 'Sec-Fetch-Site': 'same-origin' },
+  });
+  assert.deepEqual(await same.json(), { cleared: 1 });
 });
 
 // --- Response headers and content types --------------------------------------

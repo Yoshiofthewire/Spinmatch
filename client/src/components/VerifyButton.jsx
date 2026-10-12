@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { post } from '../api/client.js';
 import EqualizerLoader from './EqualizerLoader.jsx';
 import CopyButton from './CopyButton.jsx';
-import { addEntry } from '../lib/history.js';
 
 function StatusBadge({ status }) {
   if (status === 'confirmed') return <span className="badge badge-confirmed">Verified match</span>;
@@ -23,7 +22,6 @@ export default function VerifyButton({ artist, title, album, lengthMs, recording
       const res = await post('/verify', { artist, title, album, lengthMs, recordingMbid });
       setResult(res);
       setState('done');
-      if (res.video) addEntry({ track: title, artist, album, action: 'verified' });
     } catch (err) {
       setError(err);
       setState('error');

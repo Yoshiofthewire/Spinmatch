@@ -11,6 +11,7 @@ import { configRouter } from './routes/config.js';
 import { ingestRouter } from './routes/ingest.js';
 import { libraryRouter } from './routes/library.js';
 import { playlistsRouter } from './routes/playlists.js';
+import { historyRouter } from './routes/history.js';
 import { authRouter } from './routes/auth.js';
 import { requireAuth } from './middleware/requireAuth.js';
 import { errorHandler } from './middleware/errorHandler.js';
@@ -65,6 +66,7 @@ export function createApp({ gate = requireAuth, clientDist = CLIENT_DIST } = {})
   app.use('/api/ingest', gate, ingestRouter);
   app.use('/api/library', gate, libraryRouter);
   app.use('/api/playlists', gate, playlistsRouter);
+  app.use('/api/history', gate, historyRouter);
 
   // Built client; SPA fallback to index.html for non-API paths.
   app.use(express.static(clientDist));

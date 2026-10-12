@@ -517,9 +517,16 @@ folder. Spinmatch does not change a file that is not audio.
 
 ## History
 
-The **History** page lists what you have verified and ingested, with a timestamp for
-each. It is a record of your own actions, held in the local storage of your browser, and it keeps the
-newest 200. Nothing on this page reaches the server, and **Clear All** empties it.
+The **History** page lists what you have verified and ingested, with a timestamp for each. A
+verification shows its result (Confirmed, Unverified or No results) and links to the YouTube
+video it found. The server records every single verify, every album or missing-track sweep, and
+every file an ingest run moves into the library (a preview records nothing), so the list is the
+same in every browser you sign in from. It keeps the newest 5000 entries, and **Clear All**,
+after a confirm, empties it for everyone. The Library's Overview tab shows the latest five.
+
+Earlier versions kept this list in your browser. The first time you open Spinmatch after
+upgrading, that browser's list is copied to the server and then removed from the browser. Entries
+already copied are skipped, so opening several tabs or browsers at once does not duplicate them.
 
 ![The History page listing verified tracks with their timestamps](docs/screenshots/history.png)
 
