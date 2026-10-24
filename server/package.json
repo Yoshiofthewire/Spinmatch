@@ -16,6 +16,6 @@
     "openid-client": "^6.8.8"
   },
   "devDependencies": {
-    "undici": "^8.12.1"
+    "undici": "^8.12.3"
   }
 }
