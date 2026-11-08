@@ -11,11 +11,11 @@
   },
   "dependencies": {
     "express": "^5.3.0",
-    "jose": "^6.2.14",
+    "jose": "^6.2.15",
     "node-taglib-sharp": "^6.0.3",
-    "openid-client": "^6.8.8"
+    "openid-client": "^6.8.9"
   },
   "devDependencies": {
-    "undici": "^8.12.3"
+    "undici": "^8.12.4"
   }
 }
