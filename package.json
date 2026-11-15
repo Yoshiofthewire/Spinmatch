@@ -13,7 +13,7 @@
     "test": "npm run test -w server && npm run test:run -w client"
   },
   "devDependencies": {
-    "concurrently": "^10.0.6"
+    "concurrently": "^10.0.7"
   },
   "engines": {
     "node": ">=26"
